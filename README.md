@@ -24,14 +24,14 @@ The agent decides which tools to call, executes them against the billing data, a
 
 ```bash
 # 1. Clone and set up
-git clone <repo-url> && cd obs-agent
+git clone https://github.com/redbarron23/obs-agent.git && cd obs-agent
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 2. Set your API key
 export ANTHROPIC_API_KEY=sk-...
 
-# 3. Interactive REPL (with conversation memory)
+# 3. Generate synthetic data and run the interactive REPL
 python agent.py
 
 # 4. Or ask a single question (scriptable)
@@ -164,14 +164,21 @@ Each tool returns a clean formatted string so the model gets compact, readable r
 
 ### The data (`data.py`)
 
-Generates 60 days of realistic multi-cloud billing data with a fixed random seed:
+Generates 60 days of realistic multi-cloud billing data with a fixed random seed (42):
 
 - **5 Azure subscriptions** with varying ingestion/overage levels — one dominant, one near-zero
 - **5 GCP projects** with different cost profiles
-- **Built-in cost spikes**: `sub-a1b2c3d4` spikes on day 30, `project-bravo` spikes on day 20
+- **Built-in cost spikes**: `sub-a1b2c3d4` spikes to $45 on day 30, `project-bravo` spikes to $28 on day 20
 - **Deterministic**: every run produces the same IDs, costs, and patterns, so evals always pass
 
 No external CSVs required. The project runs entirely from synthetic in-memory data. To use real billing data, swap the DataFrames in `data.py` — the rest of the code doesn't care where the data comes from.
+
+Key identifiers in the synthetic data:
+
+| Cloud | Subscriptions / Projects | Known spike |
+|---|---|---|
+| Azure | `sub-a1b2c3d4` (dominant, $18,411 overage), `sub-e5f6g7h8`, `sub-i9j0k1l2`, `sub-m3n4o5p6`, `sub-q7r8s9t0` (near-zero) | Day 30: $45 → triggered by `--threshold 50`
+| GCP | `project-alpha` (highest, $12,672), `project-bravo`, `project-charlie`, `project-delta`, `project-echo` (lowest) | Day 20: $28
 
 ## Run the evals
 
@@ -237,6 +244,163 @@ streamlit>=1.28.0
 pandas>=2.0.0
 numpy>=1.24.0
 ```
+
+## Testing
+
+61 unit tests covering tools (pure pandas logic) and the agent loop (mocked LLM):
+
+```bash
+python -m pytest tests/ -v
+
+# 61 passed in 0.60s
+```
+
+### Test strategy
+
+**Tool tests** (`tests/test_tools.py`, 29 tests) patch the module-level DataFrames with small, hand-crafted fixtures containing known values:
+
+```python
+# conftest.py — fixtures with transparent data
+@pytest.fixture
+def azure_summary():
+    return pd.DataFrame([
+        {"subscription_id": "sub-a", "estimated_overage_cost_30d": 5000},
+        {"subscription_id": "sub-b", "estimated_overage_cost_30d": 2000},
+        ...
+    ])
+
+# test_tools.py — verifies logic, not API behaviour
+def test_top_1(self, patch_azure_summary):
+    result = get_azure_top_overages(n=1)
+    assert "sub-a" in result
+    assert "sub-b" not in result  # only top 1
+```
+
+**Agent tests** (`tests/test_agent.py`, 32 tests) mock the Provider class so no API calls are made:
+
+```python
+# Helper builds a fake Anthropic response with known content
+resp = make_anthropic_response(
+    tool_name="get_azure_top_overages",
+    tool_input={"n": 1},
+)
+
+with patch("agent.Provider.create", return_value=resp):
+    answer, messages = run("Which Azure sub is top?")
+
+assert "sub-a" in answer
+```
+
+Both API shapes (Anthropic and OpenAI-compatible) are tested via helper factories that build correctly-shaped fake responses. The streaming path also has dedicated tests for tool-call-through-streaming.
+
+### File layout
+
+```
+tests/
+├── conftest.py        # Shared fixtures — tiny DataFrames with known values
+tests/
+├── test_tools.py      # 29 tests — pure pandas, no API calls
+tests/
+├── test_agent.py      # 32 tests — mocked LLM, covers all agent paths
+```
+
+| Group | Tests | What's verified |
+|---|---|---|
+| Tool logic (`test_tools.py`) | 29 | Top-N ranking, zero filtering, spike thresholds, cross-cloud totals, edge cases |
+| Agent loop (`test_agent.py`) | 16 | Simple answer, single/multi tool call, conversation memory, history pruning, empty/long questions |
+| Provider abstraction | 10 | Stop reason mapping + content block parsing for Anthropic and OpenAI shapes |
+| Streaming | 3 | Streaming with/without tools, OpenAI-compatible streaming |
+| CLI parsing | 8 | All flags, defaults, combinations |
+
+## Sample conversations
+
+All examples use the synthetic data (seed 42) so you get identical output. Run them yourself:
+
+### Single question with streaming
+
+```bash
+python agent.py -q "Which Azure subscription has the highest overage cost?" --stream
+```
+
+Live output (streaming, token by token):
+
+```
+The Azure subscription with the highest overage cost is **sub-a1b2c3d4**, with an estimated
+overage cost of **$18,411.00** over the last 30 days. It ingested 42.8 GB of log data,
+with 3.7 GB exceeding its allocation.
+```
+
+### Verbose mode (see tool calls)
+
+```bash
+python agent.py -q "Find cost spikes in the last 60 days" --verbose
+```
+
+```
+  [stop_reason: tool_use]
+  [tool: find_spikes({'threshold_pct': 200})]
+  [tool result: find_spikes({'threshold_pct': 200})]
+  [stop_reason: end_turn]
+
+Spikes detected (both clouds):
+
+[Azure]
+  • sub-a1b2c3d4 — day 30: $45.00 (+350% vs $10.00 previous day)
+
+[GCP]
+  • project-bravo — day 20: $28.00 (+180% vs $10.00 previous day)
+```
+
+### Multi-turn conversation (REPL)
+
+```
+$ python agent.py
+obs-agent — Multi-Cloud Cost Triage Agent
+Provider: anthropic  |  Model: claude-sonnet-4-6  |  Mode: batch  |  Type 'quit' to exit.
+
+You: Which GCP project costs the most?
+Agent: **project-alpha** is the most expensive at **$12,672.00** over the past 30 days.
+
+You: Show me its daily trend
+Agent: (remembers you mean project-alpha, fetches the trend)
+
+Daily cost trend for project-alpha:
+  Day        Cost
+  ─────────────────
+  2026-05-01   $42.00
+  2026-05-02   $38.00
+  ...
+  2026-06-29   $45.00
+
+You: How does that compare to Azure's total?
+Agent: Let me look at both clouds together...
+
+Cross-Cloud Cost Summary (30 days)
+========================================
+Azure total overage cost:  $23,059.00
+GCP total logging cost:    $21,705.00
+────────────────────────────────────────
+Grand total:               $44,764.00
+```
+
+### DeepSeek as provider
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+python agent.py --provider deepseek --model deepseek-chat -q "Top 3 GCP projects" --verbose
+```
+
+### Web UI example prompts
+
+Launch `streamlit run app.py`, select your provider, and try:
+
+- *"Which Azure sub costs the most?"*
+- *"Show me top 3 GCP projects"*
+- *"Any recent cost spikes?"*
+- *"What's the daily trend for sub-a1b2c3d4?"*
+- *"Compare costs across both clouds"*
+
+The web UI maintains conversation history between turns, so follow-ups like *"show me its daily trend"* work naturally.
 
 ## Related resources
 

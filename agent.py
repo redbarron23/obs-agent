@@ -440,7 +440,9 @@ def _build_assistant_content(
     stream may have reconstructed the tool calls already.
     """
     if provider == "anthropic":
-        return list(response.content)
+        # Convert SDK content blocks to plain dicts so subsequent API calls
+        # can serialize the messages list correctly.
+        return [_content_block_to_dict(b) for b in response.content]
 
     # OpenAI-compatible: construct tool call blocks
     content = []
@@ -472,6 +474,28 @@ def _build_assistant_content(
                     "input": json.loads(tc.function.arguments),
                 })
     return content
+
+
+def _content_block_to_dict(block) -> dict:
+    """Convert an Anthropic SDK content block to a plain dict.
+
+    This is needed because the Anthropic SDK returns content blocks as
+    SDK objects (TextBlock, ToolUseBlock), but we store them in the
+    messages list.  If we pass SDK objects back on subsequent API calls,
+    the SDK may not serialize them correctly, leading to API errors
+    like "Cannot continue from message role: assistant".
+    """
+    if block.type == "text":
+        return {"type": "text", "text": block.text}
+    elif block.type == "tool_use":
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": block.input,
+        }
+    else:
+        return {"type": block.type}
 
 
 # ── CLI ────────────────────────────────────────────────────────────────
