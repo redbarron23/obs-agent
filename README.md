@@ -443,6 +443,46 @@ Launch `streamlit run app.py`, select your provider, and try:
 
 The web UI maintains conversation history between turns, so follow-ups like *"show me its daily trend"* work naturally. Enable **Stream responses** in the sidebar to watch tokens arrive in real time.
 
+## References
+
+- [ChromaDB](https://www.trychroma.com/products/chromadb) — open-source vector database for embedding storage and similarity search
+- [RAG 101: Demystifying Retrieval-Augmented Generation Pipelines](https://developer.nvidia.com/blog/rag-101-demystifying-retrieval-augmented-generation-pipelines/) — NVIDIA blog on RAG architecture, chunking strategies, and evaluation
+- [Sentence Transformers](https://www.sbert.net/) — library and model hub for dense vector embeddings (`all-MiniLM-L6-v2`)
+- [Evaluating RAG: A Comprehensive Guide to Metrics and Methods](https://www.rungalileo.io/blog/evaluating-rag-a-comprehensive-guide-to-metrics-and-methods) — Galileo guide covering dual-attribution eval (source + fact checks)
+- [LangSmith RAG Evaluation](https://docs.smith.langchain.com/faq/evaluation/eval_rag) — production-grade RAG eval patterns (correctness, faithfulness, relevance)
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+## Related projects
+
+### [rag-observability](../rag-observability/) — RAG over Observability Docs
+
+A standalone Retrieval-Augmented Generation system that answers natural-language questions about multi-cloud observability architecture, coverage targets, and monitoring standards. Built on real domain documentation.
+
+```
+Q: What is the coverage target for Tier 1 production resources?
+A: The production Tier 1 coverage target is 90% within 6 months and 100%
+   within 12 months (source: coverage-targets.md, section 'Tier 1').
+```
+
+**Pipeline:** `.md` documents → heading-aware chunking → `all-MiniLM-L6-v2` embeddings → ChromaDB vector store → cosine similarity retrieval → Claude with cited generation.
+
+**Key differences from obs-agent:**
+
+| Concern | obs-agent | rag-observability |
+|---|---|---|
+| **Pattern** | Tool-use agent (function calling) | RAG (retrieval + generation) |
+| **Data** | Synthetic billing DataFrames | Real documentation (.md files) |
+| **LLM role** | Decides which tools to call | Answers from retrieved context |
+| **Memory** | Multi-turn conversation (20 msg history) | Stateless per query |
+| **Eval focus** | Fact presence in answer | Source attribution + fact presence |
+| **Providers** | Anthropic, DeepSeek, Ollama | Anthropic only |
+
+**References:**
+- [ChromaDB](https://www.trychroma.com/products/chromadb) — vector database
+- [RAG 101: Demystifying RAG Pipelines](https://developer.nvidia.com/blog/rag-101-demystifying-retrieval-augmented-generation-pipelines/) — NVIDIA
+- [Sentence Transformers](https://www.sbert.net/) — embedding models (`all-MiniLM-L6-v2`)
+- [Evaluating RAG: Metrics and Methods](https://www.rungalileo.io/blog/evaluating-rag-a-comprehensive-guide-to-metrics-and-methods) — Galileo
+- [LangSmith RAG Evaluation](https://docs.smith.langchain.com/faq/evaluation/eval_rag) — production eval patterns
