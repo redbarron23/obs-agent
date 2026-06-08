@@ -60,7 +60,8 @@ def get_daily_trend(platform: str, identifier: str) -> str:
             .reset_index()
             .sort_values("day")
         )
-        return daily.to_string(index=False)
+        header = f"Daily cost trend for Azure subscription {identifier}:\n"
+        return header + daily.to_string(index=False)
 
     elif platform == "gcp":
         df = GCP_DETAILS_DF.copy()
@@ -73,7 +74,8 @@ def get_daily_trend(platform: str, identifier: str) -> str:
             .reset_index()
             .sort_values("day")
         )
-        return daily.to_string(index=False)
+        header = f"Daily cost trend for GCP project {identifier}:\n"
+        return header + daily.to_string(index=False)
 
     else:
         return f"Unknown platform '{platform}'. Use 'azure' or 'gcp'."
@@ -103,11 +105,14 @@ def find_spikes(threshold_pct: float = 50.0) -> str:
         (daily_az["pct_change"] >= threshold_pct)
         & (daily_az["estimated_overage_cost"] > 1)
     ]
-    for _, row in spikes_az.iterrows():
-        results.append(
-            f"[Azure] {row['subscription_id']} on {row['day']}: "
-            f"+{row['pct_change']:.0f}% (${row['estimated_overage_cost']:.2f})"
+    if not spikes_az.empty:
+        az_lines = (
+            "[Azure] " + spikes_az["subscription_id"].astype(str)
+            + " on " + spikes_az["day"].astype(str)
+            + ": +" + spikes_az["pct_change"].round(0).astype(int).astype(str)
+            + "% ($" + spikes_az["estimated_overage_cost"].map("{:.2f}".format) + ")"
         )
+        results.extend(az_lines.tolist())
 
     # ── GCP ────────────────────────────────────────────────────────
     df_gcp = GCP_DETAILS_DF.copy()
@@ -127,11 +132,14 @@ def find_spikes(threshold_pct: float = 50.0) -> str:
         (daily_gcp["pct_change"] >= threshold_pct)
         & (daily_gcp["cost"] > 1)
     ]
-    for _, row in spikes_gcp.iterrows():
-        results.append(
-            f"[GCP]   {row['project_id']} on {row['day']}: "
-            f"+{row['pct_change']:.0f}% (${row['cost']:.2f})"
+    if not spikes_gcp.empty:
+        gcp_lines = (
+            "[GCP]   " + spikes_gcp["project_id"].astype(str)
+            + " on " + spikes_gcp["day"].astype(str)
+            + ": +" + spikes_gcp["pct_change"].round(0).astype(int).astype(str)
+            + "% ($" + spikes_gcp["cost"].map("{:.2f}".format) + ")"
         )
+        results.extend(gcp_lines.tolist())
 
     if not results:
         return f"No spikes above {threshold_pct}% found."

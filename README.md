@@ -65,7 +65,7 @@ You: Show me its daily trend
 Agent: (remembers which subscription you meant and fetches the trend)
 ```
 
-Message history prunes at 20 turns to stay within context limits.
+Message history prunes at 20 turns to stay within context limits, keeping the first user message for original context.
 
 ### Cross-cloud cost comparison
 
@@ -183,8 +183,17 @@ Key identifiers in the synthetic data:
 ## Run the evals
 
 ```bash
+# Deterministic dry-run — checks tool outputs directly, no API key needed
+python evals.py --dry-run
+
+# Live evals against the LLM (requires ANTHROPIC_API_KEY)
 python evals.py
+
+# Verbose output for every case
+python evals.py --dry-run -v
 ```
+
+Dry-run mode calls the tools directly and verifies ground-truth identifiers appear in the output — fully deterministic, suitable for CI. Live mode runs the full agent loop and checks that the LLM's answer contains the expected facts.
 
 This runs 8 eval cases with known-correct answers and checks that the agent's response contains the expected identifiers. Covers all five tools:
 
@@ -237,6 +246,8 @@ Building API-agnostic agents is a practical skill for production systems where p
 
 ### Dependencies
 
+Runtime (`requirements.txt`):
+
 ```
 anthropic>=0.50.0
 openai>=1.0.0
@@ -245,15 +256,28 @@ pandas>=2.0.0
 numpy>=1.24.0
 ```
 
+Dev/test (`requirements-dev.txt`):
+
+```
+pytest>=8.0.0
+```
+
 ## Testing
 
-61 unit tests covering tools (pure pandas logic) and the agent loop (mocked LLM):
+Unit tests and deterministic eval dry-runs:
 
 ```bash
+pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 
-# 61 passed in 0.60s
+# Skip live LLM evals (default in CI)
+python -m pytest tests/ -v -m "not integration"
+
+# Run live evals (requires ANTHROPIC_API_KEY)
+python -m pytest tests/ -v -m integration
 ```
+
+CI runs on every push/PR via GitHub Actions (Python 3.10–3.12): unit tests + eval dry-run.
 
 ### Test strategy
 
@@ -298,10 +322,9 @@ Both API shapes (Anthropic and OpenAI-compatible) are tested via helper factorie
 ```
 tests/
 ├── conftest.py        # Shared fixtures — tiny DataFrames with known values
-tests/
-├── test_tools.py      # 29 tests — pure pandas, no API calls
-tests/
-├── test_agent.py      # 32 tests — mocked LLM, covers all agent paths
+├── test_tools.py      # Tool logic tests — pure pandas, no API calls
+├── test_agent.py      # Agent loop tests — mocked LLM, covers all agent paths
+└── test_evals.py      # Eval dry-run (deterministic) + live integration tests
 ```
 
 | Group | Tests | What's verified |
@@ -418,13 +441,7 @@ Launch `streamlit run app.py`, select your provider, and try:
 - *"What's the daily trend for sub-a1b2c3d4?"*
 - *"Compare costs across both clouds"*
 
-The web UI maintains conversation history between turns, so follow-ups like *"show me its daily trend"* work naturally.
-
-## Related resources
-
-- [How to Transition from Software Engineering to AI Engineering](../How-to-Transition-from-Software-Engineering-to-AI-Engineering.md) — notes on the skills gap and learning approach
-- [Skills & Initiatives](../skills-initiatives.md) — tracking evals, RAG, LLMOps, and portfolio work
-- [AI Engineering Skills Checklist](../AI/AI-Engineering-Skills-Checklist.pdf) — comprehensive skill taxonomy used to guide this project
+The web UI maintains conversation history between turns, so follow-ups like *"show me its daily trend"* work naturally. Enable **Stream responses** in the sidebar to watch tokens arrive in real time.
 
 ## License
 

@@ -16,7 +16,7 @@ Environment variables:
 
 import os
 import streamlit as st
-from agent import run
+from agent import run, stream_run
 
 # ── Page config ────────────────────────────────────────────────────────
 
@@ -43,6 +43,12 @@ model = st.sidebar.text_input(
     "Model (optional)",
     placeholder="e.g. claude-sonnet-4-6, deepseek-chat, or llama3.2",
     help="Leave blank for provider default.",
+)
+
+use_streaming = st.sidebar.checkbox(
+    "Stream responses",
+    value=True,
+    help="Show tokens as they arrive instead of waiting for the full answer.",
 )
 
 st.sidebar.divider()
@@ -78,43 +84,56 @@ st.title("☁️ Multi-Cloud Cost Triage")
 st.caption(
     f"Provider: **{provider}**"
     + (f"  ·  Model: **{model}**" if model else "")
+    + ("  ·  Streaming" if use_streaming else "")
 )
 
-# Initialise conversation history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Chat input
 if prompt := st.chat_input("Ask a question about cloud costs..."):
-    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Get agent response (with conversation memory)
     with st.chat_message("assistant"):
-        with st.spinner("Agent is thinking..."):
-            try:
-                answer, history = run(
+        try:
+            model_arg = model if model else None
+            history = st.session_state.get("_agent_history")
+
+            if use_streaming:
+                holder: dict = {}
+                st.write_stream(stream_run(
                     prompt,
                     provider=provider,
-                    model=model if model else None,
+                    model=model_arg,
                     verbose=True,
-                    messages=st.session_state.get("_agent_history"),
-                )
-                st.session_state["_agent_history"] = history
+                    messages=history,
+                    result_holder=holder,
+                ))
+                answer = holder["answer"]
+                st.session_state["_agent_history"] = holder["messages"]
+            else:
+                with st.spinner("Agent is thinking..."):
+                    answer, updated = run(
+                        prompt,
+                        provider=provider,
+                        model=model_arg,
+                        verbose=True,
+                        messages=history,
+                    )
                 st.markdown(answer)
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": answer}
-                )
-            except Exception as e:
-                error_msg = f"Error: {e}"
-                st.error(error_msg)
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": error_msg}
-                )
+                st.session_state["_agent_history"] = updated
+
+            st.session_state.messages.append(
+                {"role": "assistant", "content": answer}
+            )
+        except Exception as e:
+            error_msg = f"Error: {e}"
+            st.error(error_msg)
+            st.session_state.messages.append(
+                {"role": "assistant", "content": error_msg}
+            )

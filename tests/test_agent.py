@@ -178,13 +178,16 @@ class TestAgentLoop:
 
         # Original message should still be first
         assert messages[0] == {"role": "assistant", "content": "Previous answer"}
-        # New messages should be appended
-        assert len(messages) == 5  # history(1) + user(1) + assistant_toolcall + user_toolresult + assistant
+        # history(1) + user(1) + assistant tool_calls + tool result + assistant answer
+        assert len(messages) == 5
         assert messages[-1]["role"] == "assistant"
         assert messages[-1]["content"] == "sub-a is top."
+        assert messages[2]["role"] == "assistant"
+        assert "tool_calls" in messages[2]
+        assert messages[3]["role"] == "tool"
 
     def test_history_pruning(self):
-        """Very long history should be pruned to MAX_HISTORY."""
+        """Very long history should be pruned, keeping the first message."""
         tool_resp = make_anthropic_response(text="Done.")
 
         with patch("agent.Provider.create", return_value=tool_resp):
@@ -195,7 +198,8 @@ class TestAgentLoop:
             ]
             answer, messages = run("Final question", messages=long_history)
 
-        assert len(messages) <= 22  # 20 history + user + assistant
+        assert len(messages) <= 22  # first + 19 recent + user + assistant
+        assert messages[0]["content"] == "Question 0"
 
 
 class TestProviderAbstraction:
@@ -312,7 +316,7 @@ class TestStreaming:
         # stream_response is called once per streaming turn
         call_count = [0]
 
-        def stream_response_side_effect(provider_name, stream_obj, *, verbose):
+        def stream_response_side_effect(provider_name, stream_obj, *, verbose, on_token=None):
             call_count[0] += 1
             if call_count[0] == 1:
                 # First turn: tool call
@@ -380,31 +384,31 @@ class TestEdgeCases:
         assert "Just answering" in answer
 
     def test_build_assistant_content_anthropic(self):
-        """_build_assistant_content should handle Anthropic responses."""
-        from agent import _build_assistant_content
+        """_parse_assistant_response should handle Anthropic responses."""
+        from agent import _parse_assistant_response
         resp = make_anthropic_response(
             tool_name="get_azure_top_overages", tool_input={"n": 1},
         )
-        content = _build_assistant_content("anthropic", resp)
-        assert len(content) == 1
-        assert content[0]["type"] == "tool_use"
-        assert content[0]["name"] == "get_azure_top_overages"
-        assert content[0]["input"] == {"n": 1}
+        msg = _parse_assistant_response("anthropic", resp)
+        assert msg["role"] == "assistant"
+        assert len(msg["tool_calls"]) == 1
+        assert msg["tool_calls"][0]["name"] == "get_azure_top_overages"
+        assert msg["tool_calls"][0]["input"] == {"n": 1}
 
     def test_build_assistant_content_openai(self):
-        """_build_assistant_content should handle OpenAI responses."""
-        from agent import _build_assistant_content
+        """_parse_assistant_response should handle OpenAI responses."""
+        from agent import _parse_assistant_response
         resp = make_openai_response(
             tool_name="get_azure_top_overages", tool_input={"n": 1},
         )
-        content = _build_assistant_content("deepseek", resp)
-        assert len(content) == 1
-        assert content[0]["type"] == "tool_use"
-        assert content[0]["name"] == "get_azure_top_overages"
+        msg = _parse_assistant_response("deepseek", resp)
+        assert msg["role"] == "assistant"
+        assert len(msg["tool_calls"]) == 1
+        assert msg["tool_calls"][0]["name"] == "get_azure_top_overages"
 
     def test_build_assistant_content_with_override(self):
         """tool_blocks_override should be used when provided."""
-        from agent import _build_assistant_content, _OaiToolCall
+        from agent import _parse_assistant_response, _OaiToolCall
 
         raw = SimpleNamespace()
         raw.function = SimpleNamespace()
@@ -413,10 +417,97 @@ class TestEdgeCases:
         raw.id = "call_override"
 
         blocks = [_OaiToolCall(raw)]
-        content = _build_assistant_content("deepseek", None, tool_blocks_override=blocks)
-        assert len(content) == 1
-        assert content[0]["name"] == "compare_cross_cloud"
-        assert content[0]["id"] == "call_override"
+        msg = _parse_assistant_response("deepseek", None, tool_blocks_override=blocks)
+        assert msg["role"] == "assistant"
+        assert len(msg["tool_calls"]) == 1
+        assert msg["tool_calls"][0]["name"] == "compare_cross_cloud"
+        assert msg["tool_calls"][0]["id"] == "call_override"
+
+
+class TestMessageFormatting:
+    """Tests for canonical ↔ provider message conversion."""
+
+    def test_format_openai_tool_messages(self):
+        from agent import _format_messages_for_openai
+
+        messages = [
+            {"role": "user", "content": "Which is top?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "call_1", "name": "get_azure_top_overages", "input": {"n": 1}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "sub-a is top"},
+        ]
+        formatted = _format_messages_for_openai(messages)
+        assert formatted[1]["role"] == "assistant"
+        assert formatted[1]["tool_calls"][0]["function"]["name"] == "get_azure_top_overages"
+        assert formatted[2]["role"] == "tool"
+        assert formatted[2]["tool_call_id"] == "call_1"
+
+    def test_format_anthropic_tool_messages(self):
+        from agent import _format_messages_for_anthropic
+
+        messages = [
+            {"role": "user", "content": "Which is top?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "toolu_1", "name": "get_azure_top_overages", "input": {"n": 1}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "sub-a is top"},
+        ]
+        formatted = _format_messages_for_anthropic(messages)
+        assert formatted[1]["content"][0]["type"] == "tool_use"
+        assert formatted[2]["role"] == "user"
+        assert formatted[2]["content"][0]["type"] == "tool_result"
+
+    def test_to_openai_tools(self):
+        from agent import _to_openai_tools
+        from tools import TOOL_DEFINITIONS
+
+        oai_tools = _to_openai_tools(TOOL_DEFINITIONS)
+        assert len(oai_tools) == len(TOOL_DEFINITIONS)
+        assert oai_tools[0]["type"] == "function"
+        assert "parameters" in oai_tools[0]["function"]
+        assert "input_schema" not in oai_tools[0]["function"]
+
+
+class TestSafetyRails:
+    """Tests for max turns and unknown tool handling."""
+
+    def test_max_turns_exceeded(self):
+        """Agent should stop after MAX_TURNS tool-use iterations."""
+        tool_resp = make_anthropic_response(
+            tool_name="get_azure_top_overages", tool_input={"n": 1},
+        )
+
+        with patch("agent.Provider.create", return_value=tool_resp) as mock_create:
+            from agent import run, MAX_TURNS
+            answer, messages = run("Keep calling tools")
+
+        assert str(MAX_TURNS) in answer
+        assert mock_create.call_count == MAX_TURNS
+
+    def test_unknown_tool_returns_error(self):
+        """Hallucinated tool names should return an error string to the model."""
+        tool_resp = make_anthropic_response(
+            tool_name="nonexistent_tool", tool_input={},
+        )
+        final_resp = make_anthropic_response(text="Sorry, tool failed.")
+
+        mock_create = MagicMock(side_effect=[tool_resp, final_resp])
+        with patch("agent.Provider.create", mock_create):
+            from agent import run
+            answer, messages = run("Do something weird")
+
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        assert any("unknown tool" in m["content"] for m in tool_msgs)
+        assert mock_create.call_count == 2
 
 
 class TestCLIParsing:
