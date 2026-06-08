@@ -4,7 +4,88 @@ An LLM agent that answers questions about cloud logging costs across **Azure** a
 
 Supports **Anthropic** (Claude) and **DeepSeek** as LLM providers — switch between them with a single `--provider` flag.
 
-Built as a demonstration of the AI engineering agent pattern — tool definitions, tool dispatch, a conversational REPL, a CLI for scripting, an eval harness with ground-truth checks against deterministic synthetic data, and a provider abstraction that makes the agent loop API-agnostic.
+Built as a demonstration of the AI engineering agent pattern — tool definitions, tool dispatch, streaming output, a conversational REPL with multi-turn memory, a scripting CLI, a web UI, and an eval harness with ground-truth checks against deterministic synthetic data.
+
+## Quick start
+
+```bash
+# 1. Set up
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export ANTHROPIC_API_KEY=sk-...
+
+# 2. Interactive REPL (with conversation memory)
+python agent.py
+
+# 3. Or ask a single question (scriptable)
+python agent.py -q "Which Azure subscription has the highest overage?" --verbose
+
+# 4. Or launch the web UI
+streamlit run app.py
+```
+
+## Features
+
+### Streaming output
+
+Watch tokens arrive in real-time instead of waiting for the full response:
+
+```bash
+python agent.py -q "Compare costs across Azure and GCP" --stream
+```
+
+Streaming works through the full tool-use loop — if the model calls a tool mid-stream, it prints text up to that point, executes the tool, and continues streaming.
+
+### Multi-turn conversation memory
+
+The REPL and web UI remember previous turns. Ask follow-up questions naturally:
+
+```
+You: Which Azure subscription has the highest overage?
+Agent: sub-a1b2c3d4 at $18,411...
+
+You: Show me its daily trend
+Agent: (remembers which subscription you meant and fetches the trend)
+```
+
+The message history is pruned at 20 turns to stay within context limits.
+
+### Cross-cloud cost comparison tool
+
+A single tool that sums costs across both clouds and provides per-subscription and per-project breakdowns:
+
+```
+Cross-Cloud Cost Summary (30 days)
+========================================
+Azure total overage cost:  $23,059.00
+GCP total logging cost:    $21,705.00
+────────────────────────────────────────
+Grand total:               $44,764.00
+```
+
+### Web UI (Streamlit)
+
+```bash
+streamlit run app.py
+```
+
+Opens a chat interface in your browser with provider/model selection, conversation history, and example prompts. Supports multi-turn memory natively.
+
+### CLI with scripting
+
+```bash
+# Single answer (for scripts, CI, or demos)
+python agent.py -q "Show me the top 3 GCP projects"
+
+# Stream mode
+python agent.py -q "Any cost spikes?" --stream
+
+# Verbose mode (see tool calls)
+python agent.py -q "Compare costs" --verbose
+
+# Specific model
+python agent.py -q "Show me spikes" --model claude-sonnet-4-6
+```
 
 ## Providers
 
@@ -22,12 +103,6 @@ export DEEPSEEK_API_KEY=sk-...
 python agent.py --provider deepseek -q "Which Azure subscription has the highest overage?"
 ```
 
-When using DeepSeek, the `openai` Python package is used under the hood since DeepSeek serves an OpenAI-compatible API. You can also pass a custom model:
-
-```bash
-python agent.py --provider deepseek --model deepseek-chat -q "Show me the top 3 GCP projects"
-```
-
 Provider default models:
 - **Anthropic**: `claude-sonnet-4-6`
 - **DeepSeek**: `deepseek-chat`
@@ -39,67 +114,43 @@ Ask questions in plain English:
 ```
 "Which Azure subscription has the highest overage cost?"
 "Show me the top 3 most expensive GCP projects"
-"Give me a summary of the top overage on Azure and the top cost on GCP"
+"Compare costs across Azure and GCP"
 "Has subscription sub-a1b2c3d4 had any cost spikes recently?"
+"What's the daily trend for project-bravo?"
 ```
 
 The agent decides which tools to call, runs them against the data, and summarises the findings — concisely, and grounded in actual numbers rather than guesses.
 
-## Quick start
-
-```bash
-# 1. Set up
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# 2. Set your Anthropic API key
-export ANTHROPIC_API_KEY=sk-...
-
-# 3. Interactive REPL
-python agent.py
-
-# 4. Or ask a single question (scriptable)
-python agent.py -q "Which Azure subscription has the highest overage?" --verbose
-```
-
-### Switch provider or model
-
-```bash
-# Anthropic with a specific model
-python agent.py -q "Show me the top 3 GCP projects" --model claude-sonnet-4-6
-
-# DeepSeek
-python agent.py --provider deepseek -q "Show me the top 3 GCP projects"
-
-# DeepSeek with a specific model
-python agent.py --provider deepseek --model deepseek-chat -q "Show me the top 3 GCP projects"
-```
-
 ## Architecture
 
 ```
-data.py     — Deterministic synthetic data generator (seeded RNG, no external files)
-tools.py    — Data-access functions + Claude tool definitions + dispatch table
-agent.py    — Agent loop (Claude API tool-use cycle) + CLI (REPL / --question flag)
-evals.py    — Eval harness with ground-truth checks against the synthetic data
+app.py      — Streamlit web UI (chat interface with provider/model selection)
+agent.py    — Agent loop + CLI (REPL / --question) + streaming + provider abstraction
+tools.py    — 5 tool functions + LLM tool definitions + dispatch table
+data.py     — Deterministic synthetic data generator (seeded RNG, CSVs not needed)
+evals.py    — 8 eval cases with ground-truth checks against the synthetic data
 ```
 
 ```
 You ──question──▶  agent.py  ──tools──▶  tools.py  ──data──▶  data.py
                     │                                              │
-                    │  (Claude API loop)                          (in-memory
+                    │  (LLM API loop)                             (in-memory
                     │   tool_use ↔ end_turn                       DataFrames)
+                    │   streaming supported
+                    │   conversation memory persists
                     │
                     ▼
-               answer (printed)
+               answer (printed / streamed / rendered in web UI)
 ```
 
 ### The agent loop (`agent.py`)
 
-The standard Claude tool-use pattern:
+The standard tool-use pattern:
 1. Send the user's question + tool definitions to the model
 2. If the model requests a tool, execute it via `TOOL_DISPATCH` and feed the result back
 3. Repeat until the model produces a final answer
+
+Supports both **batch** (full response at once) and **streaming** (token-by-token) modes. The `Provider` class abstracts over Anthropic and OpenAI-compatible (DeepSeek) APIs, handling differences in request format, response shape, and stop-reason naming.
 
 ### The tools (`tools.py`)
 
@@ -109,8 +160,9 @@ The standard Claude tool-use pattern:
 | `get_gcp_top_projects` | Top N GCP projects by total logging cost |
 | `get_daily_trend` | Day-by-day cost/ingestion trend for a given subscription or project |
 | `find_spikes` | Detects days where cost jumped >X% vs. the previous day (both clouds) |
+| `compare_cross_cloud` | Total cost comparison across Azure and GCP with per-sub/project breakdown |
 
-Each tool returns a clean formatted string (not a raw DataFrame) so the model gets compact, readable results.
+Each tool returns a clean formatted string so the model gets compact, readable results.
 
 ### The data (`data.py`)
 
@@ -128,10 +180,10 @@ No external CSVs required. The project runs entirely from synthetic in-memory da
 python evals.py
 ```
 
-This runs a fixed set of questions with known-correct answers and checks that the agent's response contains the expected identifiers. The eval harness covers all four tools:
+This runs 8 eval cases with known-correct answers and checks that the agent's response contains the expected identifiers. Covers all five tools:
 
-- Top overage / top project queries
-- Daily trends for both clouds
+- Azure top overage, GCP top project, GCP top 3
+- Daily trends (Azure and GCP)
 - Spike detection (Azure and GCP)
 - Multi-cloud summary
 
@@ -139,22 +191,28 @@ This runs a fixed set of questions with known-correct answers and checks that th
 
 | Concept | Implementation |
 |---|---|
-| **Agent loop** | Provider-agnostic loop: request → dispatch tool → feed back result → repeat until `end_turn` |
-| **Tool definitions** | JSON Schema input specs that the model calls as needed, not a fixed pipeline |
-| **Tool dispatch** | A `TOOL_DISPATCH` dict mapping tool names to Python functions |
-| **CLI with scripting** | `python agent.py -q "..."` for automation; REPL for interactive use |
-| **Evals for non-deterministic code** | Fact-presence checks (`must_contain`) instead of brittle exact-string matching |
-| **Deterministic test data** | Seeded RNG means reproducible data for dev, test, and CI |
+| **Agent loop** | Provider-agnostic request → dispatch → feed-back cycle until `end_turn` |
+| **Streaming** | Token-by-token output through the full tool-use loop (Anthropic + OpenAI SSE) |
+| **Conversation memory** | Multi-turn REPL with history pruning at 20 messages |
+| **Provider abstraction** | `Provider` class wrapping Anthropic and OpenAI-compatible APIs |
+| **Tool definitions** | JSON Schema input specs that the model calls dynamically |
+| **Tool dispatch** | `TOOL_DISPATCH` dict mapping tool names to Python functions |
+| **CLI** | REPL for interactive use + `--question` / `--stream` / `--model` / `--provider` flags |
+| **Web UI** | Streamlit chat interface with provider/model selection |
+| **Evals** | Fact-presence checks (`must_contain`) instead of brittle exact-string matching |
+| **Deterministic test data** | Seeded RNG for reproducible dev, test, and CI |
 
 ## Why this matters for AI engineering
 
 Most software lets you write deterministic tests. Agent behaviour is non-deterministic — the same question can get different phrasings. The eval harness in this project shows the right testing strategy for this world: check that *correct facts* appear in the output, not that the exact wording matches.
 
-The synthetic data generator means the project is self-contained, reproducible, and immediately runnable — no cloud credentials or CSV files needed (other than your LLM provider API key).
+The `Provider` abstraction shows how to build API-agnostic agents that can switch between LLM backends without changing the tool logic or agent loop — a practical skill for production systems where provider lock-in is a concern.
+
+The streaming implementation handles the tool-use edge case gracefully: if the model starts answering but then decides it needs a tool, the stream pauses, executes the tool, and continues — all transparent to the user.
 
 ## Requirements
 
 - Python 3.10+
 - **Anthropic**: `ANTHROPIC_API_KEY` environment variable
 - **DeepSeek**: `DEEPSEEK_API_KEY` environment variable
-- Dependencies: `anthropic`, `openai`, `pandas`, `numpy`
+- Dependencies: `anthropic`, `openai`, `streamlit`, `pandas`, `numpy`

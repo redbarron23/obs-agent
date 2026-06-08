@@ -78,7 +78,7 @@ def run_evals(verbose: bool = False) -> None:
     failed = 0
 
     for eval_case in EVALS:
-        answer = run(eval_case["question"])
+        answer, _messages = run(eval_case["question"])
         ok = all(
             expected in answer
             for expected in eval_case["must_contain"]

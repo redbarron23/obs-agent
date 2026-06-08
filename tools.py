@@ -138,6 +138,46 @@ def find_spikes(threshold_pct: float = 50.0) -> str:
     return "\n".join(results)
 
 
+def compare_cross_cloud() -> str:
+    """Compares total costs across Azure and GCP side by side.
+
+    Returns a summary of total Azure overage cost, total GCP logging
+    cost, and the cost split between the two clouds.  Useful for
+    executive-level "what are we spending across both clouds?" questions.
+    """
+    az_total = AZURE_SUMMARY_DF["estimated_overage_cost_30d"].sum()
+    gcp_total = GCP_SUMMARY_DF["total_cost"].sum()
+    grand_total = az_total + gcp_total
+
+    lines = [
+        "Cross-Cloud Cost Summary (30 days)",
+        "=" * 40,
+        f"Azure total overage cost:  ${az_total:,.2f}",
+        f"GCP total logging cost:    ${gcp_total:,.2f}",
+        f"{'─' * 40}",
+        f"Grand total:               ${grand_total:,.2f}",
+        "",
+        "Azure subscription breakdown:",
+    ]
+    for _, row in AZURE_SUMMARY_DF.sort_values(
+        "estimated_overage_cost_30d", ascending=False
+    ).iterrows():
+        lines.append(
+            f"  {row['subscription_id']}: ${row['estimated_overage_cost_30d']:,.2f}"
+        )
+
+    lines.append("")
+    lines.append("GCP project breakdown:")
+    for _, row in GCP_SUMMARY_DF.sort_values(
+        "total_cost", ascending=False
+    ).iterrows():
+        lines.append(
+            f"  {row['project_id']}: ${row['total_cost']:,.2f}"
+        )
+
+    return "\n".join(lines)
+
+
 # ── Claude tool definitions ────────────────────────────────────────────
 
 TOOL_DEFINITIONS = [
@@ -208,6 +248,18 @@ TOOL_DEFINITIONS = [
             "required": [],
         },
     },
+    {
+        "name": "compare_cross_cloud",
+        "description": "Compares total costs across Azure and GCP side by side. "
+                       "Returns total Azure overage cost, total GCP logging cost, "
+                       "and per-subscription / per-project breakdowns. "
+                       "Takes no arguments.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
 ]
 
 TOOL_DISPATCH = {
@@ -215,4 +267,5 @@ TOOL_DISPATCH = {
     "get_gcp_top_projects": lambda args: get_gcp_top_projects(**args),
     "get_daily_trend": lambda args: get_daily_trend(**args),
     "find_spikes": lambda args: find_spikes(**args),
+    "compare_cross_cloud": lambda args: compare_cross_cloud(),
 }
