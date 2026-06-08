@@ -1,8 +1,36 @@
 # obs-agent — Multi-Cloud Cost Triage Agent
 
-A Claude agent that answers questions about cloud logging costs across **Azure** and **GCP** by calling tools over billing/overage data, instead of requiring you to dig through spreadsheets by hand.
+An LLM agent that answers questions about cloud logging costs across **Azure** and **GCP** by calling tools over billing/overage data, instead of requiring you to dig through spreadsheets by hand.
 
-Built as a demonstration of the AI engineering agent pattern — tool definitions, tool dispatch, a conversational REPL, a CLI for scripting, and an eval harness with ground-truth checks against deterministic synthetic data.
+Supports **Anthropic** (Claude) and **DeepSeek** as LLM providers — switch between them with a single `--provider` flag.
+
+Built as a demonstration of the AI engineering agent pattern — tool definitions, tool dispatch, a conversational REPL, a CLI for scripting, an eval harness with ground-truth checks against deterministic synthetic data, and a provider abstraction that makes the agent loop API-agnostic.
+
+## Providers
+
+### Anthropic (default)
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+python agent.py -q "Which Azure subscription has the highest overage?"
+```
+
+### DeepSeek
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+python agent.py --provider deepseek -q "Which Azure subscription has the highest overage?"
+```
+
+When using DeepSeek, the `openai` Python package is used under the hood since DeepSeek serves an OpenAI-compatible API. You can also pass a custom model:
+
+```bash
+python agent.py --provider deepseek --model deepseek-chat -q "Show me the top 3 GCP projects"
+```
+
+Provider default models:
+- **Anthropic**: `claude-sonnet-4-6`
+- **DeepSeek**: `deepseek-chat`
 
 ## What it does
 
@@ -34,10 +62,17 @@ python agent.py
 python agent.py -q "Which Azure subscription has the highest overage?" --verbose
 ```
 
-### Use a different model
+### Switch provider or model
 
 ```bash
+# Anthropic with a specific model
 python agent.py -q "Show me the top 3 GCP projects" --model claude-sonnet-4-6
+
+# DeepSeek
+python agent.py --provider deepseek -q "Show me the top 3 GCP projects"
+
+# DeepSeek with a specific model
+python agent.py --provider deepseek --model deepseek-chat -q "Show me the top 3 GCP projects"
 ```
 
 ## Architecture
@@ -104,7 +139,7 @@ This runs a fixed set of questions with known-correct answers and checks that th
 
 | Concept | Implementation |
 |---|---|
-| **Agent loop** | Anthropic tool-use API: request → dispatch tool → feed back result → repeat until `end_turn` |
+| **Agent loop** | Provider-agnostic loop: request → dispatch tool → feed back result → repeat until `end_turn` |
 | **Tool definitions** | JSON Schema input specs that the model calls as needed, not a fixed pipeline |
 | **Tool dispatch** | A `TOOL_DISPATCH` dict mapping tool names to Python functions |
 | **CLI with scripting** | `python agent.py -q "..."` for automation; REPL for interactive use |
@@ -115,10 +150,11 @@ This runs a fixed set of questions with known-correct answers and checks that th
 
 Most software lets you write deterministic tests. Agent behaviour is non-deterministic — the same question can get different phrasings. The eval harness in this project shows the right testing strategy for this world: check that *correct facts* appear in the output, not that the exact wording matches.
 
-The synthetic data generator means the project is self-contained, reproducible, and immediately runnable — no external APIs, cloud credentials, or CSV files needed (other than the Anthropic API key).
+The synthetic data generator means the project is self-contained, reproducible, and immediately runnable — no cloud credentials or CSV files needed (other than your LLM provider API key).
 
 ## Requirements
 
 - Python 3.10+
-- Anthropic API key (`ANTHROPIC_API_KEY` environment variable)
-- Dependencies: `anthropic`, `pandas`, `numpy`
+- **Anthropic**: `ANTHROPIC_API_KEY` environment variable
+- **DeepSeek**: `DEEPSEEK_API_KEY` environment variable
+- Dependencies: `anthropic`, `openai`, `pandas`, `numpy`
