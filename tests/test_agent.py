@@ -387,7 +387,9 @@ class TestEdgeCases:
         )
         content = _build_assistant_content("anthropic", resp)
         assert len(content) == 1
-        assert content[0].type == "tool_use"
+        assert content[0]["type"] == "tool_use"
+        assert content[0]["name"] == "get_azure_top_overages"
+        assert content[0]["input"] == {"n": 1}
 
     def test_build_assistant_content_openai(self):
         """_build_assistant_content should handle OpenAI responses."""

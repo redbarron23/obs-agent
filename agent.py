@@ -15,6 +15,9 @@ Use DeepSeek instead of Anthropic:
     export DEEPSEEK_API_KEY=sk-...
     python agent.py --provider deepseek -q "Show me the top 3 GCP projects"
 
+Run Ollama locally (no API key needed):
+    python agent.py --provider ollama --model llama3.2 -q "Compare Azure and GCP"
+
 Use a specific model:
     python agent.py -q "Any cost spikes?" --model claude-sonnet-4-6
 
@@ -54,8 +57,17 @@ class Provider:
                 base_url="https://api.deepseek.com",
                 api_key=os.environ.get("DEEPSEEK_API_KEY"),
             )
+        elif name == "ollama":
+            from openai import OpenAI
+            host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+            self._client = OpenAI(
+                base_url=f"{host}/v1",
+                api_key="ollama",  # no real auth needed
+            )
         else:
-            raise ValueError(f"Unknown provider '{name}'. Use 'anthropic' or 'deepseek'.")
+            raise ValueError(
+                f"Unknown provider '{name}'. Use 'anthropic', 'deepseek', or 'ollama'."
+            )
 
     def create(self, messages: list[dict], *, stream: bool = False) -> object:
         """Send a message list and return the API response."""
@@ -70,7 +82,7 @@ class Provider:
             if stream:
                 return self._client.messages.stream(**kwargs)
             return self._client.messages.create(**kwargs)
-        else:  # deepseek (OpenAI-compatible)
+        else:  # deepseek / ollama (OpenAI-compatible)
             oai_messages = [{"role": "system", "content": SYSTEM}] + messages
             kwargs = dict(
                 model=self.model,
@@ -274,6 +286,7 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 PROVIDER_DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-4-6",
     "deepseek": "deepseek-chat",
+    "ollama": "llama3.2",
 }
 
 
@@ -511,7 +524,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         default=DEFAULT_PROVIDER,
-        choices=["anthropic", "deepseek"],
+        choices=["anthropic", "deepseek", "ollama"],
         help=f"LLM provider (default: {DEFAULT_PROVIDER}).",
     )
     parser.add_argument(

@@ -390,6 +390,24 @@ export DEEPSEEK_API_KEY=sk-...
 python agent.py --provider deepseek --model deepseek-chat -q "Top 3 GCP projects" --verbose
 ```
 
+### Ollama (local)
+
+```bash
+# Make sure Ollama is running with a model that supports tools
+# (llama3.2, llama3.1, qwen2.5, etc.)
+ollama pull llama3.2
+
+# Run the agent — no API key needed
+python agent.py --provider ollama --model llama3.2 -q "Compare costs across Azure and GCP"
+
+# Stream mode works too
+python agent.py --provider ollama --model llama3.2 -q "Any cost spikes?" --stream --verbose
+
+# Custom host (if Ollama isn't on localhost)
+export OLLAMA_HOST=http://my-server:11434
+python agent.py --provider ollama --model llama3.2 -q "Which Azure sub has the highest overage?"
+```
+
 ### Web UI example prompts
 
 Launch `streamlit run app.py`, select your provider, and try:

@@ -34,14 +34,14 @@ st.sidebar.caption("Multi-Cloud Cost Triage Agent")
 
 provider = st.sidebar.selectbox(
     "Provider",
-    options=["anthropic", "deepseek"],
+    options=["anthropic", "deepseek", "ollama"],
     index=0,
-    help="LLM provider to use for answering questions.",
+    help="LLM provider to use for answering questions. Ollama runs locally (no API key).",
 )
 
 model = st.sidebar.text_input(
     "Model (optional)",
-    placeholder="e.g. claude-sonnet-4-6 or deepseek-chat",
+    placeholder="e.g. claude-sonnet-4-6, deepseek-chat, or llama3.2",
     help="Leave blank for provider default.",
 )
 
@@ -63,7 +63,9 @@ with st.sidebar.expander("ℹ️ About"):
 
 # ── API key check ──────────────────────────────────────────────────────
 
-if provider == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
+if provider == "ollama":
+    st.sidebar.info("🟢 Ollama — runs locally, no API key needed")
+elif provider == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
     st.sidebar.error("❌ `DEEPSEEK_API_KEY` not set in environment.")
 elif provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
     st.sidebar.error("❌ `ANTHROPIC_API_KEY` not set in environment.")
