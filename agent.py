@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Multi-Cloud Cost Triage Agent — agent loop with tool-use.
 
-Supports multiple LLM providers via a --provider flag (anthropic or deepseek).
+Supports multiple LLM providers via a --provider flag (deepseek, anthropic, or ollama).
 
 Usage
 -----
@@ -11,9 +11,9 @@ Interactive REPL:
 Single question (scriptable):
     python agent.py -q "Which Azure subscription has the highest overage?"
 
-Use DeepSeek instead of Anthropic:
-    export DEEPSEEK_API_KEY=sk-...
-    python agent.py --provider deepseek -q "Show me the top 3 GCP projects"
+Use Anthropic instead of DeepSeek:
+    export ANTHROPIC_API_KEY=sk-...
+    python agent.py --provider anthropic -q "Show me the top 3 GCP projects"
 
 Run Ollama locally (no API key needed):
     python agent.py --provider ollama --model llama3.2 -q "Compare Azure and GCP"
@@ -399,12 +399,12 @@ class _OaiTextBlock:
 
 # ── Defaults ───────────────────────────────────────────────────────────
 
-DEFAULT_PROVIDER = "anthropic"
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_PROVIDER = "deepseek"
+DEFAULT_MODEL = "deepseek-chat"
 
 PROVIDER_DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-4-6",
     "deepseek": "deepseek-chat",
+    "anthropic": "claude-sonnet-4-6",
     "ollama": "llama3.2",
 }
 

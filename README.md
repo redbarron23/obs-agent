@@ -2,7 +2,7 @@
 
 An LLM-powered agent that answers natural-language questions about cloud logging costs across **Azure** and **GCP**. Instead of digging through spreadsheets, you ask: *"Which Azure subscription has the highest overage?"* — and the agent calls tools, gathers data, and gives you a concise answer.
 
-Supports **Anthropic (Claude)** and **DeepSeek** as LLM providers — switch with a single `--provider` flag.
+Default provider is **DeepSeek** (pay-as-you-go, no credit card required). Also supports **Anthropic (Claude)** and local **Ollama** models — switch with a single `--provider` flag.
 
 Built as a demonstration of the AI engineering agent pattern: tool definitions, tool dispatch, streaming output, a conversational REPL with multi-turn memory, a scripting CLI, a web UI, and an eval harness with ground-truth checks against deterministic synthetic data.
 
@@ -28,8 +28,8 @@ git clone https://github.com/redbarron23/obs-agent.git && cd obs-agent
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Set your API key
-export ANTHROPIC_API_KEY=sk-...
+# 2. Set your API key (DeepSeek is default)
+export DEEPSEEK_API_KEY=sk-...
 
 # 3. Generate synthetic data and run the interactive REPL
 python agent.py
@@ -108,12 +108,17 @@ python agent.py -q "Show me spikes" --model claude-sonnet-4-6
 
 | Provider | Default model | Env variable |
 |---|---|---|
-| **Anthropic** (default) | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
-| **DeepSeek** | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| **DeepSeek** (default) | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| **Anthropic** | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+| **Ollama** (local) | `llama3.2` | none — runs locally |
 
 Switch providers:
 ```bash
-python agent.py --provider deepseek -q "Which Azure subscription has the highest overage?"
+# Use Anthropic instead of DeepSeek
+python agent.py --provider anthropic -q "Which Azure subscription has the highest overage?"
+
+# Use a local Ollama model (no API key needed)
+python agent.py --provider ollama --model llama3.2 -q "Compare Azure and GCP"
 ```
 
 The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind a common interface, so tool logic and the agent loop work identically regardless of backend.
@@ -241,8 +246,9 @@ Building API-agnostic agents is a practical skill for production systems where p
 ## Requirements
 
 - Python 3.10+
-- **Anthropic**: `ANTHROPIC_API_KEY` environment variable (for Claude)
-- **DeepSeek**: `DEEPSEEK_API_KEY` environment variable (optional)
+- **DeepSeek**: `DEEPSEEK_API_KEY` environment variable
+- **Anthropic**: `ANTHROPIC_API_KEY` environment variable (optional)
+- **Ollama**: no API key needed (runs local models)
 
 ### Dependencies
 

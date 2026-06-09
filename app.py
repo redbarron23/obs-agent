@@ -10,8 +10,8 @@ You can pass the provider and model as query parameters:
     http://localhost:8501/?provider=deepseek&model=deepseek-chat
 
 Environment variables:
-    ANTHROPIC_API_KEY  — required for Anthropic (default provider)
-    DEEPSEEK_API_KEY   — required for DeepSeek
+    DEEPSEEK_API_KEY   — required for DeepSeek (default provider)
+    ANTHROPIC_API_KEY  — required for Anthropic
 """
 
 import os
@@ -35,8 +35,8 @@ st.sidebar.caption("Multi-Cloud Cost Triage Agent")
 provider = st.sidebar.selectbox(
     "Provider",
     options=["anthropic", "deepseek", "ollama"],
-    index=0,
-    help="LLM provider to use for answering questions. Ollama runs locally (no API key).",
+    index=1,
+    help="LLM provider to use for answering questions. DeepSeek is the default; Ollama runs locally (no API key).",
 )
 
 model = st.sidebar.text_input(
