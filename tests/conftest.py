@@ -10,6 +10,13 @@ import pandas as pd
 from datetime import date
 
 
+@pytest.fixture(autouse=True)
+def _fake_api_keys(monkeypatch):
+    """Prevent Provider init from failing in CI without real API keys."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+
 @pytest.fixture
 def azure_summary():
     """5 Azure subscriptions with a clear cost ranking."""

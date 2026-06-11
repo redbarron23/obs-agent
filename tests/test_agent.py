@@ -120,7 +120,7 @@ class TestAgentLoop:
 
         with patch("agent.Provider.create", return_value=fake_resp):
             from agent import run
-            answer, messages = run("Which is top?")
+            answer, messages = run("Which is top?", provider="anthropic")
 
         assert answer == "The top subscription is sub-a."
         assert len(messages) == 2  # user question + assistant answer
@@ -136,7 +136,7 @@ class TestAgentLoop:
         mock_create = MagicMock(side_effect=[tool_resp, final_resp])
         with patch("agent.Provider.create", mock_create):
             from agent import run
-            answer, messages = run("Which Azure sub is top?")
+            answer, messages = run("Which Azure sub is top?", provider="anthropic")
 
         assert "sub-a" in answer
         assert "5000" in answer
@@ -157,7 +157,7 @@ class TestAgentLoop:
         mock_create = MagicMock(side_effect=[tool1, tool2, final])
         with patch("agent.Provider.create", mock_create):
             from agent import run
-            answer, messages = run("Compare both clouds")
+            answer, messages = run("Compare both clouds", provider="anthropic")
 
         assert "sub-a" in answer
         assert "proj-alpha" in answer
@@ -174,7 +174,7 @@ class TestAgentLoop:
         with patch("agent.Provider.create", mock_create):
             from agent import run
             history = [{"role": "assistant", "content": "Previous answer"}]
-            answer, messages = run("Which is top?", messages=history)
+            answer, messages = run("Which is top?", messages=history, provider="anthropic")
 
         # Original message should still be first
         assert messages[0] == {"role": "assistant", "content": "Previous answer"}
@@ -196,7 +196,7 @@ class TestAgentLoop:
                 {"role": "user", "content": f"Question {i}"}
                 for i in range(30)
             ]
-            answer, messages = run("Final question", messages=long_history)
+            answer, messages = run("Final question", messages=long_history, provider="anthropic")
 
         assert len(messages) <= 22  # first + 19 recent + user + assistant
         assert messages[0]["content"] == "Question 0"
@@ -294,7 +294,7 @@ class TestStreaming:
                 mock_create.return_value = "stream_obj_placeholder"
 
                 from agent import run
-                answer, messages = run("Which is top?", stream=True)
+                answer, messages = run("Which is top?", stream=True, provider="anthropic")
 
         assert "sub-a" in answer
 
@@ -328,7 +328,7 @@ class TestStreaming:
         with patch.object(Provider, "stream_response", side_effect=stream_response_side_effect):
             with patch.object(Provider, "create", return_value="stream_obj"):
                 from agent import run
-                answer, messages = run("Which is top?", stream=True)
+                answer, messages = run("Which is top?", stream=True, provider="anthropic")
 
         assert "sub-a" in answer
         assert "5000" in answer
@@ -361,7 +361,7 @@ class TestEdgeCases:
 
         with patch("agent.Provider.create", return_value=fake_resp):
             from agent import run
-            answer, messages = run("")
+            answer, messages = run("", provider="anthropic")
         assert answer == ""
 
     def test_very_long_question(self):
@@ -371,7 +371,7 @@ class TestEdgeCases:
 
         with patch("agent.Provider.create", return_value=fake_resp):
             from agent import run
-            answer, messages = run(long_q)
+            answer, messages = run(long_q, provider="anthropic")
         assert answer == "sub-a"
 
     def test_no_tool_definition_called(self):
@@ -380,7 +380,7 @@ class TestEdgeCases:
 
         with patch("agent.Provider.create", return_value=fake_resp):
             from agent import run
-            answer, messages = run("Hello")
+            answer, messages = run("Hello", provider="anthropic")
         assert "Just answering" in answer
 
     def test_build_assistant_content_anthropic(self):
@@ -488,7 +488,7 @@ class TestSafetyRails:
 
         with patch("agent.Provider.create", return_value=tool_resp) as mock_create:
             from agent import run, MAX_TURNS
-            answer, messages = run("Keep calling tools")
+            answer, messages = run("Keep calling tools", provider="anthropic")
 
         assert str(MAX_TURNS) in answer
         assert mock_create.call_count == MAX_TURNS
@@ -503,7 +503,7 @@ class TestSafetyRails:
         mock_create = MagicMock(side_effect=[tool_resp, final_resp])
         with patch("agent.Provider.create", mock_create):
             from agent import run
-            answer, messages = run("Do something weird")
+            answer, messages = run("Do something weird", provider="anthropic")
 
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
         assert any("unknown tool" in m["content"] for m in tool_msgs)
@@ -516,7 +516,7 @@ class TestCLIParsing:
     def test_defaults(self):
         from agent import _parse_args
         args = _parse_args([])
-        assert args.provider == "anthropic"
+        assert args.provider == "deepseek"
         assert args.model is None
         assert args.verbose is False
         assert args.stream is False
