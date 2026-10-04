@@ -66,7 +66,7 @@ You: Show me its daily trend
 Agent: (remembers which subscription you meant and fetches the trend)
 ```
 
-Message history prunes at 20 turns to stay within context limits, keeping the first user message for original context.
+Message history prunes to the most recent complete conversation turns, so tool calls and results remain valid for the provider API.
 
 ### Cross-cloud cost comparison
 
@@ -486,8 +486,8 @@ python -m pytest tests/ -v
 # Skip live LLM evals (default in CI)
 python -m pytest tests/ -v -m "not integration"
 
-# Run live evals (requires ANTHROPIC_API_KEY)
-python -m pytest tests/ -v -m integration
+# Run live evals (requires a configured, reachable provider)
+OBS_AGENT_RUN_LIVE_EVALS=1 python -m pytest tests/ -v -m integration
 ```
 
 CI runs on every push/PR via GitHub Actions (Python 3.10–3.12): unit tests + eval dry-run.

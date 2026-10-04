@@ -212,6 +212,30 @@ class TestFindSpikes:
         assert "+" in result  # percentage sign
         assert "$" in result    # dollar amount
 
+    def test_platform_filter(self, patch_azure_details, patch_gcp_details):
+        from tools import find_spikes
+        gcp = find_spikes(threshold_pct=200, platform="gcp")
+        az = find_spikes(threshold_pct=200, platform="azure")
+        assert "[GCP]" in gcp and "[Azure]" not in gcp
+        assert "[Azure]" in az and "[GCP]" not in az
+
+    def test_unknown_platform(self):
+        from tools import find_spikes
+        assert "Unknown platform" in find_spikes(platform="aws")
+
+    def test_no_spikes_message_names_platform(self, patch_gcp_details):
+        from tools import find_spikes
+        assert "on GCP" in find_spikes(threshold_pct=9999, platform="gcp")
+
+    def test_limit_keeps_costliest_and_reports_total(self):
+        """Real synthetic data has many GCP spikes; the cap must keep the biggest."""
+        from tools import find_spikes
+        out = find_spikes(threshold_pct=50, platform="gcp", limit=3)
+        lines = out.splitlines()
+        assert "showing the 3 costliest of" in lines[0]
+        costs = [float(l.rsplit("($", 1)[1].rstrip(")")) for l in lines[1:]]
+        assert len(costs) == 3 and costs == sorted(costs, reverse=True)
+
     def test_azure_and_gcp_both_reported(self, patch_azure_details, patch_gcp_details):
         from tools import find_spikes
         result = find_spikes(threshold_pct=200)

@@ -1,5 +1,7 @@
 """Tests for the eval harness."""
 
+import os
+
 import pytest
 
 from evals import EVALS, _check_eval, run_evals
@@ -29,9 +31,10 @@ class TestEvalLive:
 
     @pytest.fixture(autouse=True)
     def require_api_key(self):
-        import os
         from agent import DEFAULT_PROVIDER
 
+        if os.environ.get("OBS_AGENT_RUN_LIVE_EVALS") != "1":
+            pytest.skip("set OBS_AGENT_RUN_LIVE_EVALS=1 to run live evals")
         key = {"anthropic": "ANTHROPIC_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openai": "OPENAI_API_KEY"}.get(DEFAULT_PROVIDER)
         if key and not os.environ.get(key):
             pytest.skip(f"{key} not set")

@@ -187,19 +187,33 @@ class TestAgentLoop:
         assert messages[3]["role"] == "tool"
 
     def test_history_pruning(self):
-        """Very long history should be pruned, keeping the first message."""
-        tool_resp = make_anthropic_response(text="Done.")
+        """Pruning must not leave a tool result without its tool call."""
+        from agent import _prune_history
 
-        with patch("agent.Provider.create", return_value=tool_resp):
-            from agent import run
-            long_history = [
-                {"role": "user", "content": f"Question {i}"}
-                for i in range(30)
-            ]
-            answer, messages = run("Final question", messages=long_history, provider="anthropic")
+        messages = []
+        for i in range(5):
+            messages.extend([
+                {"role": "user", "content": f"Question {i}"},
+                {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": f"call-{i}", "name": "compare_cross_cloud", "input": {}},
+                ]},
+                {"role": "tool", "tool_call_id": f"call-{i}", "content": "data"},
+                {"role": "assistant", "content": f"Answer {i}"},
+            ])
+        messages.append({"role": "user", "content": "Final question"})
 
-        assert len(messages) <= 22  # first + 19 recent + user + assistant
-        assert messages[0]["content"] == "Question 0"
+        _prune_history(messages, max_history=20)
+
+        assert messages[0]["role"] == "user"
+        calls = {
+            call["id"]
+            for message in messages
+            for call in message.get("tool_calls", [])
+        }
+        assert all(
+            message.get("tool_call_id") in calls
+            for message in messages if message["role"] == "tool"
+        )
 
 
 class TestProviderAbstraction:
@@ -309,6 +323,38 @@ class TestStreaming:
                 answer, messages = run("Which is top?", stream=True, provider="anthropic")
 
         assert "sub-a" in answer
+
+    def test_anthropic_stream_uses_completed_tool_input(self):
+        """Tool dispatch must use the final message, not the empty start block."""
+        from agent import Provider
+
+        final = make_anthropic_response(
+            tool_name="get_azure_top_overages", tool_input={"n": 1},
+        )
+        start = SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(
+                type="tool_use", name="get_azure_top_overages", input={}, id="call-1",
+            ),
+        )
+
+        class FakeStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def __iter__(self):
+                return iter([start])
+
+            def get_final_message(self):
+                return final
+
+        _, _, calls = Provider._stream_anthropic(
+            FakeStream(), verbose=False, on_token=lambda _: None,
+        )
+        assert calls[0].input == {"n": 1}
 
     def test_stream_with_tool_call(self):
         """Streaming with a tool call should dispatch and continue.

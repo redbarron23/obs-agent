@@ -132,11 +132,13 @@ def _to_openai_tools(tool_definitions: list[dict]) -> list[dict]:
 
 
 def _prune_history(messages: list[dict], max_history: int = MAX_HISTORY) -> None:
-    """Keep the first user message plus the most recent turns."""
+    """Keep a protocol-valid suffix beginning with a user message."""
     if len(messages) <= max_history:
         return
-    first = messages[0]
-    messages[:] = [first] + messages[-(max_history - 1):]
+    start = len(messages) - max_history
+    while start < len(messages) and messages[start]["role"] != "user":
+        start += 1
+    messages[:] = messages[start:]
 
 
 def _execute_tool(block, *, verbose: bool) -> str:
@@ -307,7 +309,10 @@ class Provider:
 
         if on_token is None:
             print()
-        return final_response, collected["text_blocks"], collected["tool_use_blocks"]
+        tool_use_blocks = [
+            block for block in final_response.content if block.type == "tool_use"
+        ]
+        return final_response, collected["text_blocks"], tool_use_blocks
 
     @staticmethod
     def _stream_openai(stream, *, verbose: bool, on_token):

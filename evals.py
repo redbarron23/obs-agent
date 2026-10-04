@@ -87,7 +87,7 @@ EVALS = [
             "Find any cost spikes above 200% across GCP"
         ),
         "must_contain": ["project-bravo"],
-        "dry_run_tool": ("find_spikes", {"threshold_pct": 200}),
+        "dry_run_tool": ("find_spikes", {"threshold_pct": 200, "platform": "gcp"}),
     },
 ]
 

@@ -31,3 +31,23 @@ jobs:
 
       - name: Run eval dry-run (deterministic)
         run: python evals.py --dry-run
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t obs-agent .
+
+      - name: Smoke-test the API container
+        run: |
+          docker run -d --name obs-agent -p 8000:8000 obs-agent
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+          curl -sf http://localhost:8000/health
+          curl -sf http://localhost:8000/openapi.json > /dev/null
+          docker logs obs-agent
+          docker rm -f obs-agent
