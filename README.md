@@ -2,7 +2,7 @@
 
 An LLM-powered agent that answers natural-language questions about cloud logging costs across **Azure** and **GCP**. Instead of digging through spreadsheets, you ask: *"Which Azure subscription has the highest overage?"* — and the agent calls tools, gathers data, and gives you a concise answer.
 
-Default provider is **DeepSeek** (pay-as-you-go, no credit card required). Also supports **Anthropic (Claude)** and local **Ollama** models — switch with a single `--provider` flag.
+Default provider is local **Ollama** (free, no API key). Also supports **DeepSeek**, **OpenAI** and **Anthropic (Claude)** — switch with a single `--provider` flag.
 
 Built as a demonstration of the AI engineering agent pattern: tool definitions, tool dispatch, streaming output, a conversational REPL with multi-turn memory, a scripting CLI, a web UI, and an eval harness with ground-truth checks against deterministic synthetic data.
 
@@ -28,8 +28,9 @@ git clone https://github.com/redbarron23/obs-agent.git && cd obs-agent
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Set your API key (DeepSeek is default)
-export DEEPSEEK_API_KEY=sk-...
+# 2. Start Ollama and pull a tool-capable model (default), or set a provider API key
+#    ollama serve & ollama pull llama3.2
+#    export DEEPSEEK_API_KEY=sk-...   # then add --provider deepseek
 
 # 3. Generate synthetic data and run the interactive REPL
 python agent.py
@@ -108,17 +109,18 @@ python agent.py -q "Show me spikes" --model claude-sonnet-4-6
 
 | Provider | Default model | Env variable |
 |---|---|---|
-| **DeepSeek** (default) | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| **Ollama** (local, default) | `llama3.2` | none — runs locally |
+| **DeepSeek** | `deepseek-chat` | `DEEPSEEK_API_KEY` |
 | **Anthropic** | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
-| **Ollama** (local) | `llama3.2` | none — runs locally |
+| **OpenAI** | `gpt-5.4-mini` | `OPENAI_API_KEY` |
 
 Switch providers:
 ```bash
-# Use Anthropic instead of DeepSeek
+# Use Anthropic instead of Ollama
 python agent.py --provider anthropic -q "Which Azure subscription has the highest overage?"
 
-# Use a local Ollama model (no API key needed)
-python agent.py --provider ollama --model llama3.2 -q "Compare Azure and GCP"
+# Pick a specific Ollama model (no API key needed)
+python agent.py --model qwen2.5:7b -q "Compare Azure and GCP"
 ```
 
 The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind a common interface, so tool logic and the agent loop work identically regardless of backend.
@@ -286,7 +288,7 @@ Key identifiers in the synthetic data:
 # Deterministic dry-run — checks tool outputs directly, no API key needed
 python evals.py --dry-run
 
-# Live evals against the LLM (needs the provider's API key; default: DeepSeek)
+# Live evals against the LLM (needs the provider's API key; default: Ollama)
 python evals.py
 python evals.py --provider anthropic --model claude-haiku-4-5-20251001
 
@@ -342,9 +344,8 @@ Building API-agnostic agents is a practical skill for production systems where p
 ## Requirements
 
 - Python 3.10+
-- **DeepSeek**: `DEEPSEEK_API_KEY` environment variable
-- **Anthropic**: `ANTHROPIC_API_KEY` environment variable (optional)
-- **Ollama**: no API key needed (runs local models)
+- **Ollama** (default): no API key needed — install Ollama and pull a tool-capable model
+- **DeepSeek / OpenAI / Anthropic** (optional): `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
 
 ### Dependencies
 

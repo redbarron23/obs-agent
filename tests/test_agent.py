@@ -205,6 +205,18 @@ class TestAgentLoop:
 class TestProviderAbstraction:
     """Tests that the Provider works with both API shapes."""
 
+    def test_openai_provider_uses_max_completion_tokens(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        from unittest.mock import MagicMock
+        from agent import Provider
+
+        p = Provider("openai", "gpt-5.4-mini")
+        p._client = MagicMock()
+        p.create([{"role": "user", "content": "hi"}])
+        kwargs = p._client.chat.completions.create.call_args.kwargs
+        assert kwargs["max_completion_tokens"] == 1024
+        assert "max_tokens" not in kwargs
+
     def test_anthropic_stop_reason_end_turn(self):
         resp = make_anthropic_response(text="Hello")
         from agent import Provider
@@ -516,7 +528,7 @@ class TestCLIParsing:
     def test_defaults(self):
         from agent import _parse_args
         args = _parse_args([])
-        assert args.provider == "deepseek"
+        assert args.provider == "ollama"
         assert args.model is None
         assert args.verbose is False
         assert args.stream is False

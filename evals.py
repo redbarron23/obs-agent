@@ -160,7 +160,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--provider",
-        choices=["anthropic", "deepseek", "ollama"],
+        choices=["anthropic", "deepseek", "openai", "ollama"],
         help="LLM provider for live evals (default: agent default).",
     )
     parser.add_argument("--model", help="Model name for live evals.")

@@ -7,11 +7,13 @@ Usage
 Then open the URL shown in the terminal (typically http://localhost:8501).
 
 You can pass the provider and model as query parameters:
-    http://localhost:8501/?provider=deepseek&model=deepseek-chat
+    http://localhost:8501/?provider=ollama&model=llama3.2
 
 Environment variables:
-    DEEPSEEK_API_KEY   — required for DeepSeek (default provider)
+    DEEPSEEK_API_KEY   — required for DeepSeek (--provider deepseek)
     ANTHROPIC_API_KEY  — required for Anthropic
+    OPENAI_API_KEY     — required for OpenAI
+    OLLAMA_HOST        — optional, defaults to http://localhost:11434
 """
 
 import os
@@ -34,9 +36,9 @@ st.sidebar.caption("Multi-Cloud Cost Triage Agent")
 
 provider = st.sidebar.selectbox(
     "Provider",
-    options=["anthropic", "deepseek", "ollama"],
-    index=1,
-    help="LLM provider to use for answering questions. DeepSeek is the default; Ollama runs locally (no API key).",
+    options=["anthropic", "deepseek", "openai", "ollama"],
+    index=3,
+    help="LLM provider to use for answering questions. Ollama (local, no API key) is the default.",
 )
 
 model = st.sidebar.text_input(
@@ -73,6 +75,8 @@ if provider == "ollama":
     st.sidebar.info("🟢 Ollama — runs locally, no API key needed")
 elif provider == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
     st.sidebar.error("❌ `DEEPSEEK_API_KEY` not set in environment.")
+elif provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
+    st.sidebar.error("❌ `OPENAI_API_KEY` not set in environment.")
 elif provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
     st.sidebar.error("❌ `ANTHROPIC_API_KEY` not set in environment.")
 else:

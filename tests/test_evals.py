@@ -32,7 +32,7 @@ class TestEvalLive:
         import os
         from agent import DEFAULT_PROVIDER
 
-        key = {"anthropic": "ANTHROPIC_API_KEY", "deepseek": "DEEPSEEK_API_KEY"}.get(DEFAULT_PROVIDER)
+        key = {"anthropic": "ANTHROPIC_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openai": "OPENAI_API_KEY"}.get(DEFAULT_PROVIDER)
         if key and not os.environ.get(key):
             pytest.skip(f"{key} not set")
 

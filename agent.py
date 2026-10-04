@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Multi-Cloud Cost Triage Agent — agent loop with tool-use.
 
-Supports multiple LLM providers via a --provider flag (deepseek, anthropic, or ollama).
+Supports multiple LLM providers via a --provider flag (ollama [default], deepseek, anthropic, or openai).
 
 Usage
 -----
@@ -11,12 +11,12 @@ Interactive REPL:
 Single question (scriptable):
     python agent.py -q "Which Azure subscription has the highest overage?"
 
-Use Anthropic instead of DeepSeek:
+Use Anthropic instead of the default (Ollama):
     export ANTHROPIC_API_KEY=sk-...
     python agent.py --provider anthropic -q "Show me the top 3 GCP projects"
 
-Run Ollama locally (no API key needed):
-    python agent.py --provider ollama --model llama3.2 -q "Compare Azure and GCP"
+Pick a specific Ollama model (no API key needed):
+    python agent.py --model qwen2.5:7b -q "Compare Azure and GCP"
 
 Use a specific model:
     python agent.py -q "Any cost spikes?" --model claude-sonnet-4-6
@@ -183,6 +183,9 @@ class Provider:
                 base_url="https://api.deepseek.com",
                 api_key=os.environ.get("DEEPSEEK_API_KEY"),
             )
+        elif name == "openai":
+            from openai import OpenAI
+            self._client = OpenAI()  # reads OPENAI_API_KEY
         elif name == "ollama":
             from openai import OpenAI
             host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
@@ -192,7 +195,7 @@ class Provider:
             )
         else:
             raise ValueError(
-                f"Unknown provider '{name}'. Use 'anthropic', 'deepseek', or 'ollama'."
+                f"Unknown provider '{name}'. Use 'anthropic', 'deepseek', 'openai', or 'ollama'."
             )
 
     def create(self, messages: list[dict], *, stream: bool = False) -> object:
@@ -212,12 +215,14 @@ class Provider:
 
         api_messages = _format_messages_for_openai(messages)
         oai_messages = [{"role": "system", "content": SYSTEM}] + api_messages
+        # Newer OpenAI models reject max_tokens in favour of max_completion_tokens.
+        token_param = "max_completion_tokens" if self.name == "openai" else "max_tokens"
         kwargs = dict(
             model=self.model,
-            max_tokens=1024,
             tools=_to_openai_tools(TOOL_DEFINITIONS),
             messages=oai_messages,
         )
+        kwargs[token_param] = 1024
         if stream:
             return self._client.chat.completions.create(**kwargs, stream=True)
         return self._client.chat.completions.create(**kwargs)
@@ -306,7 +311,7 @@ class Provider:
 
     @staticmethod
     def _stream_openai(stream, *, verbose: bool, on_token):
-        """Consume an OpenAI-compatible (DeepSeek/Ollama) stream."""
+        """Consume an OpenAI-compatible (DeepSeek/OpenAI/Ollama) stream."""
         collected_text = []
         tool_call_chunks = {}
         chunk = None
@@ -399,12 +404,13 @@ class _OaiTextBlock:
 
 # ── Defaults ───────────────────────────────────────────────────────────
 
-DEFAULT_PROVIDER = "deepseek"
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_PROVIDER = "ollama"
+DEFAULT_MODEL = "llama3.2"
 
 PROVIDER_DEFAULT_MODELS = {
     "deepseek": "deepseek-chat",
     "anthropic": "claude-sonnet-4-6",
+    "openai": "gpt-5.4-mini",
     "ollama": "llama3.2",
 }
 
@@ -673,7 +679,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         default=DEFAULT_PROVIDER,
-        choices=["anthropic", "deepseek", "ollama"],
+        choices=["anthropic", "deepseek", "openai", "ollama"],
         help=f"LLM provider (default: {DEFAULT_PROVIDER}).",
     )
     parser.add_argument(
