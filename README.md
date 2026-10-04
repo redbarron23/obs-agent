@@ -242,7 +242,7 @@ obs-agent/
 │   ├── test_evals.py
 │   └── test_tools.py
 ├── .github/workflows/
-│   └── ci.yml            # Unit tests + deterministic eval dry-run
+│   └── ci.yml            # Unit tests + eval dry-run + Docker build/smoke test
 ├── Dockerfile
 ├── docker-compose.yml   # API on :8000 + Streamlit UI on :8501
 ├── .env.example
@@ -369,7 +369,7 @@ Supports both **batch** (full response at once) and **streaming** (token-by-toke
 | `get_azure_top_overages` | Top N Azure subscriptions by estimated 30-day overage cost |
 | `get_gcp_top_projects` | Top N GCP projects by total logging cost |
 | `get_daily_trend` | Day-by-day cost/ingestion trend for a given subscription or project |
-| `find_spikes` | Detects days where cost jumped >X% vs the previous day (both clouds) |
+| `find_spikes` | Detects days where cost jumped >X% vs the previous day. Optional `platform` (`azure`/`gcp`/`all`) and `limit` (default 10); results are ranked by dollar cost and the total count is reported when truncated |
 | `compare_cross_cloud` | Total cost comparison across Azure and GCP with per-sub/project breakdown |
 
 Each tool returns a clean formatted string so the model gets compact, readable results. Tools are pure functions operating on in-memory DataFrames — no network calls, no side effects.
@@ -490,11 +490,11 @@ python -m pytest tests/ -v -m "not integration"
 OBS_AGENT_RUN_LIVE_EVALS=1 python -m pytest tests/ -v -m integration
 ```
 
-CI runs on every push/PR via GitHub Actions (Python 3.10–3.12): unit tests + eval dry-run.
+CI runs on every push/PR via GitHub Actions: unit tests and the eval dry-run on Python 3.10–3.12, plus a Docker job that builds the image and smoke-tests `/health`.
 
 ### Test strategy
 
-**Tool tests** (`tests/test_tools.py`, 29 tests) patch the module-level DataFrames with small, hand-crafted fixtures containing known values:
+**Tool tests** (`tests/test_tools.py`, 34 tests) patch the module-level DataFrames with small, hand-crafted fixtures containing known values:
 
 ```python
 # conftest.py — fixtures with transparent data
@@ -513,7 +513,7 @@ def test_top_1(self, patch_azure_summary):
     assert "sub-b" not in result  # only top 1
 ```
 
-**Agent tests** (`tests/test_agent.py`, 32 tests) mock the Provider class so no API calls are made:
+**Agent tests** (`tests/test_agent.py`, 41 tests) mock the Provider class so no API calls are made:
 
 ```python
 # Helper builds a fake Anthropic response with known content
@@ -537,16 +537,20 @@ tests/
 ├── conftest.py        # Shared fixtures — tiny DataFrames with known values
 ├── test_tools.py      # Tool logic tests — pure pandas, no API calls
 ├── test_agent.py      # Agent loop tests — mocked LLM, covers all agent paths
+├── test_api.py        # FastAPI service — mocked LLM, SSE, auth, sessions, OpenAPI
 └── test_evals.py      # Eval dry-run (deterministic) + live integration tests
 ```
 
 | Group | Tests | What's verified |
 |---|---|---|
-| Tool logic (`test_tools.py`) | 29 | Top-N ranking, zero filtering, spike thresholds, cross-cloud totals, edge cases |
-| Agent loop (`test_agent.py`) | 16 | Simple answer, single/multi tool call, conversation memory, history pruning, empty/long questions |
+| Tool logic (`test_tools.py`) | 34 | Top-N ranking, zero filtering, spike thresholds / platform filter / limit, cross-cloud totals, edge cases |
+| Agent loop (`test_agent.py`) | 16 | Simple answer, single/multi tool call, conversation memory, history pruning, empty/long questions, safety rails |
 | Provider abstraction | 10 | Stop reason mapping + content block parsing for Anthropic and OpenAI shapes |
-| Streaming | 3 | Streaming with/without tools, OpenAI-compatible streaming |
+| Streaming | 7 | Streaming with/without tools, OpenAI-compatible streaming, stop-reason normalisation |
+| Message formatting | 3 | Canonical ↔ provider message conversion |
 | CLI parsing | 8 | All flags, defaults, combinations |
+| REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
+| Evals (`test_evals.py`) | 10 | 8 deterministic dry-run cases, the full dry-run, and an opt-in live run |
 
 ## Sample conversations
 

@@ -42,3 +42,17 @@ class TestEvalLive:
     def test_live_evals(self):
         passed, failed = run_evals(dry_run=False)
         assert failed == 0, f"{failed} live eval(s) failed"
+
+
+class TestCheckEvalNormalisation:
+    def test_ignores_case_and_separator_style(self):
+        ok, missing = _check_eval("1. Project Alpha: $12,672", ["project-alpha"])
+        assert ok and not missing
+
+    def test_still_requires_the_identifier(self):
+        ok, missing = _check_eval("Project Charlie only", ["project-alpha"])
+        assert not ok and missing == ["project-alpha"]
+
+    def test_does_not_confuse_similar_ids(self):
+        ok, _ = _check_eval("sub-a1b2c3d5", ["sub-a1b2c3d4"])
+        assert not ok

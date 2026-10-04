@@ -12,6 +12,8 @@ Dry-run mode checks tool outputs directly — fully deterministic, no API key.
 
 from __future__ import annotations
 
+import re
+
 from agent import run
 from tools import TOOL_DISPATCH
 
@@ -92,8 +94,18 @@ EVALS = [
 ]
 
 
+def _normalise(text: str) -> str:
+    """Lowercase and treat '-', '_' and whitespace as the same separator.
+
+    Models often rewrite identifiers ('project-alpha' -> 'Project Alpha').
+    The fact is still correct, so the check should not depend on styling.
+    """
+    return re.sub(r"[\s_\-]+", " ", text.lower())
+
+
 def _check_eval(answer: str, must_contain: list[str]) -> tuple[bool, list[str]]:
-    missing = [e for e in must_contain if e not in answer]
+    haystack = _normalise(answer)
+    missing = [e for e in must_contain if _normalise(e) not in haystack]
     return not missing, missing
 
 
