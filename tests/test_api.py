@@ -131,3 +131,17 @@ def test_stream_run_propagates_errors():
     with patch("agent.run", side_effect=RuntimeError("boom")):
         with pytest.raises(RuntimeError, match="boom"):
             list(stream_run("q"))
+
+
+class TestOpenAPI:
+    def test_errors_and_sse_documented(self, client):
+        spec = client.get("/openapi.json").json()
+        ask = spec["paths"]["/ask"]["post"]["responses"]
+        assert {"200", "401", "422", "502"} <= set(ask)
+        stream = spec["paths"]["/ask/stream"]["post"]
+        assert "text/event-stream" in stream["responses"]["200"]["content"]
+        assert "event: done" in stream["description"]
+
+    def test_request_example_present(self, client):
+        schema = client.get("/openapi.json").json()["components"]["schemas"]["AskRequest"]
+        assert schema["examples"][0]["question"]

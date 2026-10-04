@@ -90,20 +90,74 @@ sessions = SessionStore()
 # ── Schemas ────────────────────────────────────────────────────────────
 
 class AskRequest(BaseModel):
+    model_config = {"json_schema_extra": {"examples": [{
+        "question": "Which Azure subscription has the highest overage?",
+        "provider": "ollama",
+        "session_id": "demo",
+    }]}}
+
     question: str = Field(min_length=1, max_length=4000)
     provider: str = Field(default=DEFAULT_PROVIDER)
-    model: str | None = None
+    model: str | None = Field(
+        default=None, description="Provider-specific model; omit for the provider default."
+    )
     session_id: str | None = Field(
-        default=None, description="Reuse to keep conversation memory."
+        default=None,
+        description="Reuse across requests to keep conversation memory. "
+                    "Generated and returned if omitted.",
     )
 
 
 class AskResponse(BaseModel):
+    model_config = {"json_schema_extra": {"examples": [{
+        "answer": "sub-a1b2c3d4 has the highest overage at $18,411.",
+        "session_id": "demo",
+        "provider": "ollama",
+        "model": "qwen2.5:7b",
+        "tools_called": ["get_azure_top_overages"],
+    }]}}
+
     answer: str
     session_id: str
     provider: str
     model: str
-    tools_called: list[str]
+    tools_called: list[str] = Field(
+        description="Tools the agent invoked while answering this question."
+    )
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+
+
+ERROR_RESPONSES = {
+    401: {"model": ErrorResponse, "description": "Missing or invalid X-API-Key "
+                                                  "(only when OBS_AGENT_API_KEY is set)."},
+    422: {"description": "Invalid request body or unknown provider."},
+    502: {"model": ErrorResponse, "description": "The LLM backend failed "
+                                                  "(bad key, no credits, server down)."},
+}
+
+SSE_DESCRIPTION = """Answer a question as server-sent events (`text/event-stream`).
+
+Events, in order:
+
+```
+data: {"token": "The top "}            <- repeated, one per text chunk
+
+event: done
+data: {"session_id": "demo", "tools_called": ["get_gcp_top_projects"]}
+```
+
+If the backend fails mid-stream the final event is instead:
+
+```
+event: error
+data: {"detail": "..."}
+```
+
+Errors that occur before streaming starts (401, 422) are normal HTTP errors.
+"""
 
 
 def _validate(req: AskRequest) -> str:
@@ -130,17 +184,28 @@ def _tools_called(history: list[dict]) -> list[str]:
 
 # ── Routes ─────────────────────────────────────────────────────────────
 
-@app.get("/health")
+@app.get("/health", summary="Liveness probe")
 def health() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/providers", dependencies=[Depends(require_api_key)])
+@app.get(
+    "/providers",
+    dependencies=[Depends(require_api_key)],
+    summary="List providers",
+    responses={401: ERROR_RESPONSES[401]},
+)
 def providers() -> dict:
     return {"default": DEFAULT_PROVIDER, "models": PROVIDER_DEFAULT_MODELS}
 
 
-@app.post("/ask", response_model=AskResponse, dependencies=[Depends(require_api_key)])
+@app.post(
+    "/ask",
+    response_model=AskResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Ask a question",
+    responses={k: v for k, v in ERROR_RESPONSES.items()},
+)
 def ask(req: AskRequest) -> AskResponse:
     model = _validate(req)
     session_id = req.session_id or uuid.uuid4().hex
@@ -163,7 +228,17 @@ def ask(req: AskRequest) -> AskResponse:
     )
 
 
-@app.post("/ask/stream", dependencies=[Depends(require_api_key)])
+@app.post(
+    "/ask/stream",
+    dependencies=[Depends(require_api_key)],
+    summary="Ask a question (streamed)",
+    description=SSE_DESCRIPTION,
+    responses={
+        200: {"content": {"text/event-stream": {}}, "description": "Server-sent events."},
+        401: ERROR_RESPONSES[401],
+        422: ERROR_RESPONSES[422],
+    },
+)
 def ask_stream(req: AskRequest) -> StreamingResponse:
     model = _validate(req)
     session_id = req.session_id or uuid.uuid4().hex
@@ -192,7 +267,12 @@ def ask_stream(req: AskRequest) -> StreamingResponse:
     return StreamingResponse(events(), media_type="text/event-stream")
 
 
-@app.delete("/sessions/{session_id}", dependencies=[Depends(require_api_key)])
+@app.delete(
+    "/sessions/{session_id}",
+    dependencies=[Depends(require_api_key)],
+    summary="Forget a conversation",
+    responses={401: ERROR_RESPONSES[401], 404: {"model": ErrorResponse, "description": "Unknown session."}},
+)
 def delete_session(session_id: str) -> dict:
     if not sessions.delete(session_id):
         raise HTTPException(status_code=404, detail="Session not found")

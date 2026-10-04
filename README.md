@@ -111,7 +111,73 @@ curl -s localhost:8000/ask -H 'content-type: application/json' \
 # follow-ups reuse the same session_id and keep conversation memory
 ```
 
-Sessions live in memory (LRU, 200 max), so run a single replica or add sticky sessions. Set `OBS_AGENT_API_KEY` to require an `X-API-Key` header on everything except `/health`. The service is stateless apart from sessions, so it sits happily behind API Gateway, APIM or any reverse proxy.
+#### Streaming format
+
+`POST /ask/stream` responds with `text/event-stream`: one `data:` line per text chunk, then a final `done` (or `error`) event.
+
+```
+data: {"token": "The top 3 GCP projects "}
+data: {"token": "are Alpha, Bravo and Charlie."}
+
+event: done
+data: {"session_id": "demo", "tools_called": ["get_gcp_top_projects"]}
+```
+
+If the backend fails after the stream has started, the last event is `event: error` with `{"detail": "..."}` instead of `done`.
+
+#### Errors
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing or wrong `X-API-Key` (only when `OBS_AGENT_API_KEY` is set) |
+| `404` | `DELETE /sessions/{id}` for an unknown session |
+| `422` | Invalid body (empty question, over 4000 chars) or unknown provider |
+| `502` | The LLM backend failed: bad key, no credits, Ollama not running |
+
+All error bodies are `{"detail": "..."}`. Interactive docs with schemas and examples are at `/docs` (Swagger UI) and `/redoc`; the raw spec is at `/openapi.json`.
+
+#### Calling it from Python
+
+```python
+import json
+import requests
+
+BASE = "http://localhost:8000"
+HEADERS = {"X-API-Key": "..."}          # omit if OBS_AGENT_API_KEY is not set
+
+# One-shot, with conversation memory via session_id
+r = requests.post(f"{BASE}/ask", headers=HEADERS, json={
+    "question": "Which Azure subscription has the highest overage?",
+    "session_id": "demo",
+})
+r.raise_for_status()
+print(r.json()["answer"], r.json()["tools_called"])
+
+# Streaming
+with requests.post(f"{BASE}/ask/stream", headers=HEADERS, stream=True, json={
+    "question": "And the second GCP project?", "session_id": "demo",
+}) as resp:
+    event = "message"
+    for line in resp.iter_lines(decode_unicode=True):
+        if line.startswith("event:"):
+            event = line[7:]
+        elif line.startswith("data:"):
+            data = json.loads(line[6:])
+            if event == "message":
+                print(data["token"], end="", flush=True)
+            elif event == "error":
+                raise RuntimeError(data["detail"])
+            else:                        # done
+                print("\ntools:", data["tools_called"])
+```
+
+#### Running it in production
+
+- **Sessions are in memory** (LRU, 200 max) and lost on restart. Run a single replica, or put sticky sessions (by `session_id`) in front. For multiple replicas, move `SessionStore` to Redis.
+- **Set `OBS_AGENT_API_KEY`** whenever the port is reachable by anything but you. `/health` stays open for load-balancer probes.
+- **Behind a gateway** (AWS API Gateway, Azure APIM, nginx): the service is plain HTTP/JSON plus SSE. Disable response buffering and use a long idle timeout on `/ask/stream`, or tokens arrive in one burst. Local models can take a minute for a multi-tool question.
+- **Provider keys** go in environment variables (`.env` with Compose, a secret store elsewhere), never in requests.
+- **Request size and cost:** questions are capped at 4000 characters, but there is no built-in rate limit. Add one at the gateway.
 
 ### Docker
 
