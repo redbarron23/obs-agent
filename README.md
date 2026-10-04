@@ -1,5 +1,11 @@
 # obs-agent — Multi-Cloud Cost Triage Agent
 
+[![CI](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+
+![obs-agent answering a cost question via tool calls](docs/demo.gif)
+
 An LLM-powered agent that answers natural-language questions about cloud logging costs across **Azure** and **GCP**. Instead of digging through spreadsheets, you ask: *"Which Azure subscription has the highest overage?"* — and the agent calls tools, gathers data, and gives you a concise answer.
 
 Default provider is local **Ollama** (free, no API key). Also supports **DeepSeek**, **OpenAI** and **Anthropic (Claude)** — switch with a single `--provider` flag.
@@ -415,6 +421,15 @@ This runs 8 eval cases with known-correct answers and checks that the agent's re
 - Spike detection (Azure and GCP)
 - Multi-cloud summary
 
+### Latest results
+
+| Mode | Cases | Passed | Needs API key |
+|---|---|---|---|
+| Deterministic dry-run (`--dry-run`) | 8 | 8 (100%) | No |
+| Live, DeepSeek (`--provider deepseek`) | 8 | 8 (100%) | Yes |
+
+The dry-run result is reproducible and runs in CI on every push. Live results for Claude, OpenAI and Ollama are not yet published.
+
 Because LLM output is non-deterministic, evals check for **presence of correct facts** (`must_contain`) rather than exact-string matching — the right testing strategy for AI systems.
 
 ## Design decisions
@@ -674,14 +689,14 @@ MIT — see [LICENSE](./LICENSE).
 
 ## Related projects
 
-### [rag-observability](../rag-observability/) — RAG over Observability Docs
+### [rag-observability](https://github.com/redbarron23/rag-observability) — RAG over Observability Docs
 
 A standalone Retrieval-Augmented Generation system that answers natural-language questions about multi-cloud observability architecture, coverage targets, and monitoring standards. Built on real domain documentation.
 
 ```
 Q: What is the coverage target for Tier 1 production resources?
-A: The production Tier 1 coverage target is 90% within 6 months and 100%
-   within 12 months (source: coverage-targets.md, section 'Tier 1').
+A: The production Tier 1 coverage target is 85% within 4 months and 100%
+   within 9 months (source: coverage-targets.md, section 'Tier 1').
 ```
 
 **Pipeline:** `.md` documents → heading-aware chunking → `all-MiniLM-L6-v2` embeddings → ChromaDB vector store → cosine similarity retrieval → Claude with cited generation.
@@ -695,7 +710,7 @@ A: The production Tier 1 coverage target is 90% within 6 months and 100%
 | **LLM role** | Decides which tools to call | Answers from retrieved context |
 | **Memory** | Multi-turn conversation (20 msg history) | Stateless per query |
 | **Eval focus** | Fact presence in answer | Source attribution + fact presence |
-| **Providers** | Anthropic, DeepSeek, Ollama | Anthropic only |
+| **Providers** | Ollama, DeepSeek, OpenAI, Anthropic | Anthropic, DeepSeek |
 
 **References:**
 - [ChromaDB](https://www.trychroma.com/products/chromadb) — vector database
