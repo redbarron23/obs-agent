@@ -424,8 +424,9 @@ This runs 8 eval cases with known-correct answers and checks that the agent's re
 | Mode | Cases | Passed | Needs API key |
 |---|---|---|---|
 | Deterministic dry-run (`--dry-run`) | 8 | 8 (100%) | No |
+| Live, DeepSeek (`--provider deepseek`) | 8 | 8 (100%) | Yes |
 
-The dry-run result is reproducible and runs in CI on every push. Live per-provider results (Claude / DeepSeek / OpenAI / Ollama) are not yet published.
+The dry-run result is reproducible and runs in CI on every push. Live results for Claude, OpenAI and Ollama are not yet published.
 
 Because LLM output is non-deterministic, evals check for **presence of correct facts** (`must_contain`) rather than exact-string matching — the right testing strategy for AI systems.
 
