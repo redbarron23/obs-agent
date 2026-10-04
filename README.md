@@ -419,6 +419,14 @@ This runs 8 eval cases with known-correct answers and checks that the agent's re
 - Spike detection (Azure and GCP)
 - Multi-cloud summary
 
+### Latest results
+
+| Mode | Cases | Passed | Needs API key |
+|---|---|---|---|
+| Deterministic dry-run (`--dry-run`) | 8 | 8 (100%) | No |
+
+The dry-run result is reproducible and runs in CI on every push. Live per-provider results (Claude / DeepSeek / OpenAI / Ollama) are not yet published.
+
 Because LLM output is non-deterministic, evals check for **presence of correct facts** (`must_contain`) rather than exact-string matching — the right testing strategy for AI systems.
 
 ## Design decisions
