@@ -89,6 +89,40 @@ streamlit run app.py
 
 Opens a chat interface in your browser with provider/model selection, conversation history, and example prompts. Multi-turn memory works natively.
 
+### REST API (FastAPI)
+
+The agent is also available as a standalone HTTP service, so other apps (dashboards, chat bots, pipelines) can call it without importing any Python:
+
+```bash
+uvicorn api:app --reload          # http://localhost:8000/docs for interactive OpenAPI docs
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /ask` | `{"question", "provider"?, "model"?, "session_id"?}` → `{"answer", "session_id", "tools_called", ...}` |
+| `POST /ask/stream` | Same request, answer streamed as server-sent events (`token` events, then `done` with `tools_called`, or `error`) |
+| `GET /providers` | Supported providers and default models |
+| `GET /health` | Liveness probe (always open) |
+| `DELETE /sessions/{id}` | Forget a conversation |
+
+```bash
+curl -s localhost:8000/ask -H 'content-type: application/json' \
+  -d '{"question": "Which Azure subscription has the highest overage?", "session_id": "demo"}'
+# follow-ups reuse the same session_id and keep conversation memory
+```
+
+Sessions live in memory (LRU, 200 max), so run a single replica or add sticky sessions. Set `OBS_AGENT_API_KEY` to require an `X-API-Key` header on everything except `/health`. The service is stateless apart from sessions, so it sits happily behind API Gateway, APIM or any reverse proxy.
+
+### Docker
+
+```bash
+cp .env.example .env              # add keys for hosted providers (optional)
+ollama serve                      # default provider runs on the host
+docker compose up --build         # API on :8000, Streamlit UI on :8501
+```
+
+Containers reach the host's Ollama through `host.docker.internal` (override with `OLLAMA_HOST`). The image runs as a non-root user and the API has a health check.
+
 ### CLI with scripting
 
 ```bash
@@ -130,6 +164,7 @@ The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind
 ```
 obs-agent/
 ├── app.py                # Streamlit web UI (chat interface with provider/model selection)
+├── api.py                # FastAPI REST service (/ask, /ask/stream, sessions, optional API key)
 ├── agent.py              # Agent loop + CLI (REPL / --question) + streaming + provider abstraction
 ├── tools.py              # 5 tool functions + LLM tool definitions + dispatch table
 ├── data.py               # Deterministic synthetic data generator (seeded RNG, no CSVs needed)
@@ -137,10 +172,14 @@ obs-agent/
 ├── tests/
 │   ├── conftest.py       # Shared fixtures
 │   ├── test_agent.py
+│   ├── test_api.py
 │   ├── test_evals.py
 │   └── test_tools.py
 ├── .github/workflows/
 │   └── ci.yml            # Unit tests + deterministic eval dry-run
+├── Dockerfile
+├── docker-compose.yml   # API on :8000 + Streamlit UI on :8501
+├── .env.example
 ├── pyproject.toml
 ├── requirements.txt
 ├── requirements-dev.txt
@@ -169,6 +208,7 @@ flowchart TD
 subgraph group_entry["User interfaces"]
   node_cli["CLI / REPL<br/>[agent.py]"]
   node_web["Streamlit chat<br/>[app.py]"]
+  node_api["REST API<br/>[api.py]"]
 end
 
 subgraph group_runtime["Agent runtime"]
@@ -194,9 +234,12 @@ subgraph group_quality["Evaluation"]
 end
 
 node_user(("Cost analyst"))
+node_client(("Other apps / bots"))
 
 node_user -->|"asks"| node_cli
 node_user -->|"asks"| node_web
+node_client -->|"HTTP"| node_api
+node_api -->|"calls"| node_loop
 node_cli -->|"runs"| node_loop
 node_web -->|"calls"| node_loop
 node_loop -->|"requests"| node_providers
@@ -217,6 +260,7 @@ node_evals -->|"live checks"| node_loop
 
 click node_cli "https://github.com/redbarron23/obs-agent/blob/main/agent.py"
 click node_web "https://github.com/redbarron23/obs-agent/blob/main/app.py"
+click node_api "https://github.com/redbarron23/obs-agent/blob/main/api.py"
 click node_loop "https://github.com/redbarron23/obs-agent/blob/main/agent.py"
 click node_providers "https://github.com/redbarron23/obs-agent/blob/main/agent.py"
 click node_dispatch "https://github.com/redbarron23/obs-agent/blob/main/tools.py"
@@ -235,11 +279,11 @@ classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
 classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
 classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
 classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
-class node_cli,node_web toneBlue
+class node_cli,node_web,node_api toneBlue
 class node_loop,node_providers toneAmber
 class node_dispatch,node_azure,node_gcp,node_trend,node_spikes,node_crosscloud toneMint
 class node_datasets toneRose
-class node_evals,node_user toneIndigo
+class node_evals,node_user,node_client toneIndigo
 ```
 
 ### The agent loop (`agent.py`)

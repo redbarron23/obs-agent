@@ -575,3 +575,42 @@ class TestCLIParsing:
         assert args.model == "deepseek-chat"
         assert args.verbose is True
         assert args.stream is True
+
+
+class TestOpenAIStreamNormalisation:
+    """_stream_openai must return the same stop-reason vocabulary as create()."""
+
+    @staticmethod
+    def _chunk(content=None, tool=None, finish=None):
+        from types import SimpleNamespace as NS
+
+        tool_calls = None
+        if tool:
+            tool_calls = [NS(
+                index=0, id="call_1",
+                function=NS(name=tool[0], arguments=tool[1]),
+            )]
+        delta = NS(content=content, tool_calls=tool_calls)
+        return NS(choices=[NS(delta=delta, finish_reason=finish)])
+
+    @pytest.mark.parametrize("finish", ["tool_calls", "stop"])
+    def test_tool_call_stream_is_tool_use(self, finish):
+        from agent import Provider
+
+        stream = [self._chunk(tool=("get_gcp_top_projects", '{"n": 3}'), finish=finish)]
+        resp, text, tools = Provider._stream_openai(
+            iter(stream), verbose=False, on_token=lambda t: None,
+        )
+        assert Provider.stop_reason(resp) == "tool_use"
+        assert tools[0].name == "get_gcp_top_projects"
+
+    def test_text_stream_is_end_turn(self):
+        from agent import Provider
+
+        stream = [self._chunk(content="Hi"), self._chunk(finish="stop")]
+        tokens = []
+        resp, text, tools = Provider._stream_openai(
+            iter(stream), verbose=False, on_token=tokens.append,
+        )
+        assert Provider.stop_reason(resp) == "end_turn"
+        assert tokens == ["Hi"] and text == ["Hi"] and tools == []

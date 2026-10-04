@@ -363,7 +363,14 @@ class Provider:
         ]
 
         text_blocks = ["".join(collected_text)] if collected_text else []
-        final_reason = chunk.choices[0].finish_reason if chunk and chunk.choices else "stop"
+        raw_reason = chunk.choices[0].finish_reason if chunk and chunk.choices else "stop"
+        # Normalise to the same vocabulary as Provider.stop_reason(). Some
+        # backends (Ollama) end a tool-call stream with "stop", so the presence
+        # of tool calls is the reliable signal.
+        if tool_use_blocks:
+            final_reason = "tool_use"
+        else:
+            final_reason = {"stop": "end_turn"}.get(raw_reason or "", raw_reason or "end_turn")
 
         class _DummyResponse:
             def __init__(self, reason, blocks):
@@ -622,18 +629,22 @@ def stream_run(
         token_queue.put(token)
 
     def run_agent() -> None:
-        answer, history = run(
-            question,
-            provider=provider,
-            model=model,
-            verbose=verbose,
-            stream=True,
-            messages=messages,
-            on_token=on_token,
-        )
-        result["answer"] = answer
-        result["messages"] = history
-        token_queue.put(None)
+        try:
+            answer, history = run(
+                question,
+                provider=provider,
+                model=model,
+                verbose=verbose,
+                stream=True,
+                messages=messages,
+                on_token=on_token,
+            )
+            result["answer"] = answer
+            result["messages"] = history
+        except Exception as exc:  # surface to the consuming generator
+            result["error"] = exc
+        finally:
+            token_queue.put(None)
 
     thread = threading.Thread(target=run_agent, daemon=True)
     thread.start()
@@ -644,6 +655,8 @@ def stream_run(
         yield token
     thread.join()
 
+    if "error" in result:
+        raise result["error"]
     if result_holder is not None:
         result_holder.update(result)
 

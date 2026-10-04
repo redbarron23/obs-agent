@@ -1,0 +1,30 @@
+# API on :8000, Streamlit UI on :8501.
+# Ollama (default provider) runs on the host: start it with `ollama serve`.
+# For hosted providers, put the keys in .env (see .env.example).
+x-agent: &agent
+  build: .
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *agent
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  ui:
+    <<: *agent
+    command: ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    ports:
+      - "8501:8501"
