@@ -693,8 +693,8 @@ A standalone Retrieval-Augmented Generation system that answers natural-language
 
 ```
 Q: What is the coverage target for Tier 1 production resources?
-A: The production Tier 1 coverage target is 90% within 6 months and 100%
-   within 12 months (source: coverage-targets.md, section 'Tier 1').
+A: The production Tier 1 coverage target is 85% within 4 months and 100%
+   within 9 months (source: coverage-targets.md, section 'Tier 1').
 ```
 
 **Pipeline:** `.md` documents → heading-aware chunking → `all-MiniLM-L6-v2` embeddings → ChromaDB vector store → cosine similarity retrieval → Claude with cited generation.
