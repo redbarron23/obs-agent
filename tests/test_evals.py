@@ -25,13 +25,16 @@ class TestEvalDryRun:
 
 @pytest.mark.integration
 class TestEvalLive:
-    """Live LLM evals — skipped unless ANTHROPIC_API_KEY is set."""
+    """Live LLM evals — skipped unless the default provider's API key is set."""
 
     @pytest.fixture(autouse=True)
     def require_api_key(self):
         import os
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            pytest.skip("ANTHROPIC_API_KEY not set")
+        from agent import DEFAULT_PROVIDER
+
+        key = {"anthropic": "ANTHROPIC_API_KEY", "deepseek": "DEEPSEEK_API_KEY"}.get(DEFAULT_PROVIDER)
+        if key and not os.environ.get(key):
+            pytest.skip(f"{key} not set")
 
     def test_live_evals(self):
         passed, failed = run_evals(dry_run=False)

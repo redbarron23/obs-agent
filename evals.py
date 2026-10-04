@@ -104,7 +104,13 @@ def _dry_run_answer(tool_name: str, tool_input: dict) -> str:
     return TOOL_DISPATCH[tool_name](tool_input)
 
 
-def run_evals(verbose: bool = False, *, dry_run: bool = False) -> tuple[int, int]:
+def run_evals(
+    verbose: bool = False,
+    *,
+    dry_run: bool = False,
+    provider: str | None = None,
+    model: str | None = None,
+) -> tuple[int, int]:
     """Run all eval cases. Returns (passed, failed) counts."""
     passed = 0
     failed = 0
@@ -114,7 +120,8 @@ def run_evals(verbose: bool = False, *, dry_run: bool = False) -> tuple[int, int
             tool_name, tool_input = eval_case["dry_run_tool"]
             answer = _dry_run_answer(tool_name, tool_input)
         else:
-            answer, _messages = run(eval_case["question"])
+            kwargs = {"provider": provider} if provider else {}
+            answer, _messages = run(eval_case["question"], model=model, **kwargs)
 
         ok, missing = _check_eval(answer, eval_case["must_contain"])
         mode = "DRY" if dry_run else "LIVE"
@@ -151,5 +158,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Print details for every eval case.",
     )
+    parser.add_argument(
+        "--provider",
+        choices=["anthropic", "deepseek", "ollama"],
+        help="LLM provider for live evals (default: agent default).",
+    )
+    parser.add_argument("--model", help="Model name for live evals.")
     args = parser.parse_args()
-    run_evals(verbose=args.verbose, dry_run=args.dry_run)
+    run_evals(
+        verbose=args.verbose,
+        dry_run=args.dry_run,
+        provider=args.provider,
+        model=args.model,
+    )

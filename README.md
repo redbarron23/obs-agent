@@ -273,8 +273,9 @@ Key identifiers in the synthetic data:
 # Deterministic dry-run — checks tool outputs directly, no API key needed
 python evals.py --dry-run
 
-# Live evals against the LLM (requires ANTHROPIC_API_KEY)
+# Live evals against the LLM (needs the provider's API key; default: DeepSeek)
 python evals.py
+python evals.py --provider anthropic --model claude-haiku-4-5-20251001
 
 # Verbose output for every case
 python evals.py --dry-run -v
