@@ -1,5 +1,9 @@
 # obs-agent — Multi-Cloud Cost Triage Agent
 
+[![CI](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+
 An LLM-powered agent that answers natural-language questions about cloud logging costs across **Azure** and **GCP**. Instead of digging through spreadsheets, you ask: *"Which Azure subscription has the highest overage?"* — and the agent calls tools, gathers data, and gives you a concise answer.
 
 Default provider is local **Ollama** (free, no API key). Also supports **DeepSeek**, **OpenAI** and **Anthropic (Claude)** — switch with a single `--provider` flag.
@@ -674,7 +678,7 @@ MIT — see [LICENSE](./LICENSE).
 
 ## Related projects
 
-### [rag-observability](../rag-observability/) — RAG over Observability Docs
+### [rag-observability](https://github.com/redbarron23/rag-observability) — RAG over Observability Docs
 
 A standalone Retrieval-Augmented Generation system that answers natural-language questions about multi-cloud observability architecture, coverage targets, and monitoring standards. Built on real domain documentation.
 
@@ -695,7 +699,7 @@ A: The production Tier 1 coverage target is 90% within 6 months and 100%
 | **LLM role** | Decides which tools to call | Answers from retrieved context |
 | **Memory** | Multi-turn conversation (20 msg history) | Stateless per query |
 | **Eval focus** | Fact presence in answer | Source attribution + fact presence |
-| **Providers** | Anthropic, DeepSeek, Ollama | Anthropic only |
+| **Providers** | Ollama, DeepSeek, OpenAI, Anthropic | Anthropic, DeepSeek |
 
 **References:**
 - [ChromaDB](https://www.trychroma.com/products/chromadb) — vector database
