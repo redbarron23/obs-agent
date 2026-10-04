@@ -7,7 +7,7 @@ Usage
 Then open the URL shown in the terminal (typically http://localhost:8501).
 
 You can pass the provider and model as query parameters:
-    http://localhost:8501/?provider=ollama&model=llama3.2
+    http://localhost:8501/?provider=ollama&model=qwen2.5:7b
 
 Environment variables:
     DEEPSEEK_API_KEY   — required for DeepSeek (--provider deepseek)
@@ -43,7 +43,7 @@ provider = st.sidebar.selectbox(
 
 model = st.sidebar.text_input(
     "Model (optional)",
-    placeholder="e.g. claude-sonnet-4-6, deepseek-chat, or llama3.2",
+    placeholder="e.g. claude-sonnet-4-6, gpt-5.4-mini, or qwen2.5:7b",
     help="Leave blank for provider default.",
 )
 

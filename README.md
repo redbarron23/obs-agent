@@ -29,7 +29,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 2. Start Ollama and pull a tool-capable model (default), or set a provider API key
-#    ollama serve & ollama pull llama3.2
+#    ollama serve & ollama pull qwen2.5:7b
 #    export DEEPSEEK_API_KEY=sk-...   # then add --provider deepseek
 
 # 3. Generate synthetic data and run the interactive REPL
@@ -109,7 +109,7 @@ python agent.py -q "Show me spikes" --model claude-sonnet-4-6
 
 | Provider | Default model | Env variable |
 |---|---|---|
-| **Ollama** (local, default) | `llama3.2` | none — runs locally |
+| **Ollama** (local, default) | `qwen2.5:7b` | none — runs locally |
 | **DeepSeek** | `deepseek-chat` | `DEEPSEEK_API_KEY` |
 | **Anthropic** | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
 | **OpenAI** | `gpt-5.4-mini` | `OPENAI_API_KEY` |
@@ -520,18 +520,18 @@ python agent.py --provider deepseek --model deepseek-chat -q "Top 3 GCP projects
 
 ```bash
 # Make sure Ollama is running with a model that supports tools
-# (llama3.2, llama3.1, qwen2.5, etc.)
-ollama pull llama3.2
+# (qwen2.5, llama3.1, etc.)
+ollama pull qwen2.5:7b
 
 # Run the agent — no API key needed
-python agent.py --provider ollama --model llama3.2 -q "Compare costs across Azure and GCP"
+python agent.py --provider ollama --model qwen2.5:7b -q "Compare costs across Azure and GCP"
 
 # Stream mode works too
-python agent.py --provider ollama --model llama3.2 -q "Any cost spikes?" --stream --verbose
+python agent.py --provider ollama --model qwen2.5:7b -q "Any cost spikes?" --stream --verbose
 
 # Custom host (if Ollama isn't on localhost)
 export OLLAMA_HOST=http://my-server:11434
-python agent.py --provider ollama --model llama3.2 -q "Which Azure sub has the highest overage?"
+python agent.py --provider ollama --model qwen2.5:7b -q "Which Azure sub has the highest overage?"
 ```
 
 ### Web UI example prompts

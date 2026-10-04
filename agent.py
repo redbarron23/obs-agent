@@ -405,13 +405,13 @@ class _OaiTextBlock:
 # ── Defaults ───────────────────────────────────────────────────────────
 
 DEFAULT_PROVIDER = "ollama"
-DEFAULT_MODEL = "llama3.2"
+DEFAULT_MODEL = "qwen2.5:7b"
 
 PROVIDER_DEFAULT_MODELS = {
     "deepseek": "deepseek-chat",
     "anthropic": "claude-sonnet-4-6",
     "openai": "gpt-5.4-mini",
-    "ollama": "llama3.2",
+    "ollama": "qwen2.5:7b",
 }
 
 
