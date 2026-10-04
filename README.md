@@ -126,11 +126,24 @@ The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind
 ## Architecture
 
 ```
-app.py      — Streamlit web UI (chat interface with provider/model selection)
-agent.py    — Agent loop + CLI (REPL / --question) + streaming + provider abstraction
-tools.py    — 5 tool functions + LLM tool definitions + dispatch table
-data.py     — Deterministic synthetic data generator (seeded RNG, no CSVs needed)
-evals.py    — 8 eval cases with ground-truth checks against the synthetic data
+obs-agent/
+├── app.py                # Streamlit web UI (chat interface with provider/model selection)
+├── agent.py              # Agent loop + CLI (REPL / --question) + streaming + provider abstraction
+├── tools.py              # 5 tool functions + LLM tool definitions + dispatch table
+├── data.py               # Deterministic synthetic data generator (seeded RNG, no CSVs needed)
+├── evals.py              # 8 eval cases with ground-truth checks against the synthetic data
+├── tests/
+│   ├── conftest.py       # Shared fixtures
+│   ├── test_agent.py
+│   ├── test_evals.py
+│   └── test_tools.py
+├── .github/workflows/
+│   └── ci.yml            # Unit tests + deterministic eval dry-run
+├── pyproject.toml
+├── requirements.txt
+├── requirements-dev.txt
+├── LICENSE
+└── README.md
 ```
 
 ```
