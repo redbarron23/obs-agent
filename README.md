@@ -31,8 +31,8 @@ The agent decides which tools to call, executes them against the billing data, a
 ```bash
 # 1. Clone and set up
 git clone https://github.com/redbarron23/obs-agent.git && cd obs-agent
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv venv && source .venv/bin/activate        # install uv: https://docs.astral.sh/uv/
+uv pip install -r requirements.txt
 
 # 2. Start Ollama and pull a tool-capable model (default), or set a provider API key
 #    ollama serve & ollama pull qwen2.5:7b
@@ -193,7 +193,7 @@ ollama serve                      # default provider runs on the host
 docker compose up --build         # API on :8000, Streamlit UI on :8501
 ```
 
-Containers reach the host's Ollama through `host.docker.internal` (override with `OLLAMA_HOST`). The image runs as a non-root user and the API has a health check.
+Containers reach the host's Ollama through `host.docker.internal` (override with `OLLAMA_HOST`). The image installs dependencies with uv, runs as a non-root user, and the API has a health check.
 
 ### CLI with scripting
 
@@ -438,7 +438,7 @@ Because LLM output is non-deterministic, evals check for **presence of correct f
 
 Real billing CSVs contain sensitive subscription IDs and project names. Using deterministic synthetic data means:
 
-- The project runs with zero setup beyond `pip install`
+- The project runs with zero setup beyond `uv pip install`
 - Evals are reproducible — they pass or fail deterministically
 - No risk of committing credentials or PII to version control
 - Anyone can clone and run it immediately
@@ -469,6 +469,7 @@ Building API-agnostic agents is a practical skill for production systems where p
 ## Requirements
 
 - Python 3.10+
+- [uv](https://docs.astral.sh/uv/) for environments and installs (`pip` works too, but uv is what the Dockerfile and CI use)
 - **Ollama** (default): no API key needed — install Ollama and pull a tool-capable model
 - **DeepSeek / OpenAI / Anthropic** (optional): `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
 
@@ -482,12 +483,16 @@ openai>=1.0.0
 streamlit>=1.28.0
 pandas>=2.0.0
 numpy>=1.24.0
+fastapi>=0.110.0
+uvicorn>=0.29.0
 ```
 
-Dev/test (`requirements-dev.txt`):
+Dev/test (`requirements-dev.txt`, includes the runtime set):
 
 ```
+-r requirements.txt
 pytest>=8.0.0
+httpx>=0.27.0
 ```
 
 ## Testing
@@ -495,7 +500,7 @@ pytest>=8.0.0
 Unit tests and deterministic eval dry-runs:
 
 ```bash
-pip install -r requirements-dev.txt
+uv pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 
 # Skip live LLM evals (default in CI)
