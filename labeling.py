@@ -359,7 +359,12 @@ def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
             }
             if strategy == "model":
                 m["top3"] = float(
-                    np.mean([t in [c for c, _ in s.alternatives] for s, t in zip(sugg, truth)])
+                    np.mean(
+                        [
+                            t in [c for c, _ in s.alternatives]
+                            for s, t in zip(sugg, truth, strict=False)
+                        ]
+                    )
                 )
             results[label][strategy] = {k: round(float(v), 3) for k, v in m.items()}
 

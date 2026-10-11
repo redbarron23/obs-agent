@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Multi-Cloud Cost Triage Agent — agent loop with tool-use.
 
-Supports multiple LLM providers via a --provider flag (ollama [default], deepseek, anthropic, or openai).
+Supports multiple LLM providers via a --provider flag (ollama [default], deepseek,
+anthropic, or openai).
 
 Usage
 -----

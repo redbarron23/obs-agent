@@ -106,7 +106,7 @@ def _report(inf: LabelInference, row) -> dict:
             "current": _raw(row["cost_center"]),
             "implied": inf.cost_center_of.get(team),
         },
-        "needs_attention": any(l["status"] != "ok" for l in labels.values()),
+        "needs_attention": any(lbl["status"] != "ok" for lbl in labels.values()),
     }
 
 
@@ -146,13 +146,13 @@ def review_queue(
             continue
         if search and search.lower() not in r["resource_id"].lower():
             continue
-        hits = [r["labels"][l] for l in labels if r["labels"][l]["status"] in wanted]
+        hits = [r["labels"][lbl] for lbl in labels if r["labels"][lbl]["status"] in wanted]
         if not hits:
             continue
         if not any(min_confidence <= h["confidence"] <= max_confidence for h in hits):
             continue
         out.append(r)
-    return sorted(out, key=lambda r: -max(r["labels"][l]["confidence"] or 0 for l in labels))
+    return sorted(out, key=lambda r: -max(r["labels"][lbl]["confidence"] or 0 for lbl in labels))
 
 
 def coverage() -> dict:
@@ -275,7 +275,7 @@ def editor_changes(
     without a decision counts as an override.
     """
     out = []
-    for b, a in zip(before.itertuples(), after.itertuples()):
+    for b, a in zip(before.itertuples(), after.itertuples(), strict=False):
         override = _blank(a.override)
         decision = _blank(a.decision) or ("override" if override else None)
         if (decision, override) != (_blank(b.decision), _blank(b.override)):
@@ -324,7 +324,7 @@ def pending_changes(store: DecisionStore, include_auto: bool = True) -> list[dic
                     "resource_id": r["resource_id"],
                     "cloud": r["cloud"],
                     "tags": tags,
-                    "previous": {l: r["labels"][l]["current"] for l in LABELS}
+                    "previous": {lbl: r["labels"][lbl]["current"] for lbl in LABELS}
                     | {"cost_center": r["cost_center"]["current"]},
                 }
             )

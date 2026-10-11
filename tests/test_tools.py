@@ -271,7 +271,7 @@ class TestFindSpikes:
         out = find_spikes(threshold_pct=50, platform="gcp", limit=3)
         lines = out.splitlines()
         assert "showing the 3 costliest of" in lines[0]
-        costs = [float(l.rsplit("($", 1)[1].rstrip(")")) for l in lines[1:]]
+        costs = [float(line.rsplit("($", 1)[1].rstrip(")")) for line in lines[1:]]
         assert len(costs) == 3 and costs == sorted(costs, reverse=True)
 
     def test_azure_and_gcp_both_reported(self, patch_azure_details, patch_gcp_details):
