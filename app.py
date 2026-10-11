@@ -145,7 +145,11 @@ for msg in st.session_state.messages:
         if msg.get("via"):
             st.caption(msg["via"])
 
-if prompt := st.chat_input("Ask a question about cloud costs...", disabled=DEMO):
+prompt = st.chat_input("Ask a question about cloud costs...", disabled=DEMO)
+if DEMO:
+    # `disabled` is enforced in the browser only; never reach the LLM from the demo.
+    prompt = None
+if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)

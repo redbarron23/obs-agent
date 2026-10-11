@@ -330,6 +330,27 @@ class TestReviewPage:
         assert not at.sidebar.selectbox
         assert not at.sidebar.warning
 
+    def test_demo_mode_refuses_forged_chat_input(self, monkeypatch):
+        """A chat value sent despite the disabled widget must never be processed.
+
+        Streamlit itself drops values for disabled widgets, and app.py also discards
+        the prompt in demo mode; this guards the combined behaviour.
+        """
+        from unittest.mock import patch
+
+        from streamlit.testing.v1 import AppTest
+
+        monkeypatch.setenv("OBS_AGENT_DEMO", "1")
+        at = AppTest.from_file(str(REVIEW_PAGE.parent.parent / "app.py"), default_timeout=60).run()
+        widget = at.chat_input[0]
+        # AppTest refuses to set a disabled widget, as a real browser would; a forged
+        # websocket message is not a browser, so bypass that check to simulate one.
+        with patch.object(type(widget), "_assert_can_interact", lambda self: None):
+            widget.set_value("spend your credits").run()
+        assert not at.exception
+        assert at.session_state["messages"] == []  # nothing echoed, nothing sent to an LLM
+        assert not at.chat_message
+
     def test_demo_mode_from_streamlit_secrets(self, monkeypatch, tmp_path):
         from streamlit.testing.v1 import AppTest
 
