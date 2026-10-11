@@ -30,6 +30,14 @@ The standard tool-use pattern:
 
 Supports both **batch** (full response at once) and **streaming** (token-by-token) modes. The `Provider` class abstracts over Anthropic and OpenAI-compatible (DeepSeek) APIs, handling differences in request format, response shape, and stop-reason naming.
 
+## Module layout
+
+| Module | Contents |
+|---|---|
+| `agent.py` | The agent loop (`run`, `stream_run`), history pruning, turn bookkeeping, CLI entrypoint. Re-exports the names below, so `from agent import ...` keeps working. |
+| `providers.py` | `Provider` (the Anthropic / OpenAI-compatible abstraction), message formatting, the system prompt, provider and model config (`check_config`, `default_model`, `model_warning`, `max_tokens_setting`). |
+| `tools.py` | The seven tool functions, their LLM-facing definitions, and the dispatch table. |
+
 ## The tools (`tools.py`)
 
 | Tool | Purpose |
@@ -82,6 +90,7 @@ Key identifiers in the synthetic data:
 
 ```
 You ──question──▶  agent.py  ──tools──▶  tools.py  ──data──▶  data.py
+                    │      └──▶  providers.py  ──▶  LLM API
                     │                                              │
                     │  (LLM API loop)                             (in-memory
                     │   tool_use ↔ end_turn                       DataFrames)
@@ -104,7 +113,7 @@ end
 
 subgraph group_runtime["Agent runtime"]
   node_loop["Agent loop<br/>[agent.py]"]
-  node_providers{{"LLM providers<br/>[agent.py]"}}
+  node_providers{{"LLM providers<br/>[providers.py]"}}
 end
 
 subgraph group_analysis["Cost analysis"]
@@ -153,7 +162,7 @@ click node_cli "https://github.com/redbarron23/obs-agent/blob/main/agent.py"
 click node_web "https://github.com/redbarron23/obs-agent/blob/main/app.py"
 click node_api "https://github.com/redbarron23/obs-agent/blob/main/api.py"
 click node_loop "https://github.com/redbarron23/obs-agent/blob/main/agent.py"
-click node_providers "https://github.com/redbarron23/obs-agent/blob/main/agent.py"
+click node_providers "https://github.com/redbarron23/obs-agent/blob/main/providers.py"
 click node_dispatch "https://github.com/redbarron23/obs-agent/blob/main/tools.py"
 click node_azure "https://github.com/redbarron23/obs-agent/blob/main/tools.py"
 click node_gcp "https://github.com/redbarron23/obs-agent/blob/main/tools.py"
@@ -254,7 +263,7 @@ Models without adaptive thinking get `OBS_AGENT_MAX_TOKENS` (default **4096**) f
 export OBS_AGENT_MAX_TOKENS=8192   # long answers or large tool payloads
 ```
 
-The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind a common interface, so tool logic and the agent loop work identically regardless of backend.
+The provider abstraction (`Provider` class in `providers.py`) wraps both APIs behind a common interface, so tool logic and the agent loop work identically regardless of backend.
 
 ## Sample conversations
 

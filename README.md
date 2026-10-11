@@ -381,7 +381,7 @@ written next to it: parent-folder inheritance is precise but confidently wrong a
 `team` is left to the model, while `env` name tokens are near-perfect. That choice is a result, not
 a default — the eval table is what justifies it.
 
-The agent side of the repo (`agent.py`, `tools.py`, `data.py`, `app.py`, `api.py`) is documented in
+The agent side of the repo (`agent.py`, `providers.py`, `tools.py`, `data.py`, `app.py`, `api.py`) is documented in
 [docs/agent.md](docs/agent.md), including its architecture diagram.
 
 ### File layout
@@ -393,7 +393,8 @@ obs-agent/
 ├── label_review.py       # Review reports, decision store, CSV / az+gcloud / tfvars export
 ├── pages/
 │   └── 1_Label_review.py # Streamlit page: review queue, decisions, exports
-├── agent.py              # Agent loop + CLI (REPL / --question) + streaming + provider abstraction
+├── agent.py              # Agent loop + CLI (REPL / --question) + streaming
+├── providers.py          # Provider abstraction (Anthropic / OpenAI-compatible) + model config
 ├── tools.py              # 7 tool functions + LLM tool definitions + dispatch table
 ├── data.py               # Deterministic synthetic billing data generator (seeded RNG, no CSVs)
 ├── app.py                # Streamlit web UI (chat page + host for the Label review page)
@@ -448,7 +449,7 @@ wording matches.
 ### Why a provider abstraction?
 
 Building API-agnostic agents is a practical skill for production systems where provider lock-in is
-a concern. The `Provider` class in `agent.py` shows how to switch between Anthropic and
+a concern. The `Provider` class in `providers.py` shows how to switch between Anthropic and
 OpenAI-compatible backends without changing the tool logic or agent loop.
 
 ## What this project demonstrates
