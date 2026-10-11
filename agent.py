@@ -42,6 +42,11 @@ You can also report which subscriptions/projects lack team or env tags and
 suggest labels for them; always state the confidence and whether a
 suggestion needs human review.
 When answering questions, always call the relevant tools to get actual numbers.
+Quote counts and amounts exactly as the tools report them; never recompute or
+estimate totals yourself.
+Never state a team, env or cost_center for a resource unless suggest_labels
+returned it in this conversation: call suggest_labels for each resource you are
+asked about, and say so if a tool did not give you the answer.
 Be concise and highlight the most important findings."""
 
 # ── Limits ─────────────────────────────────────────────────────────────
@@ -73,7 +78,10 @@ def _format_messages_for_anthropic(messages: list[dict]) -> list[dict]:
                 i += 1
             formatted.append({"role": "user", "content": tool_results})
             continue
-        if msg["role"] == "assistant" and msg.get("tool_calls"):
+        if msg["role"] == "assistant" and msg.get("anthropic_content"):
+            # Exactly as the API returned it: thinking blocks must come back unmodified.
+            formatted.append({"role": "assistant", "content": msg["anthropic_content"]})
+        elif msg["role"] == "assistant" and msg.get("tool_calls"):
             content = []
             if msg.get("content"):
                 content.append({"type": "text", "text": msg["content"]})
@@ -88,7 +96,7 @@ def _format_messages_for_anthropic(messages: list[dict]) -> list[dict]:
                 )
             formatted.append({"role": "assistant", "content": content})
         else:
-            formatted.append(msg)
+            formatted.append({"role": msg["role"], "content": msg["content"]})
         i += 1
     return formatted
 
@@ -123,7 +131,8 @@ def _format_messages_for_openai(messages: list[dict]) -> list[dict]:
                 }
             )
         else:
-            formatted.append(msg)
+            # Drop internal keys (anthropic_content, model) the API would reject.
+            formatted.append({"role": msg["role"], "content": msg["content"]})
     return formatted
 
 
@@ -180,6 +189,19 @@ def _emit_token(token: str, on_token: Callable[[str], None] | None) -> None:
 
 # ── Provider abstraction ───────────────────────────────────────────────
 
+# Claude models with always-on adaptive thinking and preserved thinking.
+ANTHROPIC_ADAPTIVE_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"}
+ANTHROPIC_ADAPTIVE_PARAMS = dict(
+    # Thinking counts toward max_tokens, so leave room for it.
+    max_tokens=16000,
+    output_config={"effort": "medium"},
+    # History pruning edits the prefix; drop stale thinking blocks instead of a 400.
+    thinking={"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
+    # A safety-classifier false positive retries on a recommended model.
+    fallbacks="default",
+    betas=["thinking-binding-controls-2026-08-01", "server-side-fallback-2026-07-01"],
+)
+
 
 class Provider:
     """Minimal wrapper over Anthropic and OpenAI-compatible APIs."""
@@ -227,9 +249,14 @@ class Provider:
                 tools=TOOL_DEFINITIONS,
                 messages=api_messages,
             )
+            if self.model in ANTHROPIC_ADAPTIVE_MODELS:
+                kwargs.update(ANTHROPIC_ADAPTIVE_PARAMS)
+                messages_api = self._client.beta.messages
+            else:
+                messages_api = self._client.messages
             if stream:
-                return self._client.messages.stream(**kwargs)
-            return self._client.messages.create(**kwargs)
+                return messages_api.stream(**kwargs)
+            return messages_api.create(**kwargs)
 
         api_messages = _format_messages_for_openai(messages)
         oai_messages = [{"role": "system", "content": SYSTEM}] + api_messages
@@ -439,15 +466,70 @@ class _OaiTextBlock:
 
 # ── Defaults ───────────────────────────────────────────────────────────
 
+PROVIDERS = ("anthropic", "deepseek", "openai", "ollama")
+
+# Built-in fallback when OBS_AGENT_PROVIDER is unset: local, free, no key.
 DEFAULT_PROVIDER = "ollama"
 DEFAULT_MODEL = "qwen2.5:7b"
 
 PROVIDER_DEFAULT_MODELS = {
     "deepseek": "deepseek-chat",
-    "anthropic": "claude-sonnet-4-6",
+    "anthropic": "claude-opus-5-5",
     "openai": "gpt-5.4-mini",
     "ollama": "qwen2.5:7b",
 }
+
+
+class ConfigError(ValueError):
+    """Invalid OBS_AGENT_PROVIDER / OBS_AGENT_MODEL configuration."""
+
+
+def default_provider() -> str:
+    """Provider to use when none is given: OBS_AGENT_PROVIDER, else ollama."""
+    value = os.environ.get("OBS_AGENT_PROVIDER", "").strip().lower()
+    if not value:
+        return DEFAULT_PROVIDER
+    if value not in PROVIDERS:
+        raise ConfigError(
+            f"OBS_AGENT_PROVIDER={value!r} is not a supported provider. "
+            f"Choose one of: {', '.join(PROVIDERS)}."
+        )
+    return value
+
+
+def default_model(provider: str | None = None) -> str:
+    """Model for *provider*: OBS_AGENT_MODEL applies to the default provider only."""
+    provider = provider or default_provider()
+    override = os.environ.get("OBS_AGENT_MODEL", "").strip()
+    if override and provider == default_provider():
+        return override
+    return PROVIDER_DEFAULT_MODELS.get(provider, DEFAULT_MODEL)
+
+
+def check_config() -> tuple[str, str]:
+    """Resolve the configured defaults, raising ConfigError if they are invalid."""
+    provider = default_provider()
+    return provider, default_model(provider)
+
+
+def model_warning(provider: str, model: str) -> str | None:
+    """A caveat to show users when a small local model is answering."""
+    if provider == "ollama":
+        return (
+            f"{model} is a small local model: it can misread tool output or guess "
+            "instead of calling a tool. For reliable answers set OBS_AGENT_PROVIDER "
+            "to a hosted provider (anthropic, openai or deepseek)."
+        )
+    return None
+
+
+def served_by(messages: list[dict]) -> str | None:
+    """Model that produced the latest answer (differs from the requested one after a
+    refusal fallback); None when the provider does not report it."""
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            return msg.get("model")
+    return None
 
 
 # ── Agent loop ─────────────────────────────────────────────────────────
@@ -467,13 +549,20 @@ def _parse_assistant_response(
             if b.get("type") == "tool_use"
         ]
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
+        msg: dict = {"role": "assistant", "content": "\n".join(text_parts)}
         if tool_calls:
-            return {
+            msg = {
                 "role": "assistant",
                 "content": "\n".join(text_parts) if text_parts else None,
                 "tool_calls": tool_calls,
             }
-        return {"role": "assistant", "content": "\n".join(text_parts)}
+        raw = _raw_anthropic_content(response)
+        if raw is not None:
+            msg["anthropic_content"] = raw
+        model = getattr(response, "model", None)
+        if isinstance(model, str):
+            msg["model"] = model
+        return msg
 
     if tool_blocks_override is not None:
         return {
@@ -534,7 +623,7 @@ def _append_tool_results(
 def run(
     question: str,
     *,
-    provider: str = DEFAULT_PROVIDER,
+    provider: str | None = None,
     model: str | None = None,
     verbose: bool = False,
     stream: bool = False,
@@ -562,8 +651,9 @@ def run(
         calls and results), which can be passed back on subsequent calls
         for multi-turn conversation.
     """
+    provider = provider or default_provider()
     if model is None:
-        model = PROVIDER_DEFAULT_MODELS.get(provider, DEFAULT_MODEL)
+        model = default_model(provider)
 
     backend = Provider(provider, model)
 
@@ -583,9 +673,12 @@ def run(
             )
             sr = Provider.stop_reason(final_resp)
 
+            if sr == "refusal":
+                return _finish_refusal(final_resp, provider, messages, on_token)
+
             if sr == "end_turn":
                 text_answer = "\n".join(text_blocks)
-                messages.append({"role": "assistant", "content": text_answer})
+                messages.append(_final_message(provider, final_resp, text_answer))
                 return text_answer, messages
 
             if sr == "tool_use":
@@ -607,11 +700,18 @@ def run(
         if verbose:
             print(f"  [stop_reason: {sr}]", file=sys.stderr)
 
-        text_blocks = [b.text for b in Provider.iter_content_blocks(response) if hasattr(b, "text")]
+        if sr == "refusal":
+            return _finish_refusal(response, provider, messages, None)
+
+        text_blocks = [
+            b.text
+            for b in Provider.iter_content_blocks(response)
+            if getattr(b, "type", "text") == "text" and hasattr(b, "text")
+        ]
 
         if sr == "end_turn":
             text_answer = "\n".join(text_blocks)
-            messages.append({"role": "assistant", "content": text_answer})
+            messages.append(_final_message(provider, response, text_answer))
             return text_answer, messages
 
         if sr == "tool_use":
@@ -643,7 +743,7 @@ def run(
 def stream_run(
     question: str,
     *,
-    provider: str = DEFAULT_PROVIDER,
+    provider: str | None = None,
     model: str | None = None,
     verbose: bool = False,
     messages: list[dict] | None = None,
@@ -696,6 +796,50 @@ def stream_run(
         result_holder.update(result)
 
 
+def _final_message(provider: str, response, text: str) -> dict:
+    """Canonical final-answer message; Anthropic keeps its raw blocks for replay."""
+    if provider == "anthropic":
+        msg = _parse_assistant_response(provider, response)
+        msg["content"] = text
+        return msg
+    return {"role": "assistant", "content": text}
+
+
+def _finish_refusal(response, provider: str, messages: list[dict], on_token):
+    """End the turn on a safety refusal with an explanation instead of silence."""
+    text = _refusal_message(response)
+    if on_token:
+        on_token(text)
+    msg = _final_message(provider, response, text)
+    messages.append(msg)
+    return text, messages
+
+
+def _raw_anthropic_content(response) -> list[dict] | None:
+    """The response's content blocks as JSON dicts, unchanged, for replay.
+
+    Only real SDK objects qualify; test doubles fall back to the rebuilt form.
+    """
+    blocks = getattr(response, "content", None) or []
+    if not blocks or not all(hasattr(b, "model_dump") and callable(b.model_dump) for b in blocks):
+        return None
+    try:
+        dumped = [b.model_dump(mode="json", exclude_none=True) for b in blocks]
+    except Exception:
+        return None
+    return dumped if all(isinstance(d, dict) for d in dumped) else None
+
+
+def _refusal_message(response) -> str:
+    details = getattr(response, "stop_details", None)
+    category = getattr(details, "category", None)
+    suffix = f" (category: {category})" if isinstance(category, str) else ""
+    return (
+        f"The model declined to answer this request{suffix}. "
+        "Try rephrasing, or use another provider."
+    )
+
+
 def _content_block_to_dict(block) -> dict:
     """Convert an Anthropic SDK content block to a plain dict."""
     if block.type == "text":
@@ -728,14 +872,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        default=DEFAULT_PROVIDER,
-        choices=["anthropic", "deepseek", "openai", "ollama"],
-        help=f"LLM provider (default: {DEFAULT_PROVIDER}).",
+        default=None,
+        choices=list(PROVIDERS),
+        help=f"LLM provider (default: $OBS_AGENT_PROVIDER, else {DEFAULT_PROVIDER}).",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="Model name (provider-specific default if omitted).",
+        help="Model name (default: $OBS_AGENT_MODEL for the default provider, "
+        "else the provider's default).",
     )
     parser.add_argument(
         "--stream",
@@ -793,7 +938,14 @@ def _repl(provider: str, model: str, verbose: bool, stream: bool) -> None:
 
 def main() -> None:
     args = _parse_args()
-    model = args.model or PROVIDER_DEFAULT_MODELS.get(args.provider, DEFAULT_MODEL)
+    try:
+        args.provider = args.provider or default_provider()
+        model = args.model or default_model(args.provider)
+    except ConfigError as exc:
+        sys.exit(f"obs-agent: {exc}")
+    warning = model_warning(args.provider, model)
+    if warning and (args.verbose or not args.question):
+        print(f"Note: {warning}", file=sys.stderr)
 
     if args.question:
         if args.stream:
@@ -805,7 +957,7 @@ def main() -> None:
                 stream=True,
             )
         else:
-            answer, _messages = run(
+            answer, messages = run(
                 args.question,
                 provider=args.provider,
                 model=model,
@@ -813,6 +965,8 @@ def main() -> None:
                 stream=False,
             )
             print(answer)
+            if args.verbose:
+                print(f"  [answered by {served_by(messages) or model}]", file=sys.stderr)
     else:
         _repl(
             provider=args.provider,

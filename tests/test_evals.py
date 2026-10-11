@@ -17,10 +17,9 @@ class TestEvalDryRun:
 
     @pytest.mark.parametrize("eval_case", EVALS, ids=[e["id"] for e in EVALS])
     def test_each_dry_run_case(self, eval_case):
-        from evals import _dry_run_answer
+        from evals import _dry_run_case
 
-        tool_name, tool_input = eval_case["dry_run_tool"]
-        answer = _dry_run_answer(tool_name, tool_input)
+        answer = _dry_run_case(eval_case)
         ok, missing = _check_eval(answer, eval_case["must_contain"])
         assert ok, f"Missing {missing} in: {answer[:200]}"
 
@@ -31,7 +30,7 @@ class TestEvalLive:
 
     @pytest.fixture(autouse=True)
     def require_api_key(self):
-        from agent import DEFAULT_PROVIDER
+        from agent import default_provider
 
         if os.environ.get("OBS_AGENT_RUN_LIVE_EVALS") != "1":
             pytest.skip("set OBS_AGENT_RUN_LIVE_EVALS=1 to run live evals")
@@ -39,7 +38,7 @@ class TestEvalLive:
             "anthropic": "ANTHROPIC_API_KEY",
             "deepseek": "DEEPSEEK_API_KEY",
             "openai": "OPENAI_API_KEY",
-        }.get(DEFAULT_PROVIDER)
+        }.get(default_provider())
         if key and not os.environ.get(key):
             pytest.skip(f"{key} not set")
 

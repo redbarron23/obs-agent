@@ -99,6 +99,20 @@ EVALS = [
         "must_contain": ["identity"],
         "dry_run_tool": ("suggest_labels", {"resource_id": "api-login-d-ew1"}),
     },
+    # Regression for issue #5: a small local model reported the inventory total
+    # (320) as the untagged count and guessed svc-ingest's team without a tool call.
+    {
+        "id": "label-count-and-team",
+        "question": (
+            "How many projects are missing a team tag, and which team does "
+            "svc-ingest probably belong to?"
+        ),
+        "must_contain": ["170", "data-platform"],
+        "dry_run_tool": [
+            ("get_label_coverage", {}),
+            ("suggest_labels", {"resource_id": "svc-ingest"}),
+        ],
+    },
 ]
 
 
@@ -117,10 +131,19 @@ def _check_eval(answer: str, must_contain: list[str]) -> tuple[bool, list[str]]:
     return not missing, missing
 
 
-def _dry_run_answer(tool_name: str, tool_input: dict) -> str:
-    """Run a tool directly and return its output string."""
-    if tool_name == "compare_cross_cloud":
-        return TOOL_DISPATCH[tool_name](tool_input)
+def _dry_run_case(eval_case: dict) -> str:
+    spec = eval_case["dry_run_tool"]
+    return _dry_run_answer(spec) if isinstance(spec, list) else _dry_run_answer(*spec)
+
+
+def _dry_run_answer(tool_name, tool_input: dict | None = None) -> str:
+    """Run a tool directly and return its output string.
+
+    *tool_name* may instead be a list of (name, input) pairs for questions that
+    need several tools; their outputs are joined.
+    """
+    if isinstance(tool_name, list):
+        return "\n".join(TOOL_DISPATCH[name](args) for name, args in tool_name)
     return TOOL_DISPATCH[tool_name](tool_input)
 
 
@@ -137,8 +160,7 @@ def run_evals(
 
     for eval_case in EVALS:
         if dry_run:
-            tool_name, tool_input = eval_case["dry_run_tool"]
-            answer = _dry_run_answer(tool_name, tool_input)
+            answer = _dry_run_case(eval_case)
         else:
             kwargs = {"provider": provider} if provider else {}
             answer, _messages = run(eval_case["question"], model=model, **kwargs)

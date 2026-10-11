@@ -616,7 +616,7 @@ class TestCLIParsing:
         from agent import _parse_args
 
         args = _parse_args([])
-        assert args.provider == "ollama"
+        assert args.provider is None  # resolved from OBS_AGENT_PROVIDER in main()
         assert args.model is None
         assert args.verbose is False
         assert args.stream is False
