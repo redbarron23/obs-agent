@@ -585,37 +585,22 @@ plus a Docker job that builds the image and smoke-tests `/health`.
 
 ### Test strategy
 
-**Tool tests** (`tests/test_tools.py`, 34 tests) patch the module-level DataFrames with small,
-hand-crafted fixtures containing known values:
+The suite is fast, offline and deterministic — which is also its main limitation. A green run means
+**the code behaves as written**, not that **the model answers well**. There are three layers, and it
+is worth being precise about which question each one answers:
+
+| Layer | Count | Question it answers | Runs in CI? | API key? |
+|---|---|---|---|---|
+| Unit tests | 232 | Does the code do what it says? | Yes | No |
+| Eval dry-run | 12 | Do the tools still return the facts answers depend on? | Yes | No |
+| Live evals | 12 | Does the model actually use them correctly? | No | Yes |
+
+**Unit tests** use two styles. `test_tools.py` patches the module-level DataFrames with small
+hand-built fixtures, so a ranking bug cannot hide behind realistic noise. `test_agent.py` mocks
+`Provider.create`, so the loop is driven by a scripted response and no network call is made:
 
 ```python
-# conftest.py — fixtures with transparent data
-@pytest.fixture
-def azure_summary():
-    return pd.DataFrame(
-        [
-            {"subscription_id": "sub-a", "estimated_overage_cost_30d": 5000},
-            {"subscription_id": "sub-b", "estimated_overage_cost_30d": 2000},
-            ...,
-        ]
-    )
-
-
-# test_tools.py — verifies logic, not API behaviour
-def test_top_1(self, patch_azure_summary):
-    result = get_azure_top_overages(n=1)
-    assert "sub-a" in result
-    assert "sub-b" not in result  # only top 1
-```
-
-**Agent tests** (`tests/test_agent.py`, 41 tests) mock the Provider class so no API calls are made:
-
-```python
-# Helper builds a fake Anthropic response with known content
-resp = make_anthropic_response(
-    tool_name="get_azure_top_overages",
-    tool_input={"n": 1},
-)
+resp = make_anthropic_response(tool_name="get_azure_top_overages", tool_input={"n": 1})
 
 with patch("agent.Provider.create", return_value=resp):
     answer, messages = run("Which Azure sub is top?")
@@ -623,9 +608,33 @@ with patch("agent.Provider.create", return_value=resp):
 assert "sub-a" in answer
 ```
 
-Both API shapes (Anthropic and OpenAI-compatible) are tested via helper factories that build
-correctly-shaped fake responses. The streaming path also has dedicated tests for
-tool-call-through-streaming.
+**Eval dry-run** calls the real tools but stubs the model, so it catches a tool that stops returning
+a fact an answer depends on — without needing a provider.
+
+**Live evals** (`OBS_AGENT_RUN_LIVE_EVALS=1`) run the same 12 cases end-to-end against a real model.
+They are skipped unless the flag *and* the provider's key are set, so they can never fire by
+accident or run up a bill in CI. Run them before changing a prompt, a tool description, or the
+default model.
+
+### What the mocks cannot catch
+
+The bottom two rows are the honest weakness of a suite this size:
+
+| A change to… | Unit | Dry-run | Live evals |
+|---|---|---|---|
+| Tool logic (ranking, filters, thresholds) | ✅ | ✅ | ✅ |
+| Tool return shape / field names | ✅ | ✅ | ✅ |
+| Loop plumbing (dispatch, history, streaming) | ✅ | — | ✅ |
+| Provider request params (tokens, thinking) | ✅ | — | — |
+| A prompt or tool description that misleads the model | ❌ | ❌ | ✅ |
+| The model picking the wrong tool or misreading output | ❌ | ❌ | ✅ |
+
+No amount of mocking substitutes for the last two rows, because the variable under test *is* the
+model. On the default small local model (`qwen2.5:7b`) that shows up as **10/12** live evals — it
+gets the count right but invents a team on `label-count-and-team`, which is why every interface
+flags small local models rather than pretending they are equivalent to a hosted one.
+
+[**Full testing documentation →**](docs/testing.md)
 
 ### Test groups
 
@@ -642,6 +651,7 @@ tool-call-through-streaming.
 | REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
 | Model config (`test_model_config.py`) | 32 | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
 | Evals (`test_evals.py`) | 17 | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
+| Observability (`test_observability.py`) | 6 | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent |
 
 ## References
 
