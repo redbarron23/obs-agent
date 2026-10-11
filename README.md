@@ -52,6 +52,31 @@ its history. So `labeling.py` treats it as a supervised learning problem instead
 resources that *are* correctly tagged, predict the ones that are not**, and hand the reviewable
 suggestions to a human.
 
+### How this differs from tagging tools you may already use
+
+The mature, widely-used tools in this space **enforce** tags; this one **infers** them. That is a
+different job, and worth being explicit about:
+
+| | Enforcement tools | obs-agent |
+|---|---|---|
+| Example | [Cloud Custodian](https://github.com/cloud-custodian/cloud-custodian) (`custodian`), [Yor](https://github.com/bridgecrewio/yor) | this repo |
+| Input | Policies you write in YAML / tags declared in IaC | Resources that are already tagged correctly |
+| Answers | *"This resource violates the policy"* | *"This untagged resource probably belongs to Data Platform"* |
+| Output | A pass/fail decision | A suggestion with a confidence, a reason and alternatives |
+| When the tag is unknown | Nothing to enforce — the resource stays untagged | Predicts it, then asks a human to confirm |
+
+Enforcement is the right tool once a tagging policy exists and resources are labelled. It cannot
+help with the problem this repo is about, because a resource with no `team` tag *violates no rule
+you can write* — there is nothing to compare against. You have to guess the value, which means
+being honest about how confident you are.
+
+That is why the output here is a **confidence-thresholded suggestion with a review step**, not a
+verdict: auto-apply precision is held at 100% by sending only high-confidence predictions through
+unreviewed, and queueing the rest. The two approaches compose rather than compete — infer first to
+fill the gaps, then enforce to keep them filled. See
+[Where the inferred tags go](#where-the-inferred-tags-go) for hooking the output into the tools
+you already run.
+
 ## Quick start
 
 ```bash
@@ -154,6 +179,36 @@ and the matching REST endpoints, turn suggestions into tag changes you can apply
    `gcloud projects update --update-labels` commands, or as a Terraform `labels.auto.tfvars.json`
    map. Overrides win over accepts, accepts over auto-apply; rejected suggestions are never
    exported, and `cost_center` follows the team.
+
+### Where the inferred tags go
+
+Deliberately, this repo does **not** ship a policy engine or a reconciler. It answers a question
+those tools cannot — *what is this untagged resource?* — and then hands the answer to whatever you
+already run, so the tags land in your existing source of truth rather than in a parallel one.
+
+The three export formats map onto the three ways teams apply tags:
+
+| Format | Feeds into | Notes |
+|---|---|---|
+| `sh` | `az tag update` / `gcloud projects update --update-labels`, or an Ansible/CI step | Merges tags, never removes them (`--operation Merge`), and refuses nothing — read it before running |
+| `tfvars` | Terraform | A flat JSON map keyed by subscription/project ID, shaped for `for_each`. GCP values are lowercased automatically, because GCP labels reject uppercase |
+| `csv` | A spreadsheet, a ticket, a migration tracker | One row per resource/label pair, with the previous value and how it was decided |
+
+All three carry only the changes a human resolved (or that cleared the 90% auto-apply bar, if you
+keep `include_auto=true`), so the diff is the review — you are never applying an unreviewed
+inference.
+
+**Composing with enforcement tools.** Once the gaps are filled, tools like
+[Cloud Custodian](https://github.com/cloud-custodian/cloud-custodian) and
+[Yor](https://github.com/bridgecrewio/yor) are the right ones to keep them filled: Custodian to
+detect and remediate drift against your policy, Yor to keep IaC tags traceable to the resources
+they create. The natural pipeline is **infer here → review → export → enforce there**, with this
+repo responsible only for the step that needs a model.
+
+One gap worth stating plainly: these exports are not a reconciler. Applying the same file twice
+issues the same commands twice (harmless — the `az` path merges, and re-setting a value is a
+no-op), but nothing here notices when a tag that was correct last month is wrong now. That is
+drift, and detecting drift is Custodian's job, not this repo's.
 
 Decisions are stored in a SQLite database (`OBS_AGENT_DECISIONS`, default `label_decisions.db`,
 git-ignored). The API and UI share it safely across processes, so a decision made in one shows up
