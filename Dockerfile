@@ -9,7 +9,7 @@ COPY requirements.txt .
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
 RUN uv pip install --system --no-cache -r requirements.txt
 
-COPY agent.py api.py app.py data.py tools.py ./
+COPY agent.py api.py app.py data.py inventory.py labeling.py tools.py ./
 
 RUN useradd --create-home appuser
 USER appuser

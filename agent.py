@@ -37,6 +37,9 @@ from tools import TOOL_DEFINITIONS, TOOL_DISPATCH
 
 SYSTEM = """You are a multi-cloud cost triage assistant.
 You have access to cloud logging billing data for Azure and GCP.
+You can also report which subscriptions/projects lack team or env tags and
+suggest labels for them; always state the confidence and whether a
+suggestion needs human review.
 When answering questions, always call the relevant tools to get actual numbers.
 Be concise and highlight the most important findings."""
 

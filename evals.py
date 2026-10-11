@@ -91,6 +91,25 @@ EVALS = [
         "must_contain": ["project-bravo"],
         "dry_run_tool": ("find_spikes", {"threshold_pct": 200, "platform": "gcp"}),
     },
+    # Label inference — ground truth comes from inventory.py's true_* columns.
+    {
+        "id": "label-coverage",
+        "question": "How many subscriptions and projects are missing a team tag?",
+        "must_contain": ["170"],
+        "dry_run_tool": ("get_label_coverage", {}),
+    },
+    {
+        "id": "suggest-team",
+        "question": "svc-ingest has no team tag. Which team does it probably belong to?",
+        "must_contain": ["data-platform"],
+        "dry_run_tool": ("suggest_labels", {"resource_id": "svc-ingest"}),
+    },
+    {
+        "id": "suspect-label",
+        "question": "Is the team tag on api-login-d-ew1 correct?",
+        "must_contain": ["identity"],
+        "dry_run_tool": ("suggest_labels", {"resource_id": "api-login-d-ew1"}),
+    },
 ]
 
 
