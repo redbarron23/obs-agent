@@ -225,48 +225,40 @@ def get_label_coverage(limit: int = 10) -> str:
 
 def suggest_labels(resource_id: str) -> str:
     """Predicted team / env / cost_center for one resource, with confidence and reasons."""
-    from labeling import AUTO_APPLY_THRESHOLD, BEST_STRATEGY, LABELS, get_inference, get_suspects
+    from label_review import resource_report
+    from labeling import LABELS
 
-    inf = get_inference()
-    row = inf.row(resource_id)
-    if row is None:
+    r = resource_report(resource_id)
+    if r is None:
         return f"No Azure subscription or GCP project found with id: {resource_id}"
 
     lines = [
-        f"Label suggestions for {resource_id} [{row['cloud']}, parent {row['parent']}, "
-        f"owners {', '.join(row['owners'])}]:"
+        f"Label suggestions for {resource_id} [{r['cloud']}, parent {r['parent']}, "
+        f"owners {', '.join(r['owners'])}]:"
     ]
     for label in LABELS:
-        current = row[f"{label}_clean"]
-        if current is not None:
-            # Tagged: the fitted model has seen this tag, so judge it with the
-            # out-of-fold prediction instead.
-            suspects = get_suspects(label)
-            hit = suspects[suspects["resource_id"] == resource_id]
-            if hit.empty:
-                lines.append(f"  tagged {label}={current} (consistent with similar resources)")
-            else:
-                h = hit.iloc[0]
-                lines.append(
-                    f"  tagged {label}={current} but SUSPECTED WRONG: a model that never "
-                    f"saw this resource says {label}={h['predicted']} "
-                    f"({h['confidence']:.0%} confidence, needs review)"
-                )
+        lr = r["labels"][label]
+        if lr["status"] == "ok":
+            lines.append(f"  tagged {label}={lr['current']} (consistent with similar resources)")
             continue
-        raw = row[label]
-        raw = "none" if pd.isna(raw) else f"'{raw}' (unrecognised)"
-        s = inf.suggest(row, label, BEST_STRATEGY[label])
-        action = "auto-apply" if s.confidence >= AUTO_APPLY_THRESHOLD else "needs review"
+        if lr["status"] == "suspect":
+            lines.append(
+                f"  tagged {label}={lr['current']} but SUSPECTED WRONG: a model that never "
+                f"saw this resource says {label}={lr['suggested']} "
+                f"({lr['confidence']:.0%} confidence, needs review)"
+            )
+            continue
+        raw = "none" if lr["raw"] is None else f"'{lr['raw']}' (unrecognised)"
         lines.append(f"  {label} untagged (raw value: {raw})")
         lines.append(
-            f"    → suggest {label}={s.label} ({s.confidence:.0%} confidence, {action}; "
-            f"via {s.source}: {s.reason})"
+            f"    → suggest {label}={lr['suggested']} ({lr['confidence']:.0%} confidence, "
+            f"{lr['action']}; via {lr['source']}: {lr['reason']})"
         )
-        if len(s.alternatives) > 1:
-            alts = ", ".join(f"{c} {p:.0%}" for c, p in s.alternatives[1:])
+        if lr["alternatives"]:
+            alts = ", ".join(f"{a['value']} {a['confidence']:.0%}" for a in lr["alternatives"])
             lines.append(f"    alternatives: {alts}")
-        if label == "team" and s.label in inf.cost_center_of:
-            lines.append(f"    → implies cost_center={inf.cost_center_of[s.label]}")
+        if label == "team" and r["cost_center"]["implied"]:
+            lines.append(f"    → implies cost_center={r['cost_center']['implied']}")
     return "\n".join(lines)
 
 

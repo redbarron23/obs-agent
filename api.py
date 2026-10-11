@@ -12,10 +12,20 @@ POST /ask            answer a question (JSON)
 POST /ask/stream     answer a question as server-sent events
 DELETE /sessions/id  forget a conversation
 
+Label review (deterministic, no LLM call):
+GET  /labels/coverage                          untagged / suspect counts
+GET  /resources                                review queue (filterable)
+GET  /resources/{id}/labels                    suggestions for one resource
+PUT  /resources/{id}/labels/{label}/decision   accept / reject / override
+DELETE /resources/{id}/labels/{label}/decision undo a decision
+GET  /labels/decisions                         all recorded decisions
+GET  /labels/export?format=csv|sh|tfvars       resolved changes to apply
+
 Pass the same ``session_id`` on follow-up requests to keep conversation memory.
 
 Environment variables:
     OBS_AGENT_API_KEY  — if set, requests must send it in the X-API-Key header
+    OBS_AGENT_DECISIONS — where review decisions are stored (default label_decisions.json)
     plus the usual provider keys (DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, ...)
 """
 
@@ -27,13 +37,15 @@ import os
 import threading
 import uuid
 from collections import OrderedDict
-from typing import Iterator
+from typing import Iterator, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+import label_review
 from agent import DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS, run, stream_run
+from label_review import DecisionError, DecisionStore
 
 MAX_SESSIONS = 200
 
@@ -85,6 +97,7 @@ class SessionStore:
 
 
 sessions = SessionStore()
+decisions = DecisionStore()
 
 
 # ── Schemas ────────────────────────────────────────────────────────────
@@ -277,3 +290,224 @@ def delete_session(session_id: str) -> dict:
     if not sessions.delete(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"deleted": session_id}
+
+
+# ── Label review ───────────────────────────────────────────────────────
+
+LabelName = Literal["team", "env"]
+
+
+class Alternative(BaseModel):
+    value: str
+    confidence: float
+
+
+class LabelState(BaseModel):
+    current: str | None = Field(description="Usable tag after cleaning, or null.")
+    raw: str | None = Field(description="Tag value exactly as found on the resource.")
+    status: Literal["ok", "untagged", "suspect"]
+    suggested: str | None
+    confidence: float | None
+    action: Literal["auto-apply", "needs review"] | None
+    source: str | None = Field(description="rule:parent, rule:name, model or out-of-fold model.")
+    reason: str | None
+    alternatives: list[Alternative]
+
+
+class CostCenter(BaseModel):
+    current: str | None
+    implied: str | None = Field(description="Cost center of the suggested (or current) team.")
+
+
+class ResourceLabels(BaseModel):
+    model_config = {"json_schema_extra": {"examples": [{
+        "resource_id": "svc-ingest", "cloud": "azure", "parent": "mg-security",
+        "owners": ["hana"], "needs_attention": True,
+        "cost_center": {"current": None, "implied": "CC-2002"},
+        "labels": {"team": {
+            "current": None, "raw": None, "status": "untagged",
+            "suggested": "data-platform", "confidence": 0.6, "action": "needs review",
+            "source": "model", "reason": "strongest signals: creator=hana (+1.27), ...",
+            "alternatives": [{"value": "observability", "confidence": 0.12}],
+        }},
+    }]}}
+
+    resource_id: str
+    cloud: Literal["azure", "gcp"]
+    parent: str
+    owners: list[str]
+    labels: dict[str, LabelState]
+    cost_center: CostCenter
+    needs_attention: bool
+
+
+class ResourcePage(BaseModel):
+    total: int
+    items: list[ResourceLabels]
+
+
+class LabelCounts(BaseModel):
+    untagged: int
+    suspect: int
+    auto_apply_ready: int
+
+
+class Coverage(BaseModel):
+    total: int
+    needs_attention: int
+    auto_apply_threshold: float
+    labels: dict[str, LabelCounts]
+
+
+class DecisionRequest(BaseModel):
+    model_config = {"json_schema_extra": {"examples": [
+        {"decision": "accept"},
+        {"decision": "override", "value": "data-platform"},
+    ]}}
+
+    decision: Literal["accept", "reject", "override"]
+    value: str | None = Field(default=None, description="Required for override.")
+
+
+class Decision(BaseModel):
+    resource_id: str
+    label: str
+    decision: Literal["accept", "reject", "override"]
+    value: str | None = Field(description="The value that will be applied (null for reject).")
+    suggested: str | None
+    previous: str | None
+    decided_at: str
+
+
+NOT_FOUND = {404: {"model": ErrorResponse, "description": "Unknown resource."}}
+
+
+def _report_or_404(resource_id: str) -> dict:
+    report = label_review.resource_report(resource_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Unknown resource '{resource_id}'")
+    return report
+
+
+@app.get(
+    "/labels/coverage",
+    response_model=Coverage,
+    dependencies=[Depends(require_api_key)],
+    summary="Label coverage",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401]},
+)
+def labels_coverage() -> dict:
+    return label_review.coverage()
+
+
+@app.get(
+    "/resources",
+    response_model=ResourcePage,
+    dependencies=[Depends(require_api_key)],
+    summary="Review queue",
+    description="Resources with an untagged or suspected-wrong label, most confident "
+                "suggestions first. Filters combine with AND.",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401]},
+)
+def list_resources(
+    label: LabelName | None = Query(default=None, description="Only check this label."),
+    status: Literal["untagged", "suspect"] | None = Query(default=None),
+    cloud: Literal["azure", "gcp"] | None = Query(default=None),
+    min_confidence: float = Query(default=0.0, ge=0, le=1),
+    max_confidence: float = Query(default=1.0, ge=0, le=1),
+    search: str | None = Query(default=None, description="Substring of resource_id."),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    items = label_review.review_queue(
+        label=label, status=status, cloud=cloud, min_confidence=min_confidence,
+        max_confidence=max_confidence, search=search,
+    )
+    return {"total": len(items), "items": items[offset:offset + limit]}
+
+
+@app.get(
+    "/resources/{resource_id}/labels",
+    response_model=ResourceLabels,
+    dependencies=[Depends(require_api_key)],
+    summary="Label suggestions for one resource",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401], **NOT_FOUND},
+)
+def resource_labels(resource_id: str) -> dict:
+    return _report_or_404(resource_id)
+
+
+@app.put(
+    "/resources/{resource_id}/labels/{label}/decision",
+    response_model=Decision,
+    dependencies=[Depends(require_api_key)],
+    summary="Record a review decision",
+    description="`accept` applies the suggestion, `override` applies `value` instead, "
+                "`reject` keeps the current tag. Replaces any earlier decision.",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401], **NOT_FOUND,
+               422: {"model": ErrorResponse, "description": "Invalid value, or nothing to accept."}},
+)
+def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> dict:
+    _report_or_404(resource_id)
+    try:
+        return decisions.set(resource_id, label, req.decision, req.value)
+    except DecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete(
+    "/resources/{resource_id}/labels/{label}/decision",
+    dependencies=[Depends(require_api_key)],
+    summary="Undo a review decision",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401], 404: {"model": ErrorResponse, "description": "No such decision."}},
+)
+def delete_decision(resource_id: str, label: LabelName) -> dict:
+    if not decisions.delete(resource_id, label):
+        raise HTTPException(status_code=404, detail="Decision not found")
+    return {"deleted": f"{resource_id}/{label}"}
+
+
+@app.get(
+    "/labels/decisions",
+    response_model=list[Decision],
+    dependencies=[Depends(require_api_key)],
+    summary="All review decisions",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401]},
+)
+def list_decisions() -> list[dict]:
+    return decisions.all()
+
+
+EXPORT_MEDIA = {"csv": "text/csv", "sh": "text/x-shellscript", "tfvars": "application/json"}
+EXPORT_FILENAME = {"csv": "label-changes.csv", "sh": "apply-labels.sh",
+                   "tfvars": "labels.auto.tfvars.json"}
+
+
+@app.get(
+    "/labels/export",
+    response_class=PlainTextResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Export label changes",
+    description="Every resource whose resolved tags differ from today's: reviewer "
+                "overrides, then accepts, then (if `include_auto`) suggestions at or "
+                "above the auto-apply threshold. `sh` emits `az tag update` / "
+                "`gcloud projects update` commands; `tfvars` a map for Terraform.",
+    tags=["labels"],
+    responses={200: {"content": {m: {} for m in EXPORT_MEDIA.values()}},
+               401: ERROR_RESPONSES[401]},
+)
+def export_labels(
+    format: Literal["csv", "sh", "tfvars"] = Query(default="csv"),
+    include_auto: bool = Query(default=True),
+) -> PlainTextResponse:
+    body = label_review.export(decisions, format, include_auto)
+    return PlainTextResponse(
+        body, media_type=EXPORT_MEDIA[format],
+        headers={"Content-Disposition": f'attachment; filename="{EXPORT_FILENAME[format]}"'},
+    )

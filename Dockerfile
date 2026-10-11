@@ -14,9 +14,12 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY agent.py api.py app.py data.py inventory.py labeling.py tools.py ./
+COPY agent.py api.py app.py data.py inventory.py labeling.py label_review.py tools.py ./
+COPY pages/ pages/
 
-RUN useradd --create-home appuser
+# Review decisions live in /app/state; compose mounts a shared volume here.
+RUN useradd --create-home appuser && mkdir /app/state && chown appuser /app/state
+ENV OBS_AGENT_DECISIONS=/app/state/label_decisions.json
 USER appuser
 
 EXPOSE 8000 8501

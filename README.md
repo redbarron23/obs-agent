@@ -118,13 +118,34 @@ Label suggestions for svc-ingest [azure, parent mg-security, owners hana]:
 
 The synthetic data is cleaner than a real estate (owners map neatly onto teams), so treat these numbers as an upper bound. On real data, untagged resources skew older, so measure on a reviewed sample of them and not only on held-out tagged ones.
 
+### Label review (human in the loop)
+
+Predictions are only useful once someone applies them. The **Label review** page in the web UI, and the matching REST endpoints, turn suggestions into tag changes you can apply:
+
+1. **Review queue**: every untagged or suspect label, most confident first, filterable by label, status, cloud, confidence and name.
+2. **Decide**: per row choose `accept` (apply the suggestion), `reject` (keep today's tag) or `override` (pick the right value). "Accept all auto-apply" handles the ≥90% suggestions in one click.
+3. **Export**: download the resolved changes as CSV, as a shell script of `az tag update` / `gcloud projects update --update-labels` commands, or as a Terraform `labels.auto.tfvars.json` map. Overrides win over accepts, accepts over auto-apply; rejected suggestions are never exported, and `cost_center` follows the team.
+
+Decisions are stored in a JSON file (`OBS_AGENT_DECISIONS`, default `label_decisions.json`, git-ignored). The API and UI read the same file, so a decision made in one shows up in the other; in Docker Compose both containers mount the `label-state` volume.
+
+The same data over HTTP, with no LLM call:
+
+```bash
+curl localhost:8000/labels/coverage
+curl "localhost:8000/resources?label=team&status=suspect"
+curl localhost:8000/resources/svc-ingest/labels
+curl -X PUT localhost:8000/resources/svc-ingest/labels/team/decision \
+     -H 'content-type: application/json' -d '{"decision": "accept"}'
+curl "localhost:8000/labels/export?format=sh&include_auto=false" -o apply-labels.sh
+```
+
 ### Web UI (Streamlit)
 
 ```bash
 uv run streamlit run app.py
 ```
 
-Opens a chat interface in your browser with provider/model selection, conversation history, and example prompts. Multi-turn memory works natively.
+Opens a chat interface in your browser with provider/model selection, conversation history, and example prompts. Multi-turn memory works natively. A second page, **Label review**, is in the sidebar (see above).
 
 ### REST API (FastAPI)
 
@@ -141,6 +162,12 @@ uv run uvicorn api:app --reload          # http://localhost:8000/docs for intera
 | `GET /providers` | Supported providers and default models |
 | `GET /health` | Liveness probe (always open) |
 | `DELETE /sessions/{id}` | Forget a conversation |
+| `GET /labels/coverage` | Untagged / suspect / auto-apply-ready counts per label |
+| `GET /resources` | Review queue; filters `label`, `status`, `cloud`, `min_confidence`, `max_confidence`, `search`, plus `limit` / `offset` |
+| `GET /resources/{id}/labels` | Current tags, suggestions, confidence, reasons and alternatives for one resource |
+| `PUT` / `DELETE /resources/{id}/labels/{label}/decision` | Record (`accept` / `reject` / `override` + `value`) or undo a review decision |
+| `GET /labels/decisions` | All recorded decisions |
+| `GET /labels/export?format=csv\|sh\|tfvars` | Resolved changes as a download; `include_auto=false` exports reviewed decisions only |
 
 ```bash
 curl -s localhost:8000/ask -H 'content-type: application/json' \
@@ -267,12 +294,15 @@ The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind
 ```
 obs-agent/
 ├── app.py                # Streamlit web UI (chat interface with provider/model selection)
-├── api.py                # FastAPI REST service (/ask, /ask/stream, sessions, optional API key)
+├── pages/
+│   └── 1_Label_review.py # Streamlit page: review queue, decisions, exports
+├── api.py                # FastAPI REST service (/ask, /ask/stream, sessions, label review, optional API key)
 ├── agent.py              # Agent loop + CLI (REPL / --question) + streaming + provider abstraction
 ├── tools.py              # 7 tool functions + LLM tool definitions + dispatch table
 ├── data.py               # Deterministic synthetic data generator (seeded RNG, no CSVs needed)
 ├── inventory.py          # Synthetic inventory with true vs observed team/env labels
 ├── labeling.py           # Label inference: cleaning, rules, model, mislabel check, evaluation
+├── label_review.py       # Review reports, decision store, CSV / az+gcloud / tfvars export
 ├── evals.py              # 11 eval cases with ground-truth checks against the synthetic data
 ├── tests/
 │   ├── conftest.py       # Shared fixtures
@@ -280,6 +310,7 @@ obs-agent/
 │   ├── test_api.py
 │   ├── test_evals.py
 │   ├── test_labeling.py
+│   ├── test_label_review.py
 │   └── test_tools.py
 ├── .github/workflows/
 │   └── ci.yml            # Unit tests + eval dry-run + Docker build/smoke test
@@ -586,6 +617,7 @@ tests/
 ├── test_agent.py      # Agent loop tests — mocked LLM, covers all agent paths
 ├── test_api.py        # FastAPI service — mocked LLM, SSE, auth, sessions, OpenAPI
 ├── test_labeling.py   # Label cleaning, rules, model, quality floors, label tools
+├── test_label_review.py # Review reports, decisions, exports, label API, review page
 └── test_evals.py      # Eval dry-run (deterministic) + live integration tests
 ```
 
@@ -598,6 +630,7 @@ tests/
 | Message formatting | 3 | Canonical ↔ provider message conversion |
 | CLI parsing | 8 | All flags, defaults, combinations |
 | REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
+| Label review (`test_label_review.py`) | 40 | Reports, decision validation and persistence, table-edit diffing, export resolution and formats, label endpoints + auth, review page (headless) |
 | Label inference (`test_labeling.py`) | 34 | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools |
 | Evals (`test_evals.py`) | 16 | 11 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
 
