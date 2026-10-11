@@ -263,7 +263,7 @@ class TestReviewPage:
 
     def test_accept_all_auto(self, page, store):
         at = page.run()
-        next(b for b in at.button if b.label.startswith("✅")).click().run()
+        next(b for b in at.button if b.label.startswith("Accept all")).click().run()
         assert not at.exception
         decided = store.all()
         assert decided and all(d["decision"] == "accept" for d in decided)
@@ -273,3 +273,34 @@ class TestReviewPage:
         at = page.run()
         at.sidebar.selectbox[0].set_value("suspect").run()
         assert at.subheader[0].value.startswith("6 resources")
+
+    def test_demo_mode_isolates_sessions(self, monkeypatch, tmp_path):
+        from streamlit.testing.v1 import AppTest
+
+        monkeypatch.setenv("OBS_AGENT_DEMO", "1")
+        monkeypatch.chdir(tmp_path)  # a shared decisions file would land here
+        first = AppTest.from_file(str(REVIEW_PAGE), default_timeout=60).run()
+        next(b for b in first.button if b.label.startswith("Accept all")).click().run()
+        assert {m.label: m.value for m in first.metric}["Reviewed"] != "0"
+        second = AppTest.from_file(str(REVIEW_PAGE), default_timeout=60).run()
+        assert {m.label: m.value for m in second.metric}["Reviewed"] == "0"
+        assert not (tmp_path / "label_decisions.json").exists()
+
+    def test_demo_mode_disables_chat(self, monkeypatch):
+        from streamlit.testing.v1 import AppTest
+
+        monkeypatch.setenv("OBS_AGENT_DEMO", "1")
+        at = AppTest.from_file(str(REVIEW_PAGE.parent.parent / "app.py"), default_timeout=60).run()
+        assert not at.exception
+        assert at.chat_input[0].disabled
+
+    def test_demo_mode_from_streamlit_secrets(self, monkeypatch, tmp_path):
+        from streamlit.testing.v1 import AppTest
+
+        monkeypatch.delenv("OBS_AGENT_DEMO", raising=False)
+        monkeypatch.chdir(tmp_path)
+        at = AppTest.from_file(str(REVIEW_PAGE), default_timeout=60)
+        at.secrets["OBS_AGENT_DEMO"] = "1"
+        at.run()
+        assert not at.exception
+        assert at.info and "Demo" in at.info[0].value

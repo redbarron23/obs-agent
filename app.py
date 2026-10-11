@@ -21,6 +21,7 @@ import os
 import streamlit as st
 
 from agent import run, stream_run
+from label_review import demo_enabled
 
 # ── Page config ────────────────────────────────────────────────────────
 
@@ -90,6 +91,16 @@ else:
 # ── Main chat ──────────────────────────────────────────────────────────
 
 st.title("☁️ Multi-Cloud Cost Triage")
+
+DEMO = demo_enabled()
+if DEMO:
+    st.info(
+        "This hosted demo has no LLM configured, so chat is off. The **Label review** "
+        "page needs no LLM: it infers missing team/env tags with a scikit-learn model "
+        "and lets you approve and export them.",
+        icon="🧪",
+    )
+    st.page_link("pages/1_Label_review.py", label="Open Label review", icon="🏷️")
 st.caption(
     f"Provider: **{provider}**"
     + (f"  ·  Model: **{model}**" if model else "")
@@ -103,7 +114,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-if prompt := st.chat_input("Ask a question about cloud costs..."):
+if prompt := st.chat_input("Ask a question about cloud costs...", disabled=DEMO):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)

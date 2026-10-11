@@ -1,18 +1,29 @@
-# obs-agent — Multi-Cloud Cost Triage Agent
+# obs-agent — Multi-Cloud Cost Triage & Tag Inference
 
 [![CI](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 
-![obs-agent answering a cost question via tool calls](docs/demo.gif)
+**About half of a typical cloud estate has missing or wrong cost tags, so nobody can say which team owns the spend.** obs-agent infers the missing `team` / `env` / `cost_center` tags across Azure subscriptions and GCP projects, flags the wrong ones, has a human approve the changes, and exports them ready to apply. It also answers cost questions in plain English through an LLM agent with tool calling.
 
-An LLM-powered agent that answers natural-language questions about cloud logging costs across **Azure** and **GCP**. Instead of digging through spreadsheets, you ask: *"Which Azure subscription has the highest overage?"* — and the agent calls tools, gathers data, and gives you a concise answer.
+![Reviewing inferred tags and exporting them](docs/label-review.gif)
 
-Default provider is local **Ollama** (free, no API key). Also supports **DeepSeek**, **OpenAI** and **Anthropic (Claude)** — switch with a single `--provider` flag.
+| On a synthetic estate of 320 subscriptions / projects, scored against ground truth | |
+|---|---|
+| Untagged `team` labels inferred correctly | **98%** (macro-F1 0.98) |
+| Precision of the suggestions confident enough to auto-apply (≥90%) | **100%** team · **99%** env |
+| Wrong existing tags caught by the mislabel check | 11 of 16, with 11 of 13 flags correct |
 
-Built as a demonstration of the AI engineering agent pattern: tool definitions, tool dispatch, streaming output, a conversational REPL with multi-turn memory, a scripting CLI, a web UI, and an eval harness with ground-truth checks against deterministic synthetic data.
+These are an upper bound: the synthetic owners map more neatly onto teams than a real estate's would ([details](#label-inference-for-untagged-subscriptions--projects)).
+
+- **Tag inference**: cleaning, a rules baseline and a scikit-learn model over names, folders / management groups, owners, services and spend shape, with a reason for every suggestion.
+- **Human in the loop**: a review queue in the web UI and REST API; accept, reject or override; export as an `az` / `gcloud` script, Terraform tfvars or CSV.
+- **Cost agent**: *"Which Azure subscription has the highest overage?"* answered by tool calls over billing data, with Ollama (local, free), Claude, OpenAI or DeepSeek.
+- **Engineering**: ground-truth eval harness, 180+ tests, CI on Python 3.10–3.12, FastAPI + Streamlit, Docker Compose, uv.
 
 ## What it does
+
+![obs-agent answering a cost question via tool calls](docs/demo.gif)
 
 Ask questions in plain English and get answers grounded in actual numbers:
 
@@ -262,6 +273,16 @@ docker compose up --build         # API on :8000, Streamlit UI on :8501
 ```
 
 Containers reach the host's Ollama through `host.docker.internal` (override with `OLLAMA_HOST`). The image installs dependencies with uv, runs as a non-root user, and the API has a health check.
+
+### Hosted demo (Streamlit Community Cloud)
+
+The Label review page needs no LLM, so it can be hosted for free:
+
+1. Open [share.streamlit.io](https://share.streamlit.io) → **Create app** → repository `redbarron23/obs-agent`, branch `main`, main file `app.py`.
+2. **Advanced settings**: Python **3.12**, and under Secrets add `OBS_AGENT_DEMO = "1"`.
+3. Deploy. Dependencies install from `uv.lock`.
+
+With `OBS_AGENT_DEMO=1` each visitor's decisions are private to their browser session and discarded when it ends, and the chat page is switched off with a pointer to Label review (there is no LLM in the demo).
 
 ### CLI with scripting
 
