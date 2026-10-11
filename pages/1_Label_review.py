@@ -1,8 +1,8 @@
 """Label review page: work through untagged / suspect tags and export the result.
 
 Opened from the sidebar of the main app (`uv run streamlit run app.py`).
-Decisions are shared with the REST API through the same DecisionStore file
-(OBS_AGENT_DECISIONS, default label_decisions.json).
+Decisions are shared with the REST API through the same SQLite database
+(OBS_AGENT_DECISIONS, default label_decisions.db).
 """
 
 import tempfile
@@ -31,7 +31,7 @@ if DEMO:
     # Public demo: each browser session gets its own throwaway decisions file,
     # so visitors never see or overwrite each other's choices.
     st.session_state.setdefault("demo_id", uuid.uuid4().hex)
-    demo_file = f"obs-agent-{st.session_state.demo_id}.json"
+    demo_file = f"obs-agent-{st.session_state.demo_id}.db"
     store = DecisionStore(Path(tempfile.gettempdir()) / demo_file)
 else:
     store = DecisionStore()

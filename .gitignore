@@ -24,3 +24,4 @@ Thumbs.db
 # Environment
 .env
 label_decisions.json
+label_decisions.db

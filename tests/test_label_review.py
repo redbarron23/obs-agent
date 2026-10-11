@@ -5,6 +5,7 @@ decisions go to a temporary file so tests never touch real state.
 """
 
 import json
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -21,9 +22,13 @@ AUTO_ENV = "platform-backend-poc-uc1"  # env untagged, 'poc' → sandbox at 95%
 REVIEW_PAGE = Path(__file__).parent.parent / "pages" / "1_Label_review.py"
 
 
+def _override_team(path: Path, resource_id: str) -> None:
+    DecisionStore(path).set(resource_id, "team", "override", "ml")
+
+
 @pytest.fixture
 def store(tmp_path):
-    return DecisionStore(tmp_path / "decisions.json")
+    return DecisionStore(tmp_path / "decisions.db")
 
 
 class TestReports:
@@ -109,6 +114,34 @@ class TestDecisions:
     def test_persists_across_instances(self, store):
         store.set(UNTAGGED, "team", "accept")
         assert DecisionStore(store.path).get(UNTAGGED, "team")["value"] == "data-platform"
+
+    def test_imports_legacy_json(self, tmp_path):
+        legacy = tmp_path / "decisions.json"
+        legacy.write_text(
+            json.dumps(
+                [
+                    {
+                        "resource_id": UNTAGGED,
+                        "label": "team",
+                        "decision": "accept",
+                        "value": "data-platform",
+                        "suggested": "data-platform",
+                        "previous": None,
+                        "decided_at": "2026-01-01T00:00:00+00:00",
+                    }
+                ]
+            )
+        )
+        store = DecisionStore(legacy)
+        assert store.path == tmp_path / "decisions.db"
+        assert store.get(UNTAGGED, "team")["value"] == "data-platform"
+
+    def test_concurrent_writes_do_not_lose_decisions(self, store):
+        resource_ids = [r["resource_id"] for r in lr.all_reports()[:4]]
+
+        with ProcessPoolExecutor(max_workers=4) as executor:
+            list(executor.map(_override_team, [store.path] * len(resource_ids), resource_ids))
+        assert {d["resource_id"] for d in store.all()} == set(resource_ids)
 
 
 class TestEditorChanges:

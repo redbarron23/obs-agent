@@ -137,7 +137,7 @@ Predictions are only useful once someone applies them. The **Label review** page
 2. **Decide**: per row choose `accept` (apply the suggestion), `reject` (keep today's tag) or `override` (pick the right value). "Accept all auto-apply" handles the ≥90% suggestions in one click.
 3. **Export**: download the resolved changes as CSV, as a shell script of `az tag update` / `gcloud projects update --update-labels` commands, or as a Terraform `labels.auto.tfvars.json` map. Overrides win over accepts, accepts over auto-apply; rejected suggestions are never exported, and `cost_center` follows the team.
 
-Decisions are stored in a JSON file (`OBS_AGENT_DECISIONS`, default `label_decisions.json`, git-ignored). The API and UI read the same file, so a decision made in one shows up in the other; in Docker Compose both containers mount the `label-state` volume.
+Decisions are stored in a SQLite database (`OBS_AGENT_DECISIONS`, default `label_decisions.db`, git-ignored). The API and UI share it safely across processes, so a decision made in one shows up in the other; in Docker Compose both containers mount the `label-state` volume. On first use, a legacy sibling `label_decisions.json` file is imported automatically.
 
 The same data over HTTP, with no LLM call:
 

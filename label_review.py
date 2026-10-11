@@ -21,7 +21,7 @@ import io
 import json
 import os
 import shlex
-import threading
+import sqlite3
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -42,7 +42,7 @@ STATUSES = ("ok", "untagged", "suspect")
 DECISIONS = ("accept", "reject", "override")
 EXPORT_FORMATS = ("csv", "sh", "tfvars")
 
-DEFAULT_DECISIONS_PATH = "label_decisions.json"
+DEFAULT_DECISIONS_PATH = "label_decisions.db"
 
 
 def demo_enabled() -> bool:
@@ -194,41 +194,63 @@ class DecisionError(ValueError):
 
 
 class DecisionStore:
-    """Reviewer decisions keyed by (resource_id, label), stored as a JSON file.
-
-    The file is re-read on every call so separate processes (API and UI
-    containers sharing a volume) see each other's decisions.
-    """
+    """Reviewer decisions keyed by (resource_id, label), stored in SQLite."""
 
     def __init__(self, path: str | os.PathLike | None = None):
-        self.path = Path(path or os.environ.get("OBS_AGENT_DECISIONS", DEFAULT_DECISIONS_PATH))
-        self._lock = threading.Lock()
+        source = Path(path or os.environ.get("OBS_AGENT_DECISIONS", DEFAULT_DECISIONS_PATH))
+        self.path = source.with_suffix(".db") if source.suffix == ".json" else source
+        self._legacy_path = source if source.suffix == ".json" else self.path.with_suffix(".json")
+        self._initialise()
 
-    def _load(self) -> dict[str, dict]:
-        try:
-            return {
-                f"{d['resource_id']}|{d['label']}": d for d in json.loads(self.path.read_text())
-            }
-        except FileNotFoundError:
-            return {}
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 5000")
+        return conn
 
-    def _save(self, data: dict[str, dict]) -> None:
+    def _initialise(self) -> None:
+        is_new = not self.path.exists()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(
-                sorted(data.values(), key=lambda d: (d["resource_id"], d["label"])), indent=2
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS decisions (
+                    resource_id TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    value TEXT,
+                    suggested TEXT,
+                    previous TEXT,
+                    decided_at TEXT NOT NULL,
+                    PRIMARY KEY (resource_id, label)
+                )
+                """
             )
-        )
-        os.replace(tmp, self.path)  # atomic: readers never see a half-written file
+            if is_new and self._legacy_path.exists():
+                for entry in json.loads(self._legacy_path.read_text()):
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO decisions
+                        (resource_id, label, decision, value, suggested, previous, decided_at)
+                        VALUES (
+                            :resource_id, :label, :decision, :value,
+                            :suggested, :previous, :decided_at
+                        )
+                        """,
+                        entry,
+                    )
 
     def all(self) -> list[dict]:
-        with self._lock:
-            return list(self._load().values())
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM decisions ORDER BY resource_id, label")
+            return [dict(row) for row in rows]
 
     def get(self, resource_id: str, label: str) -> dict | None:
-        with self._lock:
-            return self._load().get(f"{resource_id}|{label}")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM decisions WHERE resource_id = ? AND label = ?", (resource_id, label)
+            ).fetchone()
+            return dict(row) if row else None
 
     def set(self, resource_id: str, label: str, decision: str, value: str | None = None) -> dict:
         report = resource_report(resource_id)
@@ -257,19 +279,29 @@ class DecisionStore:
             "previous": lr["current"],
             "decided_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
-        with self._lock:
-            data = self._load()
-            data[f"{resource_id}|{label}"] = entry
-            self._save(data)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO decisions
+                (resource_id, label, decision, value, suggested, previous, decided_at)
+                VALUES (:resource_id, :label, :decision, :value, :suggested, :previous, :decided_at)
+                ON CONFLICT(resource_id, label) DO UPDATE SET
+                    decision = excluded.decision,
+                    value = excluded.value,
+                    suggested = excluded.suggested,
+                    previous = excluded.previous,
+                    decided_at = excluded.decided_at
+                """,
+                entry,
+            )
         return entry
 
     def delete(self, resource_id: str, label: str) -> bool:
-        with self._lock:
-            data = self._load()
-            if data.pop(f"{resource_id}|{label}", None) is None:
-                return False
-            self._save(data)
-            return True
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM decisions WHERE resource_id = ? AND label = ?", (resource_id, label)
+            )
+            return cursor.rowcount == 1
 
 
 def _blank(value):

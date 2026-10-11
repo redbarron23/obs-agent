@@ -25,7 +25,7 @@ Pass the same ``session_id`` on follow-up requests to keep conversation memory.
 
 Environment variables:
     OBS_AGENT_API_KEY  — if set, requests must send it in the X-API-Key header
-    OBS_AGENT_DECISIONS — where review decisions are stored (default label_decisions.json)
+    OBS_AGENT_DECISIONS — SQLite database for review decisions (default label_decisions.db)
     plus the usual provider keys (DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, ...)
 """
 

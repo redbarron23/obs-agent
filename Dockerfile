@@ -19,7 +19,7 @@ COPY pages/ pages/
 
 # Review decisions live in /app/state; compose mounts a shared volume here.
 RUN useradd --create-home appuser && mkdir /app/state && chown appuser /app/state
-ENV OBS_AGENT_DECISIONS=/app/state/label_decisions.json
+ENV OBS_AGENT_DECISIONS=/app/state/label_decisions.db
 USER appuser
 
 EXPOSE 8000 8501
