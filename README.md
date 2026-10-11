@@ -173,105 +173,30 @@ curl "localhost:8000/labels/export?format=sh&include_auto=false" -o apply-labels
 
 ## Interfaces
 
-### Web UI (Streamlit)
+Three ways in — a Streamlit UI, a REST API, and Docker Compose. None of them needs an LLM for
+label review; only the optional cost Q&A agent does.
 
-```bash
-uv run streamlit run app.py
-```
+**Web UI** — `uv run streamlit run app.py`. The sidebar has two pages: **Label review** (the review
+queue, per-row decisions and the export buttons described above) and **chat** (the cost agent, with
+provider/model selection and example prompts).
 
-The sidebar has two pages. **Label review** is the main one: the review queue, per-row decisions
-and the export buttons described above. The **chat** page drives the cost Q&A agent with
-provider/model selection, conversation history and example prompts ([docs/agent.md](docs/agent.md)).
-
-### REST API (FastAPI)
-
-Both the label review and the agent are available as a standalone HTTP service, so other apps
-(dashboards, chat bots, pipelines) can call them without importing any Python:
-
-```bash
-uv run uvicorn api:app --reload          # http://localhost:8000/docs for interactive OpenAPI docs
-```
-
-Label endpoints — the ones the review UI is built on, and the ones that need no LLM:
+**REST API** — `uv run uvicorn api:app --reload`, then http://localhost:8000/docs for interactive
+specs. Every label action in the UI is also an endpoint, so dashboards and pipelines can call them
+directly:
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /labels/coverage` | Untagged / suspect / auto-apply-ready counts per label |
-| `GET /resources` | Review queue; filters `label`, `status`, `cloud`, `min_confidence`, `max_confidence`, `search`, plus `limit` / `offset` |
-| `GET /resources/{id}/labels` | Current tags, suggestions, confidence, reasons and alternatives for one resource |
-| `PUT` / `DELETE /resources/{id}/labels/{label}/decision` | Record (`accept` / `reject` / `override` + `value`) or undo a review decision |
-| `GET /labels/decisions` | All recorded decisions |
-| `GET /labels/export?format=csv\|sh\|tfvars` | Resolved changes as a download; `include_auto=false` exports reviewed decisions only |
+| `GET /resources` | Review queue, with label / status / confidence / search filters |
+| `PUT` / `DELETE /resources/{id}/labels/{label}/decision` | Record or undo a review decision |
+| `GET /labels/export?format=csv\|sh\|tfvars` | Resolved changes as a download |
 
-Agent endpoints (see [docs/agent.md](docs/agent.md) for request/response detail and the SSE
-streaming format):
+Plus `/ask` and `/ask/stream` (SSE) for the agent, `/health`, and `/providers`.
 
-| Endpoint | Purpose |
-|---|---|
-| `POST /ask` | `{"question", "provider"?, "model"?, "session_id"?}` → `{"answer", "session_id", "tools_called", ...}` |
-| `POST /ask/stream` | Same request, answer streamed as server-sent events (`token` events, then `done` with `tools_called`, or `error`) |
-| `GET /providers` | Supported providers and default models |
-| `GET /health` | Liveness probe (always open) |
-| `DELETE /sessions/{id}` | Forget a conversation |
+**Docker** — `docker compose up --build` runs the API on `:8000` and the UI on `:8501`.
 
-```bash
-curl -X PUT localhost:8000/resources/svc-ingest/labels/team/decision \
-  -H 'content-type: application/json' -d '{"decision": "accept"}'
-
-curl -s localhost:8000/ask -H 'content-type: application/json' \
-  -d '{"question": "Which Azure subscription has the highest overage?", "session_id": "demo"}'
-```
-
-#### Errors
-
-| Status | Meaning |
-|---|---|
-| `401` | Missing or wrong `X-API-Key` (only when `OBS_AGENT_API_KEY` is set) |
-| `404` | `DELETE /sessions/{id}` for an unknown session |
-| `422` | Invalid body (empty question, over 4000 chars) or unknown provider |
-| `502` | The LLM backend failed: bad key, no credits, Ollama not running |
-
-All error bodies are `{"detail": "..."}`. Interactive docs with schemas and examples are at `/docs`
-(Swagger UI) and `/redoc`; the raw spec is at `/openapi.json`.
-
-#### Running it in production
-
-- **Sessions are in memory** (LRU, 200 max) and lost on restart. Run a single replica, or put
-  sticky sessions (by `session_id`) in front. For multiple replicas, move `SessionStore` to Redis.
-- **Set `OBS_AGENT_API_KEY`** whenever the port is reachable by anything but you. `/health` stays
-  open for load-balancer probes.
-- **Behind a gateway** (AWS API Gateway, Azure APIM, nginx): the service is plain HTTP/JSON plus
-  SSE. Disable response buffering and use a long idle timeout on `/ask/stream`, or tokens arrive
-  in one burst. Local models can take a minute for a multi-tool question.
-- **Provider keys** go in environment variables (`.env` with Compose, a secret store elsewhere),
-  never in requests.
-- **Request size and cost:** questions are capped at 4000 characters, but there is no built-in
-  rate limit. Add one at the gateway.
-
-### Docker
-
-```bash
-cp .env.example .env              # add keys for hosted providers (optional)
-ollama serve                      # the cost agent's default provider runs on the host
-docker compose up --build         # API on :8000, Streamlit UI on :8501
-```
-
-Containers reach the host's Ollama through `host.docker.internal` (override with `OLLAMA_HOST`).
-The image installs dependencies with uv, runs as a non-root user, and the API has a health check.
-
-### Hosted demo (Streamlit Community Cloud)
-
-Live at **https://obs-agent.streamlit.app** (Label review: [/Label_review](https://obs-agent.streamlit.app/Label_review)).
-The Label review page needs no LLM, so it can be hosted for free:
-
-1. Open [share.streamlit.io](https://share.streamlit.io) → **Create app** → repository
-   `redbarron23/obs-agent`, branch `main`, main file `app.py`.
-2. **Advanced settings**: Python **3.12**, and under Secrets add `OBS_AGENT_DEMO = "1"`.
-3. Deploy. Dependencies install from `uv.lock`.
-
-With `OBS_AGENT_DEMO=1` each visitor's decisions are private to their browser session and
-discarded when it ends, and the chat page is switched off with a pointer to Label review (there
-is no LLM in the demo).
+Full endpoint tables, error codes, the SSE format and production notes (auth, sticky sessions,
+gateway buffering) are in **[docs/api.md](docs/api.md)**.
 
 ## Feature 2: the cost Q&A agent
 
@@ -484,9 +409,13 @@ obs-agent/
 │   ├── test_labeling.py
 │   ├── test_label_review.py
 │   ├── test_model_config.py
+│   ├── test_observability.py
 │   └── test_tools.py
 ├── docs/
-│   └── agent.md          # The cost Q&A agent, in full
+│   ├── agent.md          # The cost Q&A agent, in full
+│   ├── api.md            # REST API reference, errors, production notes, Docker, hosted demo
+│   ├── testing.md        # Test strategy, what mocks cannot catch, test groups
+│   └── references.md     # Sources for the inference, tagging, tool-use and eval design
 ├── .github/workflows/
 │   └── ci.yml            # Unit tests + eval dry-run + Docker build/smoke test
 ├── Dockerfile
@@ -568,26 +497,9 @@ both files together.
 
 ## Testing
 
-Unit tests and deterministic eval dry-runs:
-
-```bash
-uv run pytest tests/ -v
-
-# Skip live LLM evals (default in CI)
-uv run pytest tests/ -v -m "not integration"
-
-# Run live evals (requires a configured, reachable provider)
-OBS_AGENT_RUN_LIVE_EVALS=1 uv run pytest tests/ -v -m integration
-```
-
-CI runs on every push/PR via GitHub Actions: unit tests and the eval dry-run on Python 3.10–3.12,
-plus a Docker job that builds the image and smoke-tests `/health`.
-
-### Test strategy
-
 The suite is fast, offline and deterministic — which is also its main limitation. A green run means
-**the code behaves as written**, not that **the model answers well**. There are three layers, and it
-is worth being precise about which question each one answers:
+**the code behaves as written**, not that **the model answers well**. Three layers answer three
+different questions:
 
 | Layer | Count | Question it answers | Runs in CI? | API key? |
 |---|---|---|---|---|
@@ -595,73 +507,26 @@ is worth being precise about which question each one answers:
 | Eval dry-run | 12 | Do the tools still return the facts answers depend on? | Yes | No |
 | Live evals | 12 | Does the model actually use them correctly? | No | Yes |
 
-**Unit tests** use two styles. `test_tools.py` patches the module-level DataFrames with small
-hand-built fixtures, so a ranking bug cannot hide behind realistic noise. `test_agent.py` mocks
-`Provider.create`, so the loop is driven by a scripted response and no network call is made:
-
-```python
-resp = make_anthropic_response(tool_name="get_azure_top_overages", tool_input={"n": 1})
-
-with patch("agent.Provider.create", return_value=resp):
-    answer, messages = run("Which Azure sub is top?")
-
-assert "sub-a" in answer
+```bash
+uv run pytest tests/ -q                        # unit tests (no provider needed)
+uv run evals.py --dry-run                      # deterministic eval check
+OBS_AGENT_RUN_LIVE_EVALS=1 uv run pytest tests/ -m integration   # live evals (costs money)
 ```
 
-**Eval dry-run** calls the real tools but stubs the model, so it catches a tool that stops returning
-a fact an answer depends on — without needing a provider.
+Everything under `tests/` runs without a provider: `test_tools.py` patches the module-level
+DataFrames with small hand-built fixtures, and `test_agent.py` mocks `Provider.create` so the loop
+is driven by a scripted response. The 12 live evals are skipped unless the flag *and* the provider's
+key are set, so they can never fire by accident or run up a bill in CI.
 
-**Live evals** (`OBS_AGENT_RUN_LIVE_EVALS=1`) run the same 12 cases end-to-end against a real model.
-They are skipped unless the flag *and* the provider's key are set, so they can never fire by
-accident or run up a bill in CI. Run them before changing a prompt, a tool description, or the
-default model.
+CI runs the first two on every push/PR across Python 3.10–3.12, plus a Docker job that builds the
+image and smoke-tests `/health`.
 
-### What the mocks cannot catch
-
-The bottom two rows are the honest weakness of a suite this size:
-
-| A change to… | Unit | Dry-run | Live evals |
-|---|---|---|---|
-| Tool logic (ranking, filters, thresholds) | ✅ | ✅ | ✅ |
-| Tool return shape / field names | ✅ | ✅ | ✅ |
-| Loop plumbing (dispatch, history, streaming) | ✅ | — | ✅ |
-| Provider request params (tokens, thinking) | ✅ | — | — |
-| A prompt or tool description that misleads the model | ❌ | ❌ | ✅ |
-| The model picking the wrong tool or misreading output | ❌ | ❌ | ✅ |
-
-No amount of mocking substitutes for the last two rows, because the variable under test *is* the
-model. On the default small local model (`qwen2.5:7b`) that shows up as **10/12** live evals — it
-gets the count right but invents a team on `label-count-and-team`, which is why every interface
-flags small local models rather than pretending they are equivalent to a hosted one.
-
-[**Full testing documentation →**](docs/testing.md)
-
-### Test groups
-
-| Group | Tests | What's verified |
-|---|---|---|
-| Label inference (`test_labeling.py`) | 45 | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools, clean-estate stability and harsh-estate degradation |
-| Label review (`test_label_review.py`) | 45 | Reports, decision validation and persistence, table-edit diffing, export resolution and formats, label endpoints + auth, review page (headless) |
-| Tool logic (`test_tools.py`) | 34 | Top-N ranking, zero filtering, spike thresholds / platform filter / limit, cross-cloud totals, edge cases |
-| Agent loop (`test_agent.py`) | 16 | Simple answer, single/multi tool call, conversation memory, history pruning, empty/long questions, safety rails |
-| Provider abstraction | 10 | Stop reason mapping + content block parsing for Anthropic and OpenAI shapes |
-| Streaming | 7 | Streaming with/without tools, OpenAI-compatible streaming, stop-reason normalisation |
-| Message formatting | 3 | Canonical ↔ provider message conversion |
-| CLI parsing | 8 | All flags, defaults, combinations |
-| REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
-| Model config (`test_model_config.py`) | 32 | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
-| Evals (`test_evals.py`) | 17 | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
-| Observability (`test_observability.py`) | 6 | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent |
+**[What the mocks cannot catch, the full test-group table and the regression floors → docs/testing.md](docs/testing.md)**
 
 ## References
 
-- [scikit-learn — Logistic regression](https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression) and [cross-validation](https://scikit-learn.org/stable/modules/cross_validation.html) — the inference and out-of-fold mislabel check
-- [scikit-learn — Model evaluation](https://scikit-learn.org/stable/modules/model_evaluation.html) — the macro-F1 and precision metrics used above
-- [Anthropic — Tool use](https://docs.anthropic.com/en/docs/build-with-claude/tool-use) and [OpenAI — Function calling](https://platform.openai.com/docs/guides/function-calling) — the two tool-call shapes the provider abstraction unifies
-- [Google Cloud — Labeling projects](https://cloud.google.com/resource-manager/docs/creating-managing-labels) and [Azure — Tag resources](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/tag-resources) — the tag semantics the export targets
-- [RAG 101: Demystifying Retrieval-Augmented Generation Pipelines](https://developer.nvidia.com/blog/rag-101-demystifying-retrieval-augmented-generation-pipelines/) — NVIDIA blog on evaluation patterns
-- [Evaluating RAG: A Comprehensive Guide to Metrics and Methods](https://www.rungalileo.io/blog/evaluating-rag-a-comprehensive-guide-to-metrics-and-methods) — Galileo guide covering dual-attribution eval (source + fact checks)
-- [LangSmith RAG Evaluation](https://docs.smith.langchain.com/faq/evaluation/eval_rag) — production-grade RAG eval patterns (correctness, faithfulness, relevance)
+Sources for the inference approach, cloud tagging semantics, LLM tool use and LLM evaluation
+patterns are listed in **[docs/references.md](docs/references.md)**.
 
 ## License
 
