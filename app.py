@@ -52,66 +52,76 @@ except ConfigError as exc:
 st.sidebar.title("☁️ obs-agent")
 st.sidebar.caption("Multi-Cloud Cost Triage Agent")
 
-provider = st.sidebar.selectbox(
-    "Provider",
-    options=list(PROVIDERS),
-    index=PROVIDERS.index(configured_provider),
-    help="LLM provider to use for answering questions. The default comes from "
-    "OBS_AGENT_PROVIDER (Ollama, local and free, when unset).",
-)
+DEMO = demo_enabled()
 
-model = st.sidebar.text_input(
-    "Model (optional)",
-    placeholder=f"default: {default_model(provider)}",
-    help="Leave blank for the provider default (OBS_AGENT_MODEL for the default provider).",
-)
-effective_model = model or default_model(provider)
-if warning := model_warning(provider, effective_model):
-    st.sidebar.warning(warning, icon="⚠️")
+if DEMO:
+    # Hosted demo: no LLM, so no provider controls or key checks to confuse visitors.
+    provider, effective_model, use_streaming = configured_provider, "", False
+    st.sidebar.info("Hosted demo on synthetic data. Chat needs an LLM, so it is off here.")
+    st.sidebar.page_link("pages/1_Label_review.py", label="Try Label review", icon="🏷️")
+else:
+    provider = st.sidebar.selectbox(
+        "Provider",
+        options=list(PROVIDERS),
+        index=PROVIDERS.index(configured_provider),
+        help="LLM provider to use for answering questions. The default comes from "
+        "OBS_AGENT_PROVIDER (Ollama, local and free, when unset).",
+    )
 
-use_streaming = st.sidebar.checkbox(
-    "Stream responses",
-    value=True,
-    help="Show tokens as they arrive instead of waiting for the full answer.",
-)
+    model = st.sidebar.text_input(
+        "Model (optional)",
+        placeholder=f"default: {default_model(provider)}",
+        help="Leave blank for the provider default (OBS_AGENT_MODEL for the default provider).",
+    )
+    effective_model = model or default_model(provider)
+    if warning := model_warning(provider, effective_model):
+        st.sidebar.warning(warning, icon="⚠️")
 
-st.sidebar.divider()
-st.sidebar.markdown("**Example questions:**")
-st.sidebar.markdown("- Which Azure subscription has the highest overage cost?")
-st.sidebar.markdown("- Show me the top 3 GCP projects")
-st.sidebar.markdown("- Compare costs across Azure and GCP")
-st.sidebar.markdown("- Any cost spikes above 200%?")
-st.sidebar.markdown("- What's the daily trend for sub-a1b2c3d4?")
-st.sidebar.markdown("- Which projects are missing a team tag?")
-st.sidebar.markdown("- What team does svc-ingest belong to?")
-st.sidebar.caption("Review and export tag suggestions on the **Label review** page.")
+    use_streaming = st.sidebar.checkbox(
+        "Stream responses",
+        value=True,
+        help="Show tokens as they arrive instead of waiting for the full answer.",
+    )
+
+    st.sidebar.divider()
+    st.sidebar.markdown("**Example questions:**")
+    st.sidebar.markdown("- Which Azure subscription has the highest overage cost?")
+    st.sidebar.markdown("- Show me the top 3 GCP projects")
+    st.sidebar.markdown("- Compare costs across Azure and GCP")
+    st.sidebar.markdown("- Any cost spikes above 200%?")
+    st.sidebar.markdown("- What's the daily trend for sub-a1b2c3d4?")
+    st.sidebar.markdown("- Which projects are missing a team tag?")
+    st.sidebar.markdown("- What team does svc-ingest belong to?")
+    st.sidebar.caption("Review and export tag suggestions on the **Label review** page.")
 
 st.sidebar.divider()
 with st.sidebar.expander("ℹ️ About"):
     st.markdown(
-        "Answers questions about cloud logging costs across "
-        "**Azure** and **GCP** by calling tools over synthetic "
-        "billing data. Built with Claude/DeepSeek tool-use API."
+        "Infers missing team / env / cost_center tags across **Azure** and **GCP** "
+        "with a scikit-learn model for human review, and answers cost questions "
+        "through a tool-calling LLM agent (Claude, OpenAI, DeepSeek or Ollama). "
+        "Runs on synthetic data. "
+        "[Source on GitHub](https://github.com/redbarron23/obs-agent)"
     )
 
 # ── API key check ──────────────────────────────────────────────────────
 
-if provider == "ollama":
-    st.sidebar.info("🟢 Ollama — runs locally, no API key needed")
-elif provider == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
-    st.sidebar.error("❌ `DEEPSEEK_API_KEY` not set in environment.")
-elif provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
-    st.sidebar.error("❌ `OPENAI_API_KEY` not set in environment.")
-elif provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
-    st.sidebar.error("❌ `ANTHROPIC_API_KEY` not set in environment.")
-else:
-    st.sidebar.success(f"✅ {provider.title()} API key detected")
+if not DEMO:
+    if provider == "ollama":
+        st.sidebar.info("🟢 Ollama — runs locally, no API key needed")
+    elif provider == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
+        st.sidebar.error("❌ `DEEPSEEK_API_KEY` not set in environment.")
+    elif provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
+        st.sidebar.error("❌ `OPENAI_API_KEY` not set in environment.")
+    elif provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+        st.sidebar.error("❌ `ANTHROPIC_API_KEY` not set in environment.")
+    else:
+        st.sidebar.success(f"✅ {provider.title()} API key detected")
 
 # ── Main chat ──────────────────────────────────────────────────────────
 
 st.title("☁️ Multi-Cloud Cost Triage")
 
-DEMO = demo_enabled()
 if DEMO:
     st.info(
         "This hosted demo has no LLM configured, so chat is off. The **Label review** "
@@ -120,10 +130,11 @@ if DEMO:
         icon="🧪",
     )
     st.page_link("pages/1_Label_review.py", label="Open Label review", icon="🏷️")
-st.caption(
-    f"Provider: **{provider}**  ·  Model: **{effective_model}**"
-    + ("  ·  Streaming" if use_streaming else "")
-)
+else:
+    st.caption(
+        f"Provider: **{provider}**  ·  Model: **{effective_model}**"
+        + ("  ·  Streaming" if use_streaming else "")
+    )
 
 if "messages" not in st.session_state:
     st.session_state.messages = []

@@ -326,6 +326,9 @@ class TestReviewPage:
         at = AppTest.from_file(str(REVIEW_PAGE.parent.parent / "app.py"), default_timeout=60).run()
         assert not at.exception
         assert at.chat_input[0].disabled
+        # No LLM controls or local-model warning to confuse demo visitors.
+        assert not at.sidebar.selectbox
+        assert not at.sidebar.warning
 
     def test_demo_mode_from_streamlit_secrets(self, monkeypatch, tmp_path):
         from streamlit.testing.v1 import AppTest
