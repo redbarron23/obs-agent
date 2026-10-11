@@ -23,6 +23,7 @@ ROOT = Path(__file__).parent.parent
 def _clean_env(monkeypatch):
     monkeypatch.delenv("OBS_AGENT_PROVIDER", raising=False)
     monkeypatch.delenv("OBS_AGENT_MODEL", raising=False)
+    monkeypatch.delenv("OBS_AGENT_MAX_TOKENS", raising=False)
 
 
 def _response(blocks, stop_reason="end_turn", model="claude-opus-5-5", stop_details=None):
@@ -111,13 +112,114 @@ class TestAnthropicRequest:
         p = self._provider("claude-sonnet-4-6")
         p.create([{"role": "user", "content": "hi"}])
         kwargs = p._client.messages.create.call_args.kwargs
-        assert kwargs["max_tokens"] == 1024
+        # No thinking on this path, so the whole budget goes to the answer.
+        assert kwargs["max_tokens"] == agent.DEFAULT_MAX_TOKENS == 4096
         assert "thinking" not in kwargs and "betas" not in kwargs
+
+    def test_max_tokens_env_override(self, monkeypatch):
+        monkeypatch.setenv("OBS_AGENT_MAX_TOKENS", "8192")
+        p = self._provider("claude-sonnet-4-6")
+        p.create([{"role": "user", "content": "hi"}])
+        assert p._client.messages.create.call_args.kwargs["max_tokens"] == 8192
+
+    def test_invalid_max_tokens_override_is_a_config_error(self, monkeypatch):
+        for bad in ("0", "-1", "lots"):
+            monkeypatch.setenv("OBS_AGENT_MAX_TOKENS", bad)
+            with pytest.raises(agent.ConfigError):
+                agent.max_tokens_setting()
+
+    def test_adaptive_profile_ignores_override(self):
+        # The adaptive path reserves its own budget for thinking; the shared
+        # answer budget must not shrink it.
+        p = self._provider("claude-opus-5-5")
+        p.create([{"role": "user", "content": "hi"}])
+        assert p._client.beta.messages.create.call_args.kwargs["max_tokens"] == 16000
 
     def test_streaming_uses_same_profile(self):
         p = self._provider("claude-opus-5-5")
         p.create([{"role": "user", "content": "hi"}], stream=True)
         assert p._client.beta.messages.stream.call_args.kwargs["fallbacks"] == "default"
+
+
+class TestTruncation:
+    """A response cut off by the token cap must say so, not look complete."""
+
+    def _patch(self, monkeypatch, stop_reason, text="partial answ"):
+        """Make Provider.create() return a capped response, keeping the class intact."""
+        block = SimpleNamespace(type="text", text=text)
+        response = SimpleNamespace(content=[block], stop_reason=stop_reason, model="m", usage=None)
+        monkeypatch.setattr(agent.Provider, "__init__", lambda self, *a, **k: None)
+        monkeypatch.setattr(agent.Provider, "create", lambda self, *a, **k: response)
+
+    def _run(self, on_token=None):
+        return agent._run_loop(
+            "q",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            verbose=False,
+            stream=False,
+            messages=None,
+            on_token=on_token,
+        )
+
+    def test_max_tokens_stop_reason_is_surfaced(self, monkeypatch):
+        self._patch(monkeypatch, "max_tokens")
+        answer, messages = self._run()
+        assert answer.startswith("partial answ")
+        assert "truncated" in answer.lower()
+        assert "OBS_AGENT_MAX_TOKENS" in answer
+        # The note is part of the recorded turn, so follow-ups see it too.
+        assert "truncated" in messages[-1]["content"].lower()
+
+    def test_end_turn_is_not_flagged_as_truncated(self, monkeypatch):
+        self._patch(monkeypatch, "end_turn")
+        answer, _ = self._run()
+        assert answer == "partial answ"
+        assert "truncated" not in answer.lower()
+
+    def test_truncation_with_no_text_still_reports(self, monkeypatch):
+        self._patch(monkeypatch, "max_tokens", text="")
+        answer, _ = self._run()
+        assert answer.lower().startswith("[response truncated")
+
+    def test_note_is_streamed_to_the_callback(self, monkeypatch):
+        # On the streaming path a callback is attached, so the note reaches it
+        # too rather than appearing only at the end of the response.
+        self._patch(monkeypatch, "max_tokens")
+        seen: list[str] = []
+        monkeypatch.setattr(
+            agent.Provider,
+            "stream_response",
+            staticmethod(
+                lambda *a, **k: (
+                    SimpleNamespace(
+                        content=[SimpleNamespace(type="text", text="partial answ")],
+                        stop_reason="max_tokens",
+                        model="m",
+                        usage=None,
+                    ),
+                    ["partial answ"],
+                    [],
+                )
+            ),
+        )
+        agent._run_loop(
+            "q",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            verbose=False,
+            stream=True,
+            messages=None,
+            on_token=seen.append,
+        )
+        assert any("truncated" in t.lower() for t in seen)
+
+    def test_openai_length_finish_reason_normalises_to_max_tokens(self):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="length")], stop_reason=None
+        )
+        del response.stop_reason  # force the OpenAI branch
+        assert agent.Provider.stop_reason(response) == "max_tokens"
 
 
 class TestReplay:

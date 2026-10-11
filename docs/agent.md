@@ -246,7 +246,13 @@ uv run agent.py -q "How many projects are missing a team tag?"
 
 Small local models answer fast and free but can misread tool output or guess. On the regression question *"How many projects are missing a team tag, and which team does svc-ingest probably belong to?"* (eval `label-count-and-team`), `qwen2.5:7b` gave the right count but invented a team, while `deepseek-chat` called both tools and answered correctly. So every interface flags it: the UI sidebar shows a warning, `/ask` returns a `warning` field, and the CLI prints a note. `/ask` and the UI also report which model actually answered (`served_by`), which can differ from the requested one when Claude's refusal fallback kicks in.
 
-With Claude Opus 5.5, Sonnet 5.5 or Fable 5.1, requests use adaptive thinking at `medium` effort, pass thinking blocks back unchanged between tool calls, drop stale ones after history pruning instead of failing, and opt into server-side refusal fallbacks.
+With Claude Opus 5.5, Sonnet 5.5 or Fable 5.1, requests use adaptive thinking at `medium` effort, pass thinking blocks back unchanged between tool calls, drop stale ones after history pruning instead of failing, and opt into server-side refusal fallbacks. Those models get a 16k-token budget, since thinking counts against it.
+
+Models without adaptive thinking get `OBS_AGENT_MAX_TOKENS` (default **4096**) for the answer, which also covers tool-call payloads. Older builds capped this at 1024, which silently truncated long answers; now, when a response does hit the cap, the agent appends a note saying so and naming the setting to raise, instead of returning a partial answer that looks complete.
+
+```bash
+export OBS_AGENT_MAX_TOKENS=8192   # long answers or large tool payloads
+```
 
 The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind a common interface, so tool logic and the agent loop work identically regardless of backend.
 
