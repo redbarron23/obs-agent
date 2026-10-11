@@ -416,6 +416,7 @@ obs-agent/
 │   ├── agent.md          # The cost Q&A agent, in full
 │   ├── api.md            # REST API reference, errors, production notes, Docker, hosted demo
 │   ├── testing.md        # Test strategy, what mocks cannot catch, test groups
+│   ├── reviewing.md      # For peer reviewers: load-bearing claims, where to look, what to skip
 │   └── references.md     # Sources for the inference, tagging, tool-use and eval design
 ├── .github/workflows/
 │   └── ci.yml            # Unit tests + eval dry-run + Docker build/smoke test
@@ -523,6 +524,9 @@ CI runs the first two on every push/PR across Python 3.10–3.12, plus a Docker 
 image and smoke-tests `/health`.
 
 **[What the mocks cannot catch, the full test-group table and the regression floors → docs/testing.md](docs/testing.md)**
+
+Reviewing the project, or judging whether the numbers hold up? **[docs/reviewing.md](docs/reviewing.md)**
+points at the load-bearing claims and where a second pair of eyes is worth most.
 
 ## References
 
