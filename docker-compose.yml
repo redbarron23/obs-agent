@@ -10,6 +10,8 @@ x-agent: &agent
     OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
   extra_hosts:
     - "host.docker.internal:host-gateway"
+  volumes:
+    - label-state:/app/state   # review decisions, shared by API and UI
   restart: unless-stopped
 
 services:
@@ -28,3 +30,6 @@ services:
     command: ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
     ports:
       - "8501:8501"
+
+volumes:
+  label-state:

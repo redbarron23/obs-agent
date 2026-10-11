@@ -60,6 +60,9 @@ st.sidebar.markdown("- Show me the top 3 GCP projects")
 st.sidebar.markdown("- Compare costs across Azure and GCP")
 st.sidebar.markdown("- Any cost spikes above 200%?")
 st.sidebar.markdown("- What's the daily trend for sub-a1b2c3d4?")
+st.sidebar.markdown("- Which projects are missing a team tag?")
+st.sidebar.markdown("- What team does svc-ingest belong to?")
+st.sidebar.caption("Review and export tag suggestions on the **Label review** page.")
 
 st.sidebar.divider()
 with st.sidebar.expander("ℹ️ About"):
