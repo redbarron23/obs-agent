@@ -52,19 +52,26 @@ AUTO_APPLY_THRESHOLD = 0.9
 
 TEAM_ALIASES = {
     "payment": "payments",
-    "dataplatform": "data-platform", "dp": "data-platform",
+    "dataplatform": "data-platform",
+    "dp": "data-platform",
     "machine-learning": "ml",
     "digital-web": "web",
     "iam": "identity",
-    "o11y": "observability", "obs": "observability",
-    "secops": "security", "sec": "security",
-    "finance": "finance-apps", "fin-apps": "finance-apps",
+    "o11y": "observability",
+    "obs": "observability",
+    "secops": "security",
+    "sec": "security",
+    "finance": "finance-apps",
+    "fin-apps": "finance-apps",
 }
 ENV_ALIASES = {
-    "production": "prod", "prd": "prod",
-    "stg": "staging", "uat": "staging",
+    "production": "prod",
+    "prd": "prod",
+    "stg": "staging",
+    "uat": "staging",
     "development": "dev",
-    "sbx": "sandbox", "poc": "sandbox",
+    "sbx": "sandbox",
+    "poc": "sandbox",
 }
 ALLOWED = {"team": set(TEAM_NAMES), "env": set(ENVS)}
 ALIASES = {"team": TEAM_ALIASES, "env": ENV_ALIASES}
@@ -85,7 +92,8 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for label in LABELS:
         df[f"{label}_clean"] = pd.Series(
-            [normalise(label, v) for v in df[label]], index=df.index, dtype=object)
+            [normalise(label, v) for v in df[label]], index=df.index, dtype=object
+        )
     return df
 
 
@@ -96,8 +104,11 @@ _OPAQUE = re.compile(r"^[0-9a-f]{6,}$|^\d+$")
 
 def name_tokens(resource_id: str) -> list[str]:
     """Meaningful tokens of a resource name (drops ids, hashes, numbers)."""
-    return [t for t in resource_id.lower().split("-")
-            if t and not _OPAQUE.match(t) and t not in ("sub", "proj")]
+    return [
+        t
+        for t in resource_id.lower().split("-")
+        if t and not _OPAQUE.match(t) and t not in ("sub", "proj")
+    ]
 
 
 # Who owns a resource says which team it belongs to, not whether it is prod.
@@ -145,7 +156,7 @@ _ENV_TOKEN_TO_ENV = {tok: env for env, toks in ENV_NAME_TOKENS.items() for tok i
 class Suggestion:
     label: str | None
     confidence: float
-    source: str                      # "rule:parent" | "rule:name" | "model" | "none"
+    source: str  # "rule:parent" | "rule:name" | "model" | "none"
     reason: str
     alternatives: list[tuple[str, float]] = field(default_factory=list)
 
@@ -180,9 +191,12 @@ class Rules:
         top, share, n = table[key]
         if share < self.MIN_SHARE or n < self.MIN_SUPPORT:
             return NO_SUGGESTION
-        return Suggestion(top, round(share, 3), f"rule:{kind}",
-                          f"{share:.0%} of {n} labelled resources with {kind} "
-                          f"'{key}' are {self.label}={top}")
+        return Suggestion(
+            top,
+            round(share, 3),
+            f"rule:{kind}",
+            f"{share:.0%} of {n} labelled resources with {kind} '{key}' are {self.label}={top}",
+        )
 
     def suggest(self, row) -> Suggestion:
         if self.label == "env":
@@ -190,16 +204,18 @@ class Rules:
             for tok in name_tokens(row["resource_id"]):
                 if tok in _ENV_TOKEN_TO_ENV:
                     env = _ENV_TOKEN_TO_ENV[tok]
-                    return Suggestion(env, 0.95, "rule:name",
-                                      f"name token '{tok}' means env={env}")
+                    return Suggestion(env, 0.95, "rule:name", f"name token '{tok}' means env={env}")
             return NO_SUGGESTION
         prefix = (name_tokens(row["resource_id"]) or [""])[0]
-        candidates = [self._vote(self.by_parent, row["parent"], "parent"),
-                      self._vote(self.by_prefix, prefix, "name prefix")]
+        candidates = [
+            self._vote(self.by_parent, row["parent"], "parent"),
+            self._vote(self.by_prefix, prefix, "name prefix"),
+        ]
         return max(candidates, key=lambda s: s.confidence)
 
 
 # ── Model ──────────────────────────────────────────────────────────────
+
 
 class Model:
     def __init__(self, train: pd.DataFrame, label: str):
@@ -215,7 +231,9 @@ class Model:
         classes = self.clf.classes_
         best = classes[order[0]]
         return Suggestion(
-            best, round(float(proba[order[0]]), 3), "model",
+            best,
+            round(float(proba[order[0]]), 3),
+            "model",
             self._explain(x, order[0]),
             [(classes[i], round(float(proba[i]), 3)) for i in order[:3]],
         )
@@ -223,8 +241,11 @@ class Model:
     def _explain(self, x: dict, class_idx: int, k: int = 3) -> str:
         """Top features pushing toward the predicted class (coef × value)."""
         # Binary problems store one coefficient row, signed toward classes_[1].
-        coef = (self.clf.coef_[0] * (1 if class_idx == 1 else -1)
-                if self.clf.coef_.shape[0] == 1 else self.clf.coef_[class_idx])
+        coef = (
+            self.clf.coef_[0] * (1 if class_idx == 1 else -1)
+            if self.clf.coef_.shape[0] == 1
+            else self.clf.coef_[class_idx]
+        )
         vocab = self.vec.vocabulary_
         contrib = [(name, coef[vocab[name]] * val) for name, val in x.items() if name in vocab]
         top = [f"{n} (+{c:.2f})" for n, c in sorted(contrib, key=lambda t: -t[1])[:k] if c > 0]
@@ -232,6 +253,7 @@ class Model:
 
 
 # ── Fitted bundle ──────────────────────────────────────────────────────
+
 
 class LabelInference:
     """Rules + model for every label, fitted on one inventory snapshot."""
@@ -246,8 +268,9 @@ class LabelInference:
             self.models[label] = Model(train, label)
         # cost_center follows team: learn the mapping from labelled rows.
         tagged = self.df.dropna(subset=["team_clean", "cost_center"])
-        self.cost_center_of = (tagged.groupby("team_clean")["cost_center"]
-                               .agg(lambda s: s.mode().iat[0]).to_dict())
+        self.cost_center_of = (
+            tagged.groupby("team_clean")["cost_center"].agg(lambda s: s.mode().iat[0]).to_dict()
+        )
 
     def suggest(self, row, label: str, strategy: str = "hybrid") -> Suggestion:
         if strategy == "rules":
@@ -301,6 +324,7 @@ def get_suspects(label: str) -> pd.DataFrame:
 
 # ── Evaluation against ground truth ────────────────────────────────────
 
+
 def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
     """Score every strategy on the unlabelled resources.
 
@@ -328,20 +352,23 @@ def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
                 "coverage": covered.mean(),
                 "accuracy": (pred[covered] == truth[covered]).mean() if covered.any() else 0.0,
                 "macro_f1": f1_score(truth[covered], pred[covered], average="macro")
-                            if covered.any() else 0.0,
+                if covered.any()
+                else 0.0,
                 "auto_coverage": auto.mean(),
                 "auto_precision": (pred[auto] == truth[auto]).mean() if auto.any() else 0.0,
             }
             if strategy == "model":
-                m["top3"] = float(np.mean([
-                    t in [c for c, _ in s.alternatives] for s, t in zip(sugg, truth)
-                ]))
+                m["top3"] = float(
+                    np.mean([t in [c for c, _ in s.alternatives] for s, t in zip(sugg, truth)])
+                )
             results[label][strategy] = {k: round(float(v), 3) for k, v in m.items()}
 
         # Mislabel detection: how many flagged tags are genuinely wrong?
         sus = suspect_labels(inventory, label)
         cleaned = clean(inventory)
-        wrong = cleaned[f"{label}_clean"].notna() & (cleaned[f"{label}_clean"] != cleaned[f"true_{label}"])
+        wrong = cleaned[f"{label}_clean"].notna() & (
+            cleaned[f"{label}_clean"] != cleaned[f"true_{label}"]
+        )
         caught = (sus[f"{label}_clean"] != sus[f"true_{label}"]).sum()
         results[label]["mislabels"] = {
             "actually_wrong": int(wrong.sum()),
@@ -354,19 +381,24 @@ def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
 def format_report(results: dict) -> str:
     lines = []
     for label, r in results.items():
-        lines += [f"\n{label.upper()}  ({r['n_unlabelled']} unlabelled after cleaning)",
-                  f"  {'strategy':8} {'coverage':>9} {'accuracy':>9} {'macroF1':>8} "
-                  f"{'auto≥' + str(AUTO_APPLY_THRESHOLD):>8} {'auto-prec':>10} {'top3':>6}"]
+        lines += [
+            f"\n{label.upper()}  ({r['n_unlabelled']} unlabelled after cleaning)",
+            f"  {'strategy':8} {'coverage':>9} {'accuracy':>9} {'macroF1':>8} "
+            f"{'auto≥' + str(AUTO_APPLY_THRESHOLD):>8} {'auto-prec':>10} {'top3':>6}",
+        ]
         for strategy in ("rules", "model", "hybrid"):
             m = r[strategy]
             top3 = f"{m['top3']:.0%}" if "top3" in m else "-"
             lines.append(
                 f"  {strategy:8} {m['coverage']:>9.0%} {m['accuracy']:>9.0%} "
                 f"{m['macro_f1']:>8.2f} {m['auto_coverage']:>8.0%} "
-                f"{m['auto_precision']:>10.0%} {top3:>6}")
+                f"{m['auto_precision']:>10.0%} {top3:>6}"
+            )
         ml = r["mislabels"]
-        lines.append(f"  mislabel check: {ml['flagged']} flagged, {ml['flagged_and_wrong']} "
-                     f"truly wrong (of {ml['actually_wrong']} wrong tags in the data)")
+        lines.append(
+            f"  mislabel check: {ml['flagged']} flagged, {ml['flagged_and_wrong']} "
+            f"truly wrong (of {ml['actually_wrong']} wrong tags in the data)"
+        )
     return "\n".join(lines)
 
 

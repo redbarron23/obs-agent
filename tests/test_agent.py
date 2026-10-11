@@ -7,10 +7,10 @@ and verify that the loop dispatches correctly, handles streaming,
 and maintains conversation memory.
 """
 
-from unittest.mock import patch, MagicMock, PropertyMock
 from types import SimpleNamespace
-import pytest
+from unittest.mock import MagicMock, PropertyMock, patch
 
+import pytest
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -100,10 +100,8 @@ _FAKE_TOOL_RESULTS = {
 def patch_tool_dispatch():
     """Replace real tool dispatch with fake results for testing."""
     import agent as agent_mod
-    fake_dispatch = {
-        name: (lambda args, r=v: r)
-        for name, v in _FAKE_TOOL_RESULTS.items()
-    }
+
+    fake_dispatch = {name: (lambda args, r=v: r) for name, v in _FAKE_TOOL_RESULTS.items()}
     with patch.dict(agent_mod.TOOL_DISPATCH, fake_dispatch, clear=True):
         yield
 
@@ -120,6 +118,7 @@ class TestAgentLoop:
 
         with patch("agent.Provider.create", return_value=fake_resp):
             from agent import run
+
             answer, messages = run("Which is top?", provider="anthropic")
 
         assert answer == "The top subscription is sub-a."
@@ -136,6 +135,7 @@ class TestAgentLoop:
         mock_create = MagicMock(side_effect=[tool_resp, final_resp])
         with patch("agent.Provider.create", mock_create):
             from agent import run
+
             answer, messages = run("Which Azure sub is top?", provider="anthropic")
 
         assert "sub-a" in answer
@@ -145,18 +145,19 @@ class TestAgentLoop:
     def test_multiple_tool_calls(self):
         """Model calls two tools before answering."""
         tool1 = make_anthropic_response(
-            tool_name="get_azure_top_overages", tool_input={"n": 1},
+            tool_name="get_azure_top_overages",
+            tool_input={"n": 1},
         )
         tool2 = make_anthropic_response(
-            tool_name="get_gcp_top_projects", tool_input={"n": 1},
+            tool_name="get_gcp_top_projects",
+            tool_input={"n": 1},
         )
-        final = make_anthropic_response(
-            text="Azure: sub-a, GCP: proj-alpha"
-        )
+        final = make_anthropic_response(text="Azure: sub-a, GCP: proj-alpha")
 
         mock_create = MagicMock(side_effect=[tool1, tool2, final])
         with patch("agent.Provider.create", mock_create):
             from agent import run
+
             answer, messages = run("Compare both clouds", provider="anthropic")
 
         assert "sub-a" in answer
@@ -166,13 +167,15 @@ class TestAgentLoop:
     def test_conversation_memory_persists(self):
         """Messages list passed in should be appended to, not replaced."""
         tool_resp = make_anthropic_response(
-            tool_name="get_azure_top_overages", tool_input={"n": 1},
+            tool_name="get_azure_top_overages",
+            tool_input={"n": 1},
         )
         final_resp = make_anthropic_response(text="sub-a is top.")
 
         mock_create = MagicMock(side_effect=[tool_resp, final_resp])
         with patch("agent.Provider.create", mock_create):
             from agent import run
+
             history = [{"role": "assistant", "content": "Previous answer"}]
             answer, messages = run("Which is top?", messages=history, provider="anthropic")
 
@@ -192,27 +195,30 @@ class TestAgentLoop:
 
         messages = []
         for i in range(5):
-            messages.extend([
-                {"role": "user", "content": f"Question {i}"},
-                {"role": "assistant", "content": None, "tool_calls": [
-                    {"id": f"call-{i}", "name": "compare_cross_cloud", "input": {}},
-                ]},
-                {"role": "tool", "tool_call_id": f"call-{i}", "content": "data"},
-                {"role": "assistant", "content": f"Answer {i}"},
-            ])
+            messages.extend(
+                [
+                    {"role": "user", "content": f"Question {i}"},
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {"id": f"call-{i}", "name": "compare_cross_cloud", "input": {}},
+                        ],
+                    },
+                    {"role": "tool", "tool_call_id": f"call-{i}", "content": "data"},
+                    {"role": "assistant", "content": f"Answer {i}"},
+                ]
+            )
         messages.append({"role": "user", "content": "Final question"})
 
         _prune_history(messages, max_history=20)
 
         assert messages[0]["role"] == "user"
-        calls = {
-            call["id"]
-            for message in messages
-            for call in message.get("tool_calls", [])
-        }
+        calls = {call["id"] for message in messages for call in message.get("tool_calls", [])}
         assert all(
             message.get("tool_call_id") in calls
-            for message in messages if message["role"] == "tool"
+            for message in messages
+            if message["role"] == "tool"
         )
 
 
@@ -222,6 +228,7 @@ class TestProviderAbstraction:
     def test_openai_provider_uses_max_completion_tokens(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         from unittest.mock import MagicMock
+
         from agent import Provider
 
         p = Provider("openai", "gpt-5.4-mini")
@@ -234,26 +241,31 @@ class TestProviderAbstraction:
     def test_anthropic_stop_reason_end_turn(self):
         resp = make_anthropic_response(text="Hello")
         from agent import Provider
+
         assert Provider.stop_reason(resp) == "end_turn"
 
     def test_anthropic_stop_reason_tool_use(self):
         resp = make_anthropic_response(tool_name="get_azure_top_overages")
         from agent import Provider
+
         assert Provider.stop_reason(resp) == "tool_use"
 
     def test_openai_stop_reason_stop(self):
         resp = make_openai_response(text="Hello")
         from agent import Provider
+
         assert Provider.stop_reason(resp) == "end_turn"
 
     def test_openai_stop_reason_tool_calls(self):
         resp = make_openai_response(tool_name="get_azure_top_overages")
         from agent import Provider
+
         assert Provider.stop_reason(resp) == "tool_use"
 
     def test_anthropic_content_blocks_text(self):
         resp = make_anthropic_response(text="Some answer")
         from agent import Provider
+
         blocks = list(Provider.iter_content_blocks(resp))
         assert len(blocks) == 1
         assert blocks[0].type == "text"
@@ -261,9 +273,11 @@ class TestProviderAbstraction:
 
     def test_anthropic_content_blocks_tool(self):
         resp = make_anthropic_response(
-            tool_name="get_azure_top_overages", tool_input={"n": 2},
+            tool_name="get_azure_top_overages",
+            tool_input={"n": 2},
         )
         from agent import Provider
+
         blocks = list(Provider.iter_content_blocks(resp))
         assert len(blocks) == 1
         assert blocks[0].type == "tool_use"
@@ -273,6 +287,7 @@ class TestProviderAbstraction:
     def test_openai_content_blocks_text(self):
         resp = make_openai_response(text="Some answer")
         from agent import Provider
+
         blocks = list(Provider.iter_content_blocks(resp))
         assert len(blocks) == 1
         assert blocks[0].type == "text"
@@ -280,9 +295,11 @@ class TestProviderAbstraction:
 
     def test_openai_content_blocks_tool(self):
         resp = make_openai_response(
-            tool_name="get_gcp_top_projects", tool_input={"n": 3},
+            tool_name="get_gcp_top_projects",
+            tool_input={"n": 3},
         )
         from agent import Provider
+
         blocks = list(Provider.iter_content_blocks(resp))
         assert len(blocks) == 1
         assert blocks[0].type == "tool_use"
@@ -296,6 +313,7 @@ class TestProviderAbstraction:
             tool_id="call_xyz789",
         )
         from agent import Provider
+
         blocks = list(Provider.iter_content_blocks(resp))
         assert blocks[0].id == "call_xyz789"
 
@@ -320,6 +338,7 @@ class TestStreaming:
                 mock_create.return_value = "stream_obj_placeholder"
 
                 from agent import run
+
                 answer, messages = run("Which is top?", stream=True, provider="anthropic")
 
         assert "sub-a" in answer
@@ -329,12 +348,16 @@ class TestStreaming:
         from agent import Provider
 
         final = make_anthropic_response(
-            tool_name="get_azure_top_overages", tool_input={"n": 1},
+            tool_name="get_azure_top_overages",
+            tool_input={"n": 1},
         )
         start = SimpleNamespace(
             type="content_block_start",
             content_block=SimpleNamespace(
-                type="tool_use", name="get_azure_top_overages", input={}, id="call-1",
+                type="tool_use",
+                name="get_azure_top_overages",
+                input={},
+                id="call-1",
             ),
         )
 
@@ -352,7 +375,9 @@ class TestStreaming:
                 return final
 
         _, _, calls = Provider._stream_anthropic(
-            FakeStream(), verbose=False, on_token=lambda _: None,
+            FakeStream(),
+            verbose=False,
+            on_token=lambda _: None,
         )
         assert calls[0].input == {"n": 1}
 
@@ -367,7 +392,8 @@ class TestStreaming:
         from agent import Provider
 
         tool_resp = make_anthropic_response(
-            tool_name="get_azure_top_overages", tool_input={"n": 1},
+            tool_name="get_azure_top_overages",
+            tool_input={"n": 1},
         )
         final_resp = make_anthropic_response(text="Top is sub-a at $5000.")
 
@@ -386,6 +412,7 @@ class TestStreaming:
         with patch.object(Provider, "stream_response", side_effect=stream_response_side_effect):
             with patch.object(Provider, "create", return_value="stream_obj"):
                 from agent import run
+
                 answer, messages = run("Which is top?", stream=True, provider="anthropic")
 
         assert "sub-a" in answer
@@ -403,8 +430,11 @@ class TestStreaming:
                 mock_create.return_value = "stream_obj"
 
                 from agent import run
+
                 answer, messages = run(
-                    "Which is top?", provider="deepseek", stream=True,
+                    "Which is top?",
+                    provider="deepseek",
+                    stream=True,
                 )
 
         assert "sub-a" in answer
@@ -419,6 +449,7 @@ class TestEdgeCases:
 
         with patch("agent.Provider.create", return_value=fake_resp):
             from agent import run
+
             answer, messages = run("", provider="anthropic")
         assert answer == ""
 
@@ -429,6 +460,7 @@ class TestEdgeCases:
 
         with patch("agent.Provider.create", return_value=fake_resp):
             from agent import run
+
             answer, messages = run(long_q, provider="anthropic")
         assert answer == "sub-a"
 
@@ -438,14 +470,17 @@ class TestEdgeCases:
 
         with patch("agent.Provider.create", return_value=fake_resp):
             from agent import run
+
             answer, messages = run("Hello", provider="anthropic")
         assert "Just answering" in answer
 
     def test_build_assistant_content_anthropic(self):
         """_parse_assistant_response should handle Anthropic responses."""
         from agent import _parse_assistant_response
+
         resp = make_anthropic_response(
-            tool_name="get_azure_top_overages", tool_input={"n": 1},
+            tool_name="get_azure_top_overages",
+            tool_input={"n": 1},
         )
         msg = _parse_assistant_response("anthropic", resp)
         assert msg["role"] == "assistant"
@@ -456,8 +491,10 @@ class TestEdgeCases:
     def test_build_assistant_content_openai(self):
         """_parse_assistant_response should handle OpenAI responses."""
         from agent import _parse_assistant_response
+
         resp = make_openai_response(
-            tool_name="get_azure_top_overages", tool_input={"n": 1},
+            tool_name="get_azure_top_overages",
+            tool_input={"n": 1},
         )
         msg = _parse_assistant_response("deepseek", resp)
         assert msg["role"] == "assistant"
@@ -466,7 +503,7 @@ class TestEdgeCases:
 
     def test_build_assistant_content_with_override(self):
         """tool_blocks_override should be used when provided."""
-        from agent import _parse_assistant_response, _OaiToolCall
+        from agent import _OaiToolCall, _parse_assistant_response
 
         raw = SimpleNamespace()
         raw.function = SimpleNamespace()
@@ -541,11 +578,13 @@ class TestSafetyRails:
     def test_max_turns_exceeded(self):
         """Agent should stop after MAX_TURNS tool-use iterations."""
         tool_resp = make_anthropic_response(
-            tool_name="get_azure_top_overages", tool_input={"n": 1},
+            tool_name="get_azure_top_overages",
+            tool_input={"n": 1},
         )
 
         with patch("agent.Provider.create", return_value=tool_resp) as mock_create:
-            from agent import run, MAX_TURNS
+            from agent import MAX_TURNS, run
+
             answer, messages = run("Keep calling tools", provider="anthropic")
 
         assert str(MAX_TURNS) in answer
@@ -554,13 +593,15 @@ class TestSafetyRails:
     def test_unknown_tool_returns_error(self):
         """Hallucinated tool names should return an error string to the model."""
         tool_resp = make_anthropic_response(
-            tool_name="nonexistent_tool", tool_input={},
+            tool_name="nonexistent_tool",
+            tool_input={},
         )
         final_resp = make_anthropic_response(text="Sorry, tool failed.")
 
         mock_create = MagicMock(side_effect=[tool_resp, final_resp])
         with patch("agent.Provider.create", mock_create):
             from agent import run
+
             answer, messages = run("Do something weird", provider="anthropic")
 
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
@@ -573,6 +614,7 @@ class TestCLIParsing:
 
     def test_defaults(self):
         from agent import _parse_args
+
         args = _parse_args([])
         assert args.provider == "ollama"
         assert args.model is None
@@ -582,40 +624,55 @@ class TestCLIParsing:
 
     def test_question_flag(self):
         from agent import _parse_args
+
         args = _parse_args(["-q", "Which is top?"])
         assert args.question == "Which is top?"
 
     def test_long_question_flag(self):
         from agent import _parse_args
+
         args = _parse_args(["--question", "Compare costs"])
         assert args.question == "Compare costs"
 
     def test_provider_choice(self):
         from agent import _parse_args
+
         args = _parse_args(["--provider", "deepseek"])
         assert args.provider == "deepseek"
 
     def test_model_flag(self):
         from agent import _parse_args
+
         args = _parse_args(["--model", "deepseek-chat"])
         assert args.model == "deepseek-chat"
 
     def test_verbose(self):
         from agent import _parse_args
+
         args = _parse_args(["-v"])
         assert args.verbose is True
 
     def test_stream(self):
         from agent import _parse_args
+
         args = _parse_args(["-s"])
         assert args.stream is True
 
     def test_all_flags(self):
         from agent import _parse_args
-        args = _parse_args([
-            "-q", "test", "--provider", "deepseek",
-            "--model", "deepseek-chat", "-v", "-s",
-        ])
+
+        args = _parse_args(
+            [
+                "-q",
+                "test",
+                "--provider",
+                "deepseek",
+                "--model",
+                "deepseek-chat",
+                "-v",
+                "-s",
+            ]
+        )
         assert args.question == "test"
         assert args.provider == "deepseek"
         assert args.model == "deepseek-chat"
@@ -632,10 +689,13 @@ class TestOpenAIStreamNormalisation:
 
         tool_calls = None
         if tool:
-            tool_calls = [NS(
-                index=0, id="call_1",
-                function=NS(name=tool[0], arguments=tool[1]),
-            )]
+            tool_calls = [
+                NS(
+                    index=0,
+                    id="call_1",
+                    function=NS(name=tool[0], arguments=tool[1]),
+                )
+            ]
         delta = NS(content=content, tool_calls=tool_calls)
         return NS(choices=[NS(delta=delta, finish_reason=finish)])
 
@@ -645,7 +705,9 @@ class TestOpenAIStreamNormalisation:
 
         stream = [self._chunk(tool=("get_gcp_top_projects", '{"n": 3}'), finish=finish)]
         resp, text, tools = Provider._stream_openai(
-            iter(stream), verbose=False, on_token=lambda t: None,
+            iter(stream),
+            verbose=False,
+            on_token=lambda t: None,
         )
         assert Provider.stop_reason(resp) == "tool_use"
         assert tools[0].name == "get_gcp_top_projects"
@@ -656,7 +718,9 @@ class TestOpenAIStreamNormalisation:
         stream = [self._chunk(content="Hi"), self._chunk(finish="stop")]
         tokens = []
         resp, text, tools = Provider._stream_openai(
-            iter(stream), verbose=False, on_token=tokens.append,
+            iter(stream),
+            verbose=False,
+            on_token=tokens.append,
         )
         assert Provider.stop_reason(resp) == "end_turn"
         assert tokens == ["Hi"] and text == ["Hi"] and tools == []

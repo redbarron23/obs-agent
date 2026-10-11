@@ -10,23 +10,19 @@ synthetic data).
 import pandas as pd
 
 from data import (
-    AZURE_SUMMARY_DF,
     AZURE_DETAILS_DF,
-    GCP_SUMMARY_DF,
+    AZURE_SUMMARY_DF,
     GCP_DETAILS_DF,
+    GCP_SUMMARY_DF,
 )
 
 
 def get_azure_top_overages(n: int = 5) -> str:
     """Top N Azure subscriptions by estimated 30-day overage cost."""
     df = AZURE_SUMMARY_DF.copy()
-    top = (
-        df[df["estimated_overage_cost_30d"] > 0]
-        .nlargest(n, "estimated_overage_cost_30d")[
-            ["subscription_id", "ingested_gb_30d", "overage_gb_30d",
-             "estimated_overage_cost_30d"]
-        ]
-    )
+    top = df[df["estimated_overage_cost_30d"] > 0].nlargest(n, "estimated_overage_cost_30d")[
+        ["subscription_id", "ingested_gb_30d", "overage_gb_30d", "estimated_overage_cost_30d"]
+    ]
     if top.empty:
         return "No Azure subscriptions with overage found."
     return top.to_string(index=False)
@@ -35,12 +31,9 @@ def get_azure_top_overages(n: int = 5) -> str:
 def get_gcp_top_projects(n: int = 5) -> str:
     """Top N GCP projects by total logging cost."""
     df = GCP_SUMMARY_DF.copy()
-    top = (
-        df[df["total_cost"] > 0]
-        .nlargest(n, "total_cost")[
-            ["project_id", "total_cost", "currency"]
-        ]
-    )
+    top = df[df["total_cost"] > 0].nlargest(n, "total_cost")[
+        ["project_id", "total_cost", "currency"]
+    ]
     if top.empty:
         return "No GCP projects with costs found."
     return top.to_string(index=False)
@@ -56,8 +49,7 @@ def get_daily_trend(platform: str, identifier: str) -> str:
         if sub.empty:
             return f"No Azure data found for subscription: {identifier}"
         daily = (
-            sub.groupby("day")[["ingested_gb", "overage_gb",
-                                "estimated_overage_cost"]]
+            sub.groupby("day")[["ingested_gb", "overage_gb", "estimated_overage_cost"]]
             .sum()
             .reset_index()
             .sort_values("day")
@@ -70,12 +62,7 @@ def get_daily_trend(platform: str, identifier: str) -> str:
         proj = df[df["project_id"] == identifier]
         if proj.empty:
             return f"No GCP data found for project: {identifier}"
-        daily = (
-            proj.groupby("day")[["cost"]]
-            .sum()
-            .reset_index()
-            .sort_values("day")
-        )
+        daily = proj.groupby("day")[["cost"]].sum().reset_index().sort_values("day")
         header = f"Daily cost trend for GCP project {identifier}:\n"
         return header + daily.to_string(index=False)
 
@@ -84,46 +71,55 @@ def get_daily_trend(platform: str, identifier: str) -> str:
 
 
 def _daily_spikes(
-    df: pd.DataFrame, id_col: str, cost_col: str, threshold_pct: float,
+    df: pd.DataFrame,
+    id_col: str,
+    cost_col: str,
+    threshold_pct: float,
 ) -> pd.DataFrame:
     """Days where an entity's cost jumped >= threshold_pct% vs the previous day."""
-    daily = (
-        df.groupby([id_col, "day"])[cost_col]
-        .sum()
-        .reset_index()
-        .sort_values([id_col, "day"])
-    )
+    daily = df.groupby([id_col, "day"])[cost_col].sum().reset_index().sort_values([id_col, "day"])
     daily["prev"] = daily.groupby(id_col)[cost_col].shift(1)
     daily["pct_change"] = (
-        (daily[cost_col] - daily["prev"])
-        / daily["prev"].replace(0, float("nan"))
-        * 100
+        (daily[cost_col] - daily["prev"]) / daily["prev"].replace(0, float("nan")) * 100
     )
     return daily[(daily["pct_change"] >= threshold_pct) & (daily[cost_col] > 1)]
 
 
 def _spike_lines(
-    spikes: pd.DataFrame, id_col: str, cost_col: str, label: str, limit: int,
+    spikes: pd.DataFrame,
+    id_col: str,
+    cost_col: str,
+    label: str,
+    limit: int,
 ) -> list[str]:
     """Format the costliest *limit* spikes, noting when the list is truncated."""
     if spikes.empty:
         return []
     top = spikes.sort_values(cost_col, ascending=False).head(limit)
     lines = (
-        label + " " + top[id_col].astype(str)
-        + " on " + top["day"].astype(str)
-        + ": +" + top["pct_change"].round(0).astype(int).astype(str)
-        + "% ($" + top[cost_col].map("{:.2f}".format) + ")"
+        label
+        + " "
+        + top[id_col].astype(str)
+        + " on "
+        + top["day"].astype(str)
+        + ": +"
+        + top["pct_change"].round(0).astype(int).astype(str)
+        + "% ($"
+        + top[cost_col].map("{:.2f}".format)
+        + ")"
     ).tolist()
     if len(spikes) > limit:
         lines.insert(
-            0, f"{label} showing the {limit} costliest of {len(spikes)} spikes:",
+            0,
+            f"{label} showing the {limit} costliest of {len(spikes)} spikes:",
         )
     return lines
 
 
 def find_spikes(
-    threshold_pct: float = 50.0, platform: str = "all", limit: int = 10,
+    threshold_pct: float = 50.0,
+    platform: str = "all",
+    limit: int = 10,
 ) -> str:
     """Detect days where cost jumped > threshold_pct% vs the previous day.
 
@@ -139,18 +135,28 @@ def find_spikes(
     results: list[str] = []
     if platform in ("all", "azure"):
         spikes = _daily_spikes(
-            AZURE_DETAILS_DF.copy(), "subscription_id", "estimated_overage_cost",
+            AZURE_DETAILS_DF.copy(),
+            "subscription_id",
+            "estimated_overage_cost",
             threshold_pct,
         )
         results += _spike_lines(
-            spikes, "subscription_id", "estimated_overage_cost", "[Azure]", limit,
+            spikes,
+            "subscription_id",
+            "estimated_overage_cost",
+            "[Azure]",
+            limit,
         )
     if platform in ("all", "gcp"):
         spikes = _daily_spikes(GCP_DETAILS_DF.copy(), "project_id", "cost", threshold_pct)
         results += _spike_lines(spikes, "project_id", "cost", "[GCP]  ", limit)
 
     if not results:
-        scope = "" if platform == "all" else f" on {platform.upper() if platform == 'gcp' else platform.title()}"
+        scope = (
+            ""
+            if platform == "all"
+            else f" on {platform.upper() if platform == 'gcp' else platform.title()}"
+        )
         return f"No spikes above {threshold_pct}% found{scope}."
     return "\n".join(results)
 
@@ -179,18 +185,12 @@ def compare_cross_cloud() -> str:
     for _, row in AZURE_SUMMARY_DF.sort_values(
         "estimated_overage_cost_30d", ascending=False
     ).iterrows():
-        lines.append(
-            f"  {row['subscription_id']}: ${row['estimated_overage_cost_30d']:,.2f}"
-        )
+        lines.append(f"  {row['subscription_id']}: ${row['estimated_overage_cost_30d']:,.2f}")
 
     lines.append("")
     lines.append("GCP project breakdown:")
-    for _, row in GCP_SUMMARY_DF.sort_values(
-        "total_cost", ascending=False
-    ).iterrows():
-        lines.append(
-            f"  {row['project_id']}: ${row['total_cost']:,.2f}"
-        )
+    for _, row in GCP_SUMMARY_DF.sort_values("total_cost", ascending=False).iterrows():
+        lines.append(f"  {row['project_id']}: ${row['total_cost']:,.2f}")
 
     return "\n".join(lines)
 
@@ -214,7 +214,9 @@ def get_label_coverage(limit: int = 10) -> str:
         )
     either = df[df["team_clean"].isna() | df["env_clean"].isna()]
     limit = max(1, int(limit))
-    lines.append(f"\nExamples missing team or env (showing {min(limit, len(either))} of {len(either)}):")
+    lines.append(
+        f"\nExamples missing team or env (showing {min(limit, len(either))} of {len(either)}):"
+    )
     for _, row in either.head(limit).iterrows():
         lines.append(
             f"  {row['resource_id']} [{row['cloud']}] team={row['team_clean'] or '-'} "
@@ -268,7 +270,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "get_azure_top_overages",
         "description": "Returns the top N Azure subscriptions "
-                       "ranked by estimated overage cost over the last 30 days.",
+        "ranked by estimated overage cost over the last 30 days.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -282,8 +284,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "get_gcp_top_projects",
-        "description": "Returns the top N GCP projects "
-                       "ranked by total logging cost.",
+        "description": "Returns the top N GCP projects ranked by total logging cost.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -298,7 +299,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "get_daily_trend",
         "description": "Returns day-by-day cost and ingestion data "
-                       "for a specific Azure subscription or GCP project.",
+        "for a specific Azure subscription or GCP project.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -318,18 +319,17 @@ TOOL_DEFINITIONS = [
     {
         "name": "find_spikes",
         "description": "Finds days where daily cost jumped by more than "
-                       "threshold_pct% compared to the previous day. Results are "
-                       "ranked by dollar cost (costliest first) and capped at "
-                       "`limit` per platform; a header line states the total "
-                       "number of spikes when the list is truncated. Use `platform` "
-                       "to restrict to Azure or GCP.",
+        "threshold_pct% compared to the previous day. Results are "
+        "ranked by dollar cost (costliest first) and capped at "
+        "`limit` per platform; a header line states the total "
+        "number of spikes when the list is truncated. Use `platform` "
+        "to restrict to Azure or GCP.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "threshold_pct": {
                     "type": "number",
-                    "description": "Minimum percentage increase "
-                                   "to flag as a spike. Default 50.",
+                    "description": "Minimum percentage increase to flag as a spike. Default 50.",
                 },
                 "platform": {
                     "type": "string",
@@ -347,9 +347,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "compare_cross_cloud",
         "description": "Compares total costs across Azure and GCP side by side. "
-                       "Returns total Azure overage cost, total GCP logging cost, "
-                       "and per-subscription / per-project breakdowns. "
-                       "Takes no arguments.",
+        "Returns total Azure overage cost, total GCP logging cost, "
+        "and per-subscription / per-project breakdowns. "
+        "Takes no arguments.",
         "input_schema": {
             "type": "object",
             "properties": {},
@@ -359,10 +359,10 @@ TOOL_DEFINITIONS = [
     {
         "name": "get_label_coverage",
         "description": "Reports how many Azure subscriptions / GCP projects are "
-                       "missing a usable team or env tag (after normalising "
-                       "misspellings), how many existing tags look wrong, and "
-                       "example resource IDs. Use before suggest_labels to find "
-                       "candidates.",
+        "missing a usable team or env tag (after normalising "
+        "misspellings), how many existing tags look wrong, and "
+        "example resource IDs. Use before suggest_labels to find "
+        "candidates.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -377,12 +377,12 @@ TOOL_DEFINITIONS = [
     {
         "name": "suggest_labels",
         "description": "Infers the team, env and cost_center labels for one Azure "
-                       "subscription or GCP project from a model trained on the "
-                       "correctly labelled ones (name, parent folder/management "
-                       "group, owners, services, spend pattern). Returns each "
-                       "suggestion with confidence, whether it is safe to "
-                       "auto-apply, the reasons, and alternatives. Also flags "
-                       "existing tags that look wrong.",
+        "subscription or GCP project from a model trained on the "
+        "correctly labelled ones (name, parent folder/management "
+        "group, owners, services, spend pattern). Returns each "
+        "suggestion with confidence, whether it is safe to "
+        "auto-apply, the reasons, and alternatives. Also flags "
+        "existing tags that look wrong.",
         "input_schema": {
             "type": "object",
             "properties": {

@@ -47,6 +47,7 @@ DEFAULT_DECISIONS_PATH = "label_decisions.json"
 
 # ── Reports ────────────────────────────────────────────────────────────
 
+
 def _raw(value) -> str | None:
     return None if pd.isna(value) else str(value)
 
@@ -54,9 +55,15 @@ def _raw(value) -> str | None:
 def _label_report(inf: LabelInference, row, label: str, suspects: pd.DataFrame) -> dict:
     current = row[f"{label}_clean"]
     out = {
-        "current": current, "raw": _raw(row[label]), "status": "ok",
-        "suggested": None, "confidence": None, "action": None,
-        "source": None, "reason": None, "alternatives": [],
+        "current": current,
+        "raw": _raw(row[label]),
+        "status": "ok",
+        "suggested": None,
+        "confidence": None,
+        "action": None,
+        "source": None,
+        "reason": None,
+        "alternatives": [],
     }
     if current is not None:
         hit = suspects[suspects["resource_id"] == row["resource_id"]]
@@ -66,17 +73,22 @@ def _label_report(inf: LabelInference, row, label: str, suspects: pd.DataFrame) 
         # out-of-fold prediction instead.
         h = hit.iloc[0]
         return out | {
-            "status": "suspect", "suggested": h["predicted"],
-            "confidence": round(float(h["confidence"]), 3), "action": "needs review",
+            "status": "suspect",
+            "suggested": h["predicted"],
+            "confidence": round(float(h["confidence"]), 3),
+            "action": "needs review",
             "source": "out-of-fold model",
             "reason": f"tagged {label}={current}, but a model that never saw this "
-                      f"resource predicts {label}={h['predicted']}",
+            f"resource predicts {label}={h['predicted']}",
         }
     s = inf.suggest(row, label, BEST_STRATEGY[label])
     return out | {
-        "status": "untagged", "suggested": s.label, "confidence": s.confidence,
+        "status": "untagged",
+        "suggested": s.label,
+        "confidence": s.confidence,
         "action": "auto-apply" if s.confidence >= AUTO_APPLY_THRESHOLD else "needs review",
-        "source": s.source, "reason": s.reason,
+        "source": s.source,
+        "reason": s.reason,
         "alternatives": [{"value": c, "confidence": p} for c, p in s.alternatives[1:]],
     }
 
@@ -113,8 +125,13 @@ def resource_report(resource_id: str) -> dict | None:
 
 
 def review_queue(
-    *, label: str | None = None, status: str | None = None, cloud: str | None = None,
-    min_confidence: float = 0.0, max_confidence: float = 1.0, search: str | None = None,
+    *,
+    label: str | None = None,
+    status: str | None = None,
+    cloud: str | None = None,
+    min_confidence: float = 0.0,
+    max_confidence: float = 1.0,
+    search: str | None = None,
 ) -> list[dict]:
     """Resources needing review, most confident suggestions first.
 
@@ -135,8 +152,7 @@ def review_queue(
         if not any(min_confidence <= h["confidence"] <= max_confidence for h in hits):
             continue
         out.append(r)
-    return sorted(out, key=lambda r: -max(
-        r["labels"][l]["confidence"] or 0 for l in labels))
+    return sorted(out, key=lambda r: -max(r["labels"][l]["confidence"] or 0 for l in labels))
 
 
 def coverage() -> dict:
@@ -159,6 +175,7 @@ def coverage() -> dict:
 
 # ── Decisions ──────────────────────────────────────────────────────────
 
+
 class DecisionError(ValueError):
     """A decision that cannot be recorded (bad label, value, or no suggestion)."""
 
@@ -176,15 +193,20 @@ class DecisionStore:
 
     def _load(self) -> dict[str, dict]:
         try:
-            return {f"{d['resource_id']}|{d['label']}": d
-                    for d in json.loads(self.path.read_text())}
+            return {
+                f"{d['resource_id']}|{d['label']}": d for d in json.loads(self.path.read_text())
+            }
         except FileNotFoundError:
             return {}
 
     def _save(self, data: dict[str, dict]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(sorted(data.values(), key=lambda d: (d["resource_id"], d["label"])), indent=2))
+        tmp.write_text(
+            json.dumps(
+                sorted(data.values(), key=lambda d: (d["resource_id"], d["label"])), indent=2
+            )
+        )
         os.replace(tmp, self.path)  # atomic: readers never see a half-written file
 
     def all(self) -> list[dict]:
@@ -214,8 +236,12 @@ class DecisionStore:
         else:
             value = lr["suggested"] if decision == "accept" else None
         entry = {
-            "resource_id": resource_id, "label": label, "decision": decision,
-            "value": value, "suggested": lr["suggested"], "previous": lr["current"],
+            "resource_id": resource_id,
+            "label": label,
+            "decision": decision,
+            "value": value,
+            "suggested": lr["suggested"],
+            "previous": lr["current"],
             "decided_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         with self._lock:
@@ -240,7 +266,9 @@ def _blank(value):
     return value
 
 
-def editor_changes(before: pd.DataFrame, after: pd.DataFrame) -> list[tuple[str, str | None, str | None]]:
+def editor_changes(
+    before: pd.DataFrame, after: pd.DataFrame
+) -> list[tuple[str, str | None, str | None]]:
     """(resource_id, decision, override) for rows a reviewer changed in the table.
 
     decision None means "clear the decision". Picking an override value
@@ -256,6 +284,7 @@ def editor_changes(before: pd.DataFrame, after: pd.DataFrame) -> list[tuple[str,
 
 
 # ── Resolution and export ──────────────────────────────────────────────
+
 
 def resolve(report: dict, decisions: dict[str, dict], include_auto: bool) -> dict:
     """Final value and how it was reached, per label."""
@@ -290,9 +319,15 @@ def pending_changes(store: DecisionStore, include_auto: bool = True) -> list[dic
             # cost_center travels with team.
             tags["cost_center"] = (inf.cost_center_of[tags["team"][0]], tags["team"][1])
         if tags:
-            changes.append({"resource_id": r["resource_id"], "cloud": r["cloud"], "tags": tags,
-                            "previous": {l: r["labels"][l]["current"] for l in LABELS}
-                            | {"cost_center": r["cost_center"]["current"]}})
+            changes.append(
+                {
+                    "resource_id": r["resource_id"],
+                    "cloud": r["cloud"],
+                    "tags": tags,
+                    "previous": {l: r["labels"][l]["current"] for l in LABELS}
+                    | {"cost_center": r["cost_center"]["current"]},
+                }
+            )
     return changes
 
 
@@ -311,15 +346,21 @@ def export(store: DecisionStore, fmt: str, include_auto: bool = True) -> str:
         w.writerow(["resource_id", "cloud", "label", "previous", "new", "how"])
         for c in changes:
             for label, (value, how) in c["tags"].items():
-                w.writerow([c["resource_id"], c["cloud"], label, c["previous"][label] or "", value, how])
+                w.writerow(
+                    [c["resource_id"], c["cloud"], label, c["previous"][label] or "", value, how]
+                )
         return buf.getvalue()
     if fmt == "tfvars":
         doc = {"subscription_tags": {}, "project_labels": {}}
         for c in changes:
             if c["cloud"] == "azure":
-                doc["subscription_tags"][c["resource_id"]] = {k: v for k, (v, _) in c["tags"].items()}
+                doc["subscription_tags"][c["resource_id"]] = {
+                    k: v for k, (v, _) in c["tags"].items()
+                }
             else:
-                doc["project_labels"][c["resource_id"]] = {k: _gcp_value(v) for k, (v, _) in c["tags"].items()}
+                doc["project_labels"][c["resource_id"]] = {
+                    k: _gcp_value(v) for k, (v, _) in c["tags"].items()
+                }
         return json.dumps(doc, indent=2) + "\n"
     lines = [
         "#!/usr/bin/env bash",
@@ -333,9 +374,13 @@ def export(store: DecisionStore, fmt: str, include_auto: bool = True) -> str:
         rid = c["resource_id"]
         if c["cloud"] == "azure":
             tags = " ".join(shlex.quote(f"{k}={v}") for k, (v, _) in c["tags"].items())
-            lines.append(f"az tag update --resource-id {shlex.quote('/subscriptions/' + rid)} "
-                         f"--operation Merge --tags {tags}")
+            lines.append(
+                f"az tag update --resource-id {shlex.quote('/subscriptions/' + rid)} "
+                f"--operation Merge --tags {tags}"
+            )
         else:
             labels = ",".join(f"{k}={_gcp_value(v)}" for k, (v, _) in c["tags"].items())
-            lines.append(f"gcloud projects update {shlex.quote(rid)} --update-labels={shlex.quote(labels)}")
+            lines.append(
+                f"gcloud projects update {shlex.quote(rid)} --update-labels={shlex.quote(labels)}"
+            )
     return "\n".join(lines) + "\n"

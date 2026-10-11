@@ -8,9 +8,10 @@ The seed is fixed so evals pass reliably — every run produces the same
 subscription IDs, project IDs, costs, and spike patterns.
 """
 
-import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
 
 # ── Seeded RNG for reproducibility ─────────────────────────────────────
 RNG = np.random.default_rng(seed=42)
@@ -52,12 +53,14 @@ def generate_azure_summary() -> pd.DataFrame:
 
     rows = []
     for i, sub in enumerate(AZURE_SUBSCRIPTIONS):
-        rows.append({
-            "subscription_id": sub,
-            "ingested_gb_30d": max(0, base_ingested[i] + ingested_noise[i]),
-            "overage_gb_30d": max(0, base_overage[i] + overage_noise[i]),
-            "estimated_overage_cost_30d": max(0, base_costs[i] + RNG.integers(-200, 201)),
-        })
+        rows.append(
+            {
+                "subscription_id": sub,
+                "ingested_gb_30d": max(0, base_ingested[i] + ingested_noise[i]),
+                "overage_gb_30d": max(0, base_overage[i] + overage_noise[i]),
+                "estimated_overage_cost_30d": max(0, base_costs[i] + RNG.integers(-200, 201)),
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -76,13 +79,15 @@ def generate_azure_details() -> pd.DataFrame:
             day_overage[spike_idx] = 3.2
 
         for idx, day in enumerate(DAYS):
-            records.append({
-                "subscription_id": sub,
-                "day": day.date(),
-                "ingested_gb": round(day_ingested[idx], 2),
-                "overage_gb": round(day_overage[idx], 2),
-                "estimated_overage_cost": round(day_cost[idx], 2),
-            })
+            records.append(
+                {
+                    "subscription_id": sub,
+                    "day": day.date(),
+                    "ingested_gb": round(day_ingested[idx], 2),
+                    "overage_gb": round(day_overage[idx], 2),
+                    "estimated_overage_cost": round(day_cost[idx], 2),
+                }
+            )
     return pd.DataFrame(records)
 
 
@@ -91,11 +96,13 @@ def generate_gcp_summary() -> pd.DataFrame:
     base_costs = [12500, 6700, 2100, 430, 0]
     rows = []
     for i, proj in enumerate(GCP_PROJECTS):
-        rows.append({
-            "project_id": proj,
-            "total_cost": max(0, base_costs[i] + int(RNG.integers(-300, 301))),
-            "currency": "USD",
-        })
+        rows.append(
+            {
+                "project_id": proj,
+                "total_cost": max(0, base_costs[i] + int(RNG.integers(-300, 301))),
+                "currency": "USD",
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -111,11 +118,13 @@ def generate_gcp_details() -> pd.DataFrame:
             day_cost[spike_idx] = 28.0
 
         for idx, day in enumerate(DAYS):
-            records.append({
-                "project_id": proj,
-                "day": day.date(),
-                "cost": round(day_cost[idx], 2),
-            })
+            records.append(
+                {
+                    "project_id": proj,
+                    "day": day.date(),
+                    "cost": round(day_cost[idx], 2),
+                }
+            )
     return pd.DataFrame(records)
 
 

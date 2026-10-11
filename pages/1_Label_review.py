@@ -64,7 +64,9 @@ rows = review_queue(
     label=label,
     status=None if status.startswith("untagged or") else status,
     cloud=None if cloud == "both" else cloud,
-    min_confidence=lo, max_confidence=hi, search=search or None,
+    min_confidence=lo,
+    max_confidence=hi,
+    search=search or None,
 )
 
 records = []
@@ -73,21 +75,25 @@ for r in rows:
     d = decided.get(f"{r['resource_id']}|{label}")
     if hide_reviewed and d:
         continue
-    records.append({
-        "resource_id": r["resource_id"],
-        "cloud": r["cloud"],
-        "parent": r["parent"],
-        "owners": ", ".join(r["owners"]),
-        "status": lr["status"],
-        "current": lr["current"] or "",
-        "suggested": lr["suggested"],
-        "confidence": lr["confidence"],
-        "action": lr["action"],
-        "why": f"{lr['source']}: {lr['reason']}",
-        "alternatives": ", ".join(f"{a['value']} {a['confidence']:.0%}" for a in lr["alternatives"]),
-        "decision": d["decision"] if d else "",
-        "override": d["value"] if d and d["decision"] == "override" else None,
-    })
+    records.append(
+        {
+            "resource_id": r["resource_id"],
+            "cloud": r["cloud"],
+            "parent": r["parent"],
+            "owners": ", ".join(r["owners"]),
+            "status": lr["status"],
+            "current": lr["current"] or "",
+            "suggested": lr["suggested"],
+            "confidence": lr["confidence"],
+            "action": lr["action"],
+            "why": f"{lr['source']}: {lr['reason']}",
+            "alternatives": ", ".join(
+                f"{a['value']} {a['confidence']:.0%}" for a in lr["alternatives"]
+            ),
+            "decision": d["decision"] if d else "",
+            "override": d["value"] if d and d["decision"] == "override" else None,
+        }
+    )
 df = pd.DataFrame(records)
 
 # ── Review table ───────────────────────────────────────────────────────
@@ -105,20 +111,36 @@ else:
         height=min(600, 38 + 35 * len(df)),
         disabled=[c for c in df.columns if c not in ("decision", "override")],
         # Editable columns sit next to the suggestion so no sideways scrolling.
-        column_order=["resource_id", "suggested", "confidence", "decision", "override",
-                      "current", "status", "action", "cloud", "parent", "owners",
-                      "alternatives", "why"],
+        column_order=[
+            "resource_id",
+            "suggested",
+            "confidence",
+            "decision",
+            "override",
+            "current",
+            "status",
+            "action",
+            "cloud",
+            "parent",
+            "owners",
+            "alternatives",
+            "why",
+        ],
         column_config={
             "resource_id": st.column_config.TextColumn("Resource", pinned=True),
             "confidence": st.column_config.ProgressColumn(
-                "Confidence", min_value=0.0, max_value=1.0, format="percent"),
+                "Confidence", min_value=0.0, max_value=1.0, format="percent"
+            ),
             "why": st.column_config.TextColumn("Why", width="large"),
             "decision": st.column_config.SelectboxColumn(
-                "Decision", options=["", "accept", "reject", "override"],
+                "Decision",
+                options=["", "accept", "reject", "override"],
                 help="accept = apply the suggestion · reject = keep today's tag · "
-                     "override = apply the value in the next column"),
+                "override = apply the value in the next column",
+            ),
             "override": st.column_config.SelectboxColumn(
-                "Override value", options=sorted(ALLOWED[label])),
+                "Override value", options=sorted(ALLOWED[label])
+            ),
         },
     )
 
@@ -141,8 +163,7 @@ else:
             _refresh()
 
     auto = df[(df["action"] == "auto-apply") & (df["decision"] == "")]
-    if right.button(f"✅ Accept all {len(auto)} auto-apply suggestions shown",
-                    disabled=auto.empty):
+    if right.button(f"✅ Accept all {len(auto)} auto-apply suggestions shown", disabled=auto.empty):
         for rid in auto["resource_id"]:
             store.set(rid, label, "accept")
         st.toast(f"Accepted {len(auto)} suggestion(s)")
@@ -153,27 +174,56 @@ else:
 st.divider()
 st.subheader("Export")
 include_auto = st.checkbox(
-    f"Include unreviewed auto-apply suggestions (≥{AUTO_APPLY_THRESHOLD:.0%})", value=True,
-    help="Off: export only what a reviewer accepted or overrode.")
+    f"Include unreviewed auto-apply suggestions (≥{AUTO_APPLY_THRESHOLD:.0%})",
+    value=True,
+    help="Off: export only what a reviewer accepted or overrode.",
+)
 changes = pending_changes(store, include_auto)
-st.caption(f"{len(changes)} resource(s) would change. Overrides win over accepts, "
-           "accepts over auto-apply; rejected suggestions are never exported.")
+st.caption(
+    f"{len(changes)} resource(s) would change. Overrides win over accepts, "
+    "accepts over auto-apply; rejected suggestions are never exported."
+)
 
 c1, c2, c3 = st.columns(3)
-c1.download_button("⬇️ CSV", export(store, "csv", include_auto),
-                   "label-changes.csv", "text/csv", disabled=not changes)
-c2.download_button("⬇️ az / gcloud script", export(store, "sh", include_auto),
-                   "apply-labels.sh", "text/x-shellscript", disabled=not changes)
-c3.download_button("⬇️ Terraform tfvars", export(store, "tfvars", include_auto),
-                   "labels.auto.tfvars.json", "application/json", disabled=not changes)
+c1.download_button(
+    "⬇️ CSV",
+    export(store, "csv", include_auto),
+    "label-changes.csv",
+    "text/csv",
+    disabled=not changes,
+)
+c2.download_button(
+    "⬇️ az / gcloud script",
+    export(store, "sh", include_auto),
+    "apply-labels.sh",
+    "text/x-shellscript",
+    disabled=not changes,
+)
+c3.download_button(
+    "⬇️ Terraform tfvars",
+    export(store, "tfvars", include_auto),
+    "labels.auto.tfvars.json",
+    "application/json",
+    disabled=not changes,
+)
 
 if changes:
     with st.expander("Preview changes"):
         st.dataframe(
-            pd.DataFrame([
-                {"resource_id": c["resource_id"], "cloud": c["cloud"], "label": k,
-                 "previous": c["previous"][k], "new": v, "how": how}
-                for c in changes for k, (v, how) in c["tags"].items()
-            ]),
-            hide_index=True, width="stretch",
+            pd.DataFrame(
+                [
+                    {
+                        "resource_id": c["resource_id"],
+                        "cloud": c["cloud"],
+                        "label": k,
+                        "previous": c["previous"][k],
+                        "new": v,
+                        "how": how,
+                    }
+                    for c in changes
+                    for k, (v, how) in c["tags"].items()
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
         )

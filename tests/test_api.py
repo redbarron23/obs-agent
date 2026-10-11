@@ -24,8 +24,11 @@ def client():
 def _history(answer="ok", tool="get_azure_top_overages"):
     return [
         {"role": "user", "content": "q"},
-        {"role": "assistant", "content": None,
-         "tool_calls": [{"id": "1", "name": tool, "input": {}}]},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "1", "name": tool, "input": {}}],
+        },
         {"role": "tool", "tool_call_id": "1", "content": "data"},
         {"role": "assistant", "content": answer},
     ]
@@ -121,7 +124,9 @@ class TestSessions:
 
     def test_lru_eviction(self):
         store = api.SessionStore(max_sessions=2)
-        store.put("a", [1]); store.put("b", [2]); store.put("c", [3])
+        store.put("a", [1])
+        store.put("b", [2])
+        store.put("c", [3])
         assert store.get("a") is None and store.get("c") == [3]
 
 

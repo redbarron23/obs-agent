@@ -13,9 +13,10 @@ inference can be scored against ground truth.
 Uses its own seeded RNG so it never shifts the numbers in data.py.
 """
 
+from datetime import datetime, timedelta
+
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
 
 RNG = np.random.default_rng(seed=7)
 
@@ -26,64 +27,94 @@ N_RESOURCES = 320
 # vocabulary and a service footprint.  Sizes are deliberately uneven.
 TEAMS = {
     "payments": {
-        "weight": 0.20, "cost_center": "CC-1001",
-        "azure_parent": "mg-payments", "gcp_parent": "folders/payments",
+        "weight": 0.20,
+        "cost_center": "CC-1001",
+        "azure_parent": "mg-payments",
+        "gcp_parent": "folders/payments",
         "owners": ["alice", "bob", "chen", "dana"],
         "prefixes": ["pay", "payments", "checkout", "billing"],
         "components": ["api", "ledger", "gateway", "worker", "db"],
         "services": ["AKS", "SQL", "KeyVault", "GKE", "CloudSQL", "PubSub"],
     },
     "data-platform": {
-        "weight": 0.18, "cost_center": "CC-2002",
-        "azure_parent": "mg-data", "gcp_parent": "folders/data-platform",
+        "weight": 0.18,
+        "cost_center": "CC-2002",
+        "azure_parent": "mg-data",
+        "gcp_parent": "folders/data-platform",
         "owners": ["erik", "fatima", "gus", "hana"],
         "prefixes": ["data", "dp", "lake", "etl"],
         "components": ["ingest", "warehouse", "airflow", "stream", "catalog"],
         "services": ["Synapse", "DataFactory", "Storage", "BigQuery", "Dataflow", "GCS"],
     },
     "ml": {
-        "weight": 0.14, "cost_center": "CC-2003",
-        "azure_parent": "mg-data", "gcp_parent": "folders/ml",
+        "weight": 0.14,
+        "cost_center": "CC-2003",
+        "azure_parent": "mg-data",
+        "gcp_parent": "folders/ml",
         "owners": ["ivan", "jia", "fatima"],
         "prefixes": ["ml", "ai", "models"],
         "components": ["training", "inference", "features", "notebooks"],
         "services": ["AzureML", "GPU-VM", "Storage", "VertexAI", "GCS", "BigQuery"],
     },
     "web": {
-        "weight": 0.16, "cost_center": "CC-3001",
-        "azure_parent": "mg-digital", "gcp_parent": "folders/digital",
+        "weight": 0.16,
+        "cost_center": "CC-3001",
+        "azure_parent": "mg-digital",
+        "gcp_parent": "folders/digital",
         "owners": ["kofi", "lena", "marco", "nina"],
         "prefixes": ["web", "www", "shop", "frontend"],
         "components": ["app", "cdn", "search", "cms", "bff"],
         "services": ["AppService", "FrontDoor", "Redis", "CloudRun", "CloudCDN", "Memorystore"],
     },
     "identity": {
-        "weight": 0.10, "cost_center": "CC-4001",
-        "azure_parent": "mg-platform", "gcp_parent": "folders/platform",
+        "weight": 0.10,
+        "cost_center": "CC-4001",
+        "azure_parent": "mg-platform",
+        "gcp_parent": "folders/platform",
         "owners": ["omar", "priya"],
         "prefixes": ["idp", "auth", "iam", "sso"],
         "components": ["login", "tokens", "directory", "mfa"],
         "services": ["AKS", "KeyVault", "SQL", "GKE", "SecretManager", "CloudSQL"],
     },
     "observability": {
-        "weight": 0.10, "cost_center": "CC-4002",
-        "azure_parent": "mg-platform", "gcp_parent": "folders/platform",
+        "weight": 0.10,
+        "cost_center": "CC-4002",
+        "azure_parent": "mg-platform",
+        "gcp_parent": "folders/platform",
         "owners": ["quinn", "raj", "omar"],
         "prefixes": ["obs", "logging", "metrics", "monitor"],
         "components": ["collector", "grafana", "loki", "alerts"],
-        "services": ["LogAnalytics", "Monitor", "Storage", "CloudLogging", "CloudMonitoring", "GCS"],
+        "services": [
+            "LogAnalytics",
+            "Monitor",
+            "Storage",
+            "CloudLogging",
+            "CloudMonitoring",
+            "GCS",
+        ],
     },
     "security": {
-        "weight": 0.07, "cost_center": "CC-4003",
-        "azure_parent": "mg-security", "gcp_parent": "folders/security",
+        "weight": 0.07,
+        "cost_center": "CC-4003",
+        "azure_parent": "mg-security",
+        "gcp_parent": "folders/security",
         "owners": ["sara", "tom"],
         "prefixes": ["sec", "soc", "siem"],
         "components": ["scanner", "sentinel", "vault", "audit"],
-        "services": ["Sentinel", "LogAnalytics", "Defender", "SCC", "CloudLogging", "SecretManager"],
+        "services": [
+            "Sentinel",
+            "LogAnalytics",
+            "Defender",
+            "SCC",
+            "CloudLogging",
+            "SecretManager",
+        ],
     },
     "finance-apps": {
-        "weight": 0.05, "cost_center": "CC-5001",
-        "azure_parent": "mg-corporate", "gcp_parent": "folders/corporate",
+        "weight": 0.05,
+        "cost_center": "CC-5001",
+        "azure_parent": "mg-corporate",
+        "gcp_parent": "folders/corporate",
         "owners": ["uma", "victor"],
         "prefixes": ["fin", "erp", "reporting"],
         "components": ["sap", "reports", "budget"],
@@ -117,11 +148,20 @@ ENV_COST_SHAPE = {
     "sandbox": (6.0, 0.15, 0.80),
 }
 
-REGIONS = {"azure": ["westeurope", "northeurope", "germanywestcentral", "eastus"],
-           "gcp": ["europe-west1", "europe-west3", "europe-west4", "us-central1"]}
-REGION_SHORT = {"westeurope": "weu", "northeurope": "neu", "germanywestcentral": "gwc",
-                "eastus": "eus", "europe-west1": "ew1", "europe-west3": "ew3",
-                "europe-west4": "ew4", "us-central1": "uc1"}
+REGIONS = {
+    "azure": ["westeurope", "northeurope", "germanywestcentral", "eastus"],
+    "gcp": ["europe-west1", "europe-west3", "europe-west4", "us-central1"],
+}
+REGION_SHORT = {
+    "westeurope": "weu",
+    "northeurope": "neu",
+    "germanywestcentral": "gwc",
+    "eastus": "eus",
+    "europe-west1": "ew1",
+    "europe-west3": "ew3",
+    "europe-west4": "ew4",
+    "us-central1": "uc1",
+}
 
 # Spellings people actually type, used to make observed labels messy.
 TEAM_VARIANTS = {
@@ -190,8 +230,14 @@ def _cost_stats(env: str) -> dict:
     }
 
 
-def _observed(true_value: str, variants: dict, choices: list[str],
-              p_missing: float, p_variant: float, p_wrong: float):
+def _observed(
+    true_value: str,
+    variants: dict,
+    choices: list[str],
+    p_missing: float,
+    p_variant: float,
+    p_wrong: float,
+):
     """What the tag actually says: missing, misspelt, wrong, or correct."""
     roll = RNG.random()
     if roll < p_missing:
@@ -242,10 +288,16 @@ def generate_inventory(n: int = N_RESOURCES) -> pd.DataFrame:
 
         # Services: cloud-appropriate half of the team profile + one random.
         own = team["services"][:3] if cloud == "azure" else team["services"][3:]
-        services = sorted(set(RNG.choice(own, size=2, replace=False)) | {
-            _pick(_pick(list(TEAMS.values()))["services"][:3] if cloud == "azure"
-                  else _pick(list(TEAMS.values()))["services"][3:])
-        })
+        services = sorted(
+            set(RNG.choice(own, size=2, replace=False))
+            | {
+                _pick(
+                    _pick(list(TEAMS.values()))["services"][:3]
+                    if cloud == "azure"
+                    else _pick(list(TEAMS.values()))["services"][3:]
+                )
+            }
+        )
 
         created_at = END_DATE - timedelta(days=int(RNG.integers(30, 365 * 6)))
         age_years = (END_DATE - created_at).days / 365
@@ -261,24 +313,26 @@ def generate_inventory(n: int = N_RESOURCES) -> pd.DataFrame:
         else:
             cost_center = TEAMS.get(observed_team, team)["cost_center"]
 
-        rows.append({
-            "resource_id": name,
-            "cloud": cloud,
-            "parent": parent,
-            "billing_account": "ba-azure-01" if cloud == "azure" else "ba-gcp-01",
-            "owners": sorted(owners),
-            "created_by": owners[0],
-            "created_at": created_at.date(),
-            "region": region,
-            "top_services": services,
-            **_cost_stats(env),
-            "true_team": team_name,
-            "true_env": env,
-            "true_cost_center": team["cost_center"],
-            "team": observed_team,
-            "env": _observed(env, ENV_VARIANTS, ENVS, p_missing, 0.12, 0.05),
-            "cost_center": cost_center,
-        })
+        rows.append(
+            {
+                "resource_id": name,
+                "cloud": cloud,
+                "parent": parent,
+                "billing_account": "ba-azure-01" if cloud == "azure" else "ba-gcp-01",
+                "owners": sorted(owners),
+                "created_by": owners[0],
+                "created_at": created_at.date(),
+                "region": region,
+                "top_services": services,
+                **_cost_stats(env),
+                "true_team": team_name,
+                "true_env": env,
+                "true_cost_center": team["cost_center"],
+                "team": observed_team,
+                "env": _observed(env, ENV_VARIANTS, ENVS, p_missing, 0.12, 0.05),
+                "cost_center": cost_center,
+            }
+        )
 
     return pd.DataFrame(rows)
 

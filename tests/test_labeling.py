@@ -19,49 +19,108 @@ from labeling import (
 )
 
 
-def _row(resource_id, parent, owners, team=None, env=None, true_team="payments",
-         true_env="prod", services=("AKS",), cost=100.0, weekend=0.95):
+def _row(
+    resource_id,
+    parent,
+    owners,
+    team=None,
+    env=None,
+    true_team="payments",
+    true_env="prod",
+    services=("AKS",),
+    cost=100.0,
+    weekend=0.95,
+):
     return {
-        "resource_id": resource_id, "cloud": "azure", "parent": parent,
-        "billing_account": "ba", "owners": list(owners), "created_by": owners[0],
-        "created_at": None, "region": "westeurope", "top_services": list(services),
-        "avg_daily_cost": cost, "weekend_ratio": weekend, "cost_cv": 0.1,
-        "true_team": true_team, "true_env": true_env, "true_cost_center": "CC-1",
-        "team": team, "env": env, "cost_center": "CC-1" if team else None,
+        "resource_id": resource_id,
+        "cloud": "azure",
+        "parent": parent,
+        "billing_account": "ba",
+        "owners": list(owners),
+        "created_by": owners[0],
+        "created_at": None,
+        "region": "westeurope",
+        "top_services": list(services),
+        "avg_daily_cost": cost,
+        "weekend_ratio": weekend,
+        "cost_cv": 0.1,
+        "true_team": true_team,
+        "true_env": true_env,
+        "true_cost_center": "CC-1",
+        "team": team,
+        "env": env,
+        "cost_center": "CC-1" if team else None,
     }
 
 
 @pytest.fixture
 def tiny_inventory():
-    rows = [
-        _row(f"pay-api-prod-{i}", "mg-payments", ["alice"], team="payments", env="prod")
-        for i in range(4)
-    ] + [
-        _row(f"web-app-dev-{i}", "mg-digital", ["kofi"], team="web", env="dev",
-             true_team="web", true_env="dev", services=("AppService",), cost=20, weekend=0.2)
-        for i in range(4)
-    ] + [
-        _row("pay-ledger-prod-x", "mg-payments", ["alice"]),                 # untagged
-        _row("web-cms-dev-x", "mg-digital", ["kofi"], true_team="web", true_env="dev",
-             services=("AppService",), cost=20, weekend=0.2),               # untagged
-    ]
+    rows = (
+        [
+            _row(f"pay-api-prod-{i}", "mg-payments", ["alice"], team="payments", env="prod")
+            for i in range(4)
+        ]
+        + [
+            _row(
+                f"web-app-dev-{i}",
+                "mg-digital",
+                ["kofi"],
+                team="web",
+                env="dev",
+                true_team="web",
+                true_env="dev",
+                services=("AppService",),
+                cost=20,
+                weekend=0.2,
+            )
+            for i in range(4)
+        ]
+        + [
+            _row("pay-ledger-prod-x", "mg-payments", ["alice"]),  # untagged
+            _row(
+                "web-cms-dev-x",
+                "mg-digital",
+                ["kofi"],
+                true_team="web",
+                true_env="dev",
+                services=("AppService",),
+                cost=20,
+                weekend=0.2,
+            ),  # untagged
+        ]
+    )
     return pd.DataFrame(rows)
 
 
 class TestNormalise:
-    @pytest.mark.parametrize("raw,expected", [
-        ("Payments", "payments"), ("team-payments", "payments"),
-        ("data_platform", "data-platform"), ("Data Platform", "data-platform"),
-        ("o11y", "observability"), ("finance", "finance-apps"),
-        ("nonsense", None), (None, None), (float("nan"), None),
-    ])
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("Payments", "payments"),
+            ("team-payments", "payments"),
+            ("data_platform", "data-platform"),
+            ("Data Platform", "data-platform"),
+            ("o11y", "observability"),
+            ("finance", "finance-apps"),
+            ("nonsense", None),
+            (None, None),
+            (float("nan"), None),
+        ],
+    )
     def test_team(self, raw, expected):
         assert normalise("team", raw) == expected
 
-    @pytest.mark.parametrize("raw,expected", [
-        ("Prod", "prod"), ("production", "prod"), ("uat", "staging"),
-        ("DEV", "dev"), ("poc", "sandbox"), ("live", None),
-    ])
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("Prod", "prod"),
+            ("production", "prod"),
+            ("uat", "staging"),
+            ("DEV", "dev"),
+            ("poc", "sandbox"),
+            ("live", None),
+        ],
+    )
     def test_env(self, raw, expected):
         assert normalise("env", raw) == expected
 
@@ -148,27 +207,32 @@ class TestQuality:
 class TestLabelTools:
     def test_coverage(self):
         from tools import get_label_coverage
+
         out = get_label_coverage(limit=3)
         assert "team: 170 unlabelled" in out
         assert "nan" not in out
 
     def test_suggest_untagged(self):
         from tools import suggest_labels
+
         out = suggest_labels("svc-ingest")
         assert "suggest team=data-platform" in out
         assert "cost_center=CC-2002" in out
 
     def test_suspected_wrong_uses_out_of_fold(self):
         from tools import suggest_labels
+
         out = suggest_labels("api-login-d-ew1")
         assert "SUSPECTED WRONG" in out
         assert "team=identity" in out
 
     def test_unknown_resource(self):
         from tools import suggest_labels
+
         assert "No Azure subscription or GCP project found" in suggest_labels("nope")
 
     def test_registered_with_agent(self):
         from tools import TOOL_DEFINITIONS, TOOL_DISPATCH
+
         names = {t["name"] for t in TOOL_DEFINITIONS}
         assert {"get_label_coverage", "suggest_labels"} <= names <= set(TOOL_DISPATCH)
