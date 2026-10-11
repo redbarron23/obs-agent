@@ -195,6 +195,81 @@ def compare_cross_cloud() -> str:
     return "\n".join(lines)
 
 
+def get_label_coverage(limit: int = 10) -> str:
+    """How many resources lack a usable team/env tag, plus example IDs.
+
+    Raw tags are cleaned first ("Prod" → "prod", "o11y" → "observability"),
+    so only genuinely missing or unrecognisable values count as unlabelled.
+    """
+    from labeling import LABELS, get_inference, get_suspects
+
+    inf = get_inference()
+    df = inf.df
+    lines = [f"Label coverage across {len(df)} Azure subscriptions / GCP projects:"]
+    for label in LABELS:
+        missing = inf.unlabelled(label)
+        lines.append(
+            f"  {label}: {len(missing)} unlabelled ({len(missing) / len(df):.0%}), "
+            f"{len(get_suspects(label))} labelled but suspected wrong"
+        )
+    either = df[df["team_clean"].isna() | df["env_clean"].isna()]
+    limit = max(1, int(limit))
+    lines.append(f"\nExamples missing team or env (showing {min(limit, len(either))} of {len(either)}):")
+    for _, row in either.head(limit).iterrows():
+        lines.append(
+            f"  {row['resource_id']} [{row['cloud']}] team={row['team_clean'] or '-'} "
+            f"env={row['env_clean'] or '-'}"
+        )
+    return "\n".join(lines)
+
+
+def suggest_labels(resource_id: str) -> str:
+    """Predicted team / env / cost_center for one resource, with confidence and reasons."""
+    from labeling import AUTO_APPLY_THRESHOLD, BEST_STRATEGY, LABELS, get_inference, get_suspects
+
+    inf = get_inference()
+    row = inf.row(resource_id)
+    if row is None:
+        return f"No Azure subscription or GCP project found with id: {resource_id}"
+
+    lines = [
+        f"Label suggestions for {resource_id} [{row['cloud']}, parent {row['parent']}, "
+        f"owners {', '.join(row['owners'])}]:"
+    ]
+    for label in LABELS:
+        current = row[f"{label}_clean"]
+        if current is not None:
+            # Tagged: the fitted model has seen this tag, so judge it with the
+            # out-of-fold prediction instead.
+            suspects = get_suspects(label)
+            hit = suspects[suspects["resource_id"] == resource_id]
+            if hit.empty:
+                lines.append(f"  tagged {label}={current} (consistent with similar resources)")
+            else:
+                h = hit.iloc[0]
+                lines.append(
+                    f"  tagged {label}={current} but SUSPECTED WRONG: a model that never "
+                    f"saw this resource says {label}={h['predicted']} "
+                    f"({h['confidence']:.0%} confidence, needs review)"
+                )
+            continue
+        raw = row[label]
+        raw = "none" if pd.isna(raw) else f"'{raw}' (unrecognised)"
+        s = inf.suggest(row, label, BEST_STRATEGY[label])
+        action = "auto-apply" if s.confidence >= AUTO_APPLY_THRESHOLD else "needs review"
+        lines.append(f"  {label} untagged (raw value: {raw})")
+        lines.append(
+            f"    → suggest {label}={s.label} ({s.confidence:.0%} confidence, {action}; "
+            f"via {s.source}: {s.reason})"
+        )
+        if len(s.alternatives) > 1:
+            alts = ", ".join(f"{c} {p:.0%}" for c, p in s.alternatives[1:])
+            lines.append(f"    alternatives: {alts}")
+        if label == "team" and s.label in inf.cost_center_of:
+            lines.append(f"    → implies cost_center={inf.cost_center_of[s.label]}")
+    return "\n".join(lines)
+
+
 # ── Claude tool definitions ────────────────────────────────────────────
 
 TOOL_DEFINITIONS = [
@@ -289,6 +364,44 @@ TOOL_DEFINITIONS = [
             "required": [],
         },
     },
+    {
+        "name": "get_label_coverage",
+        "description": "Reports how many Azure subscriptions / GCP projects are "
+                       "missing a usable team or env tag (after normalising "
+                       "misspellings), how many existing tags look wrong, and "
+                       "example resource IDs. Use before suggest_labels to find "
+                       "candidates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max example resource IDs to list. Default 10.",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "suggest_labels",
+        "description": "Infers the team, env and cost_center labels for one Azure "
+                       "subscription or GCP project from a model trained on the "
+                       "correctly labelled ones (name, parent folder/management "
+                       "group, owners, services, spend pattern). Returns each "
+                       "suggestion with confidence, whether it is safe to "
+                       "auto-apply, the reasons, and alternatives. Also flags "
+                       "existing tags that look wrong.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "resource_id": {
+                    "type": "string",
+                    "description": "Azure subscription name/id or GCP project id.",
+                }
+            },
+            "required": ["resource_id"],
+        },
+    },
 ]
 
 TOOL_DISPATCH = {
@@ -297,4 +410,6 @@ TOOL_DISPATCH = {
     "get_daily_trend": lambda args: get_daily_trend(**args),
     "find_spikes": lambda args: find_spikes(**args),
     "compare_cross_cloud": lambda args: compare_cross_cloud(),
+    "get_label_coverage": lambda args: get_label_coverage(**args),
+    "suggest_labels": lambda args: suggest_labels(**args),
 }

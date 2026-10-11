@@ -87,6 +87,38 @@ GCP total logging cost:    $21,705.00
 Grand total:               $44,764.00
 ```
 
+### Label inference for untagged subscriptions / projects
+
+Typical estates have ~half their Azure subscriptions and GCP projects missing a usable `team` / `env` tag. `labeling.py` treats this as supervised learning: train on the correctly tagged resources, predict the rest.
+
+1. **Clean** — normalise spellings (`Prod`, `prd` → `prod`; `o11y` → `observability`). This alone recovers ~6% of "unlabelled" resources.
+2. **Rules baseline** — inherit team from the parent management group / folder or name prefix when ≥80% of labelled siblings agree; env from name tokens (`-prd-`, `-uat-`, `sbx-`).
+3. **Model** — logistic regression over name tokens, parent, owners, creator, services and spend shape (weekend/weekday ratio, volatility). Every prediction comes with a confidence and the features that drove it.
+4. **Mislabel check** — out-of-fold predictions flag existing tags the model confidently disagrees with.
+
+The synthetic inventory (`inventory.py`, 320 resources) keeps the *true* labels next to the observed ones, so every strategy is scored against ground truth (`python labeling.py`):
+
+| Label | Strategy | Coverage | Accuracy | Macro-F1 | Auto-apply (≥0.9) | Auto-apply precision |
+|---|---|---|---|---|---|---|
+| team | rules | 41% | 94% | 0.81 | 32% | 94% |
+| team | **model** | 100% | 98% | 0.98 | 37% | 100% |
+| env | rules | 55% | 100% | 1.00 | 55% | 100% |
+| env | **hybrid** | 100% | 81% | 0.79 | 58% | 99% |
+
+Takeaways: rules are precise but cover under half, and parent-folder inheritance is *confidently wrong* after reorgs, so team uses the model alone. Env is easy when the name says so and hard when it doesn't (spend alone can't separate dev from staging), so it uses whichever of rule and model is more confident. The mislabel check caught 6/10 wrong team tags and 5/6 wrong env tags, with 6/6 and 5/7 of its flags correct.
+
+Two agent tools expose this: `get_label_coverage` and `suggest_labels`:
+
+```
+Label suggestions for svc-ingest [azure, parent mg-security, owners hana]:
+  team untagged (raw value: none)
+    → suggest team=data-platform (60% confidence, needs review; via model: strongest signals: creator=hana (+1.27), owner=hana (+0.86), svc=DataFactory (+0.53))
+    alternatives: observability 12%, security 8%
+    → implies cost_center=CC-2002
+```
+
+The synthetic data is cleaner than a real estate (owners map neatly onto teams), so treat these numbers as an upper bound. On real data, untagged resources skew older, so measure on a reviewed sample of them and not only on held-out tagged ones.
+
 ### Web UI (Streamlit)
 
 ```bash
@@ -389,6 +421,8 @@ Generates 60 days of realistic multi-cloud billing data with a fixed random seed
 - **Built-in cost spikes**: `sub-a1b2c3d4` spikes to $45 on day 30, `project-bravo` spikes to $28 on day 20
 - **Deterministic**: every run produces the same IDs, costs, and patterns, so evals always pass
 
+Label inference uses a separate inventory (`inventory.py`, own seed) so it never changes these numbers.
+
 No external CSVs required. The project runs entirely from synthetic in-memory data. To use real billing data, swap the DataFrames in `data.py` — the rest of the code doesn't care where the data comes from.
 
 Key identifiers in the synthetic data:
@@ -485,6 +519,7 @@ pandas>=2.0.0
 numpy>=1.24.0
 fastapi>=0.110.0
 uvicorn>=0.29.0
+scikit-learn>=1.3.0
 ```
 
 Dev/test (`requirements-dev.txt`, includes the runtime set):
@@ -558,6 +593,7 @@ tests/
 ├── test_tools.py      # Tool logic tests — pure pandas, no API calls
 ├── test_agent.py      # Agent loop tests — mocked LLM, covers all agent paths
 ├── test_api.py        # FastAPI service — mocked LLM, SSE, auth, sessions, OpenAPI
+├── test_labeling.py   # Label cleaning, rules, model, quality floors, label tools
 └── test_evals.py      # Eval dry-run (deterministic) + live integration tests
 ```
 
@@ -570,7 +606,8 @@ tests/
 | Message formatting | 3 | Canonical ↔ provider message conversion |
 | CLI parsing | 8 | All flags, defaults, combinations |
 | REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
-| Evals (`test_evals.py`) | 10 | 8 deterministic dry-run cases, the full dry-run, and an opt-in live run |
+| Label inference (`test_labeling.py`) | 34 | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools |
+| Evals (`test_evals.py`) | 16 | 11 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
 
 ## Sample conversations
 
