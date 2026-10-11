@@ -16,25 +16,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set up uv
+      - name: Set up uv and Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
-          cache-dependency-glob: requirements*.txt
+          cache-dependency-glob: uv.lock
 
+      # --locked fails if uv.lock is out of date with pyproject.toml.
       - name: Install dependencies
-        run: uv pip install --system -r requirements-dev.txt
+        run: uv sync --locked
 
       - name: Run unit tests
-        run: python -m pytest tests/ -v --tb=short -m "not integration"
+        run: uv run pytest tests/ -v --tb=short -m "not integration"
 
       - name: Run eval dry-run (deterministic)
-        run: python evals.py --dry-run
+        run: uv run evals.py --dry-run
 
   docker:
     runs-on: ubuntu-latest

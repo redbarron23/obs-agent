@@ -2,7 +2,7 @@
 
 Usage
 -----
-    streamlit run app.py
+    uv run streamlit run app.py
 
 Then open the URL shown in the terminal (typically http://localhost:8501).
 

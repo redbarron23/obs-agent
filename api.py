@@ -2,7 +2,7 @@
 """REST API for the Multi-Cloud Cost Triage Agent.
 
 Run locally:
-    uvicorn api:app --reload
+    uv run uvicorn api:app --reload
 
 Endpoints
 ---------

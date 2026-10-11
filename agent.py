@@ -6,23 +6,23 @@ Supports multiple LLM providers via a --provider flag (ollama [default], deepsee
 Usage
 -----
 Interactive REPL:
-    python agent.py
+    uv run agent.py
 
 Single question (scriptable):
-    python agent.py -q "Which Azure subscription has the highest overage?"
+    uv run agent.py -q "Which Azure subscription has the highest overage?"
 
 Use Anthropic instead of the default (Ollama):
     export ANTHROPIC_API_KEY=sk-...
-    python agent.py --provider anthropic -q "Show me the top 3 GCP projects"
+    uv run agent.py --provider anthropic -q "Show me the top 3 GCP projects"
 
 Pick a specific Ollama model (no API key needed):
-    python agent.py --model qwen2.5:7b -q "Compare Azure and GCP"
+    uv run agent.py --model qwen2.5:7b -q "Compare Azure and GCP"
 
 Use a specific model:
-    python agent.py -q "Any cost spikes?" --model claude-sonnet-4-6
+    uv run agent.py -q "Any cost spikes?" --model claude-sonnet-4-6
 
 Run verbosely (see tool calls):
-    python agent.py -q "Any cost spikes?" --verbose
+    uv run agent.py -q "Any cost spikes?" --verbose
 """
 
 import argparse
