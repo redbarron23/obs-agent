@@ -1,6 +1,6 @@
 # obs-agent
 
-LLM agent for Azure/GCP cost triage plus ML tag inference and human review. See README.md for features and architecture.
+ML tag inference and human review for Azure/GCP cost estates, plus an optional LLM cost-triage agent. README.md documents the inference pipeline; docs/agent.md documents the agent.
 
 ## Workflow: one worktree per session
 
