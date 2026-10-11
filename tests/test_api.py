@@ -12,13 +12,16 @@ from api import app
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    monkeypatch.delenv("OBS_AGENT_API_KEY", raising=False)
+    monkeypatch.setenv("OBS_AGENT_API_KEY", "test-api-key")
     api.sessions = api.SessionStore()
+    api.agent_limiter = api.AgentRequestLimiter(
+        api.MAX_AGENT_REQUESTS_PER_MINUTE, api.MAX_CONCURRENT_AGENT_REQUESTS
+    )
 
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    return TestClient(app, headers={"X-API-Key": "test-api-key"})
 
 
 def _history(answer="ok", tool="get_azure_top_overages"):
@@ -110,6 +113,10 @@ class TestAuth:
         assert client.get("/providers", headers={"X-API-Key": "wrong"}).status_code == 401
         assert client.get("/providers", headers={"X-API-Key": "secret"}).status_code == 200
 
+    def test_key_must_be_configured(self, client, monkeypatch):
+        monkeypatch.delenv("OBS_AGENT_API_KEY")
+        assert client.get("/providers").status_code == 503
+
     def test_health_stays_open(self, client, monkeypatch):
         monkeypatch.setenv("OBS_AGENT_API_KEY", "secret")
         assert client.get("/health").status_code == 200
@@ -130,6 +137,14 @@ class TestSessions:
         assert store.get("a") is None and store.get("c") == [3]
 
 
+def test_agent_rate_limit(monkeypatch):
+    monkeypatch.setattr(api, "agent_limiter", api.AgentRequestLimiter(per_minute=1, concurrent=1))
+    client = TestClient(app, headers={"X-API-Key": "test-api-key"})
+    with patch("api.run", return_value=("a", _history())):
+        assert client.post("/ask", json={"question": "one"}).status_code == 200
+        assert client.post("/ask", json={"question": "two"}).status_code == 429
+
+
 def test_stream_run_propagates_errors():
     from agent import stream_run
 
@@ -142,7 +157,7 @@ class TestOpenAPI:
     def test_errors_and_sse_documented(self, client):
         spec = client.get("/openapi.json").json()
         ask = spec["paths"]["/ask"]["post"]["responses"]
-        assert {"200", "401", "422", "502"} <= set(ask)
+        assert {"200", "401", "422", "429", "502"} <= set(ask)
         stream = spec["paths"]["/ask/stream"]["post"]
         assert "text/event-stream" in stream["responses"]["200"]["content"]
         assert "event: done" in stream["description"]

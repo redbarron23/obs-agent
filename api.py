@@ -36,12 +36,13 @@ import hmac
 import json
 import os
 import threading
+import time
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Iterator
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -61,6 +62,8 @@ from agent import (
 from label_review import DecisionError, DecisionStore
 
 MAX_SESSIONS = 200
+MAX_AGENT_REQUESTS_PER_MINUTE = 20
+MAX_CONCURRENT_AGENT_REQUESTS = 4
 
 # Fail at startup, not on the first request, if the defaults are misconfigured.
 try:
@@ -79,12 +82,57 @@ app = FastAPI(
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    """Enforce X-API-Key when OBS_AGENT_API_KEY is configured."""
+    """Enforce the configured X-API-Key on every non-health route."""
     expected = os.environ.get("OBS_AGENT_API_KEY")
     if not expected:
-        return
+        raise HTTPException(status_code=503, detail="API authentication is not configured")
     if x_api_key is None or not hmac.compare_digest(x_api_key, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+class AgentRequestLimiter:
+    """Small in-process guard against costly concurrent or bursty LLM calls."""
+
+    def __init__(self, per_minute: int, concurrent: int):
+        self._per_minute = per_minute
+        self._recent: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+        self._slots = threading.BoundedSemaphore(concurrent)
+
+    def allow(self, client: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            recent = self._recent.setdefault(client, deque())
+            while recent and recent[0] <= now - 60:
+                recent.popleft()
+            if len(recent) >= self._per_minute:
+                return False
+            recent.append(now)
+            return True
+
+    def acquire(self, client: str) -> bool:
+        return self.allow(client) and self._slots.acquire(blocking=False)
+
+    def release(self) -> None:
+        self._slots.release()
+
+
+agent_limiter = AgentRequestLimiter(MAX_AGENT_REQUESTS_PER_MINUTE, MAX_CONCURRENT_AGENT_REQUESTS)
+
+
+def limit_agent_requests(request: Request):
+    """Rate-limit and cap concurrent /ask requests per directly connected client."""
+    client = request.client.host if request.client else "unknown"
+    if not agent_limiter.acquire(client):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many agent requests",
+            headers={"Retry-After": "60"},
+        )
+    try:
+        yield
+    finally:
+        agent_limiter.release()
 
 
 # ── Session memory ─────────────────────────────────────────────────────
@@ -196,6 +244,7 @@ ERROR_RESPONSES = {
         "description": "Missing or invalid X-API-Key (only when OBS_AGENT_API_KEY is set).",
     },
     422: {"description": "Invalid request body or unknown provider."},
+    429: {"model": ErrorResponse, "description": "Too many agent requests."},
     502: {
         "model": ErrorResponse,
         "description": "The LLM backend failed (bad key, no credits, server down).",
@@ -274,7 +323,7 @@ def providers() -> dict:
 @app.post(
     "/ask",
     response_model=AskResponse,
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(limit_agent_requests)],
     summary="Ask a question",
     responses={k: v for k, v in ERROR_RESPONSES.items()},
 )
@@ -304,7 +353,7 @@ def ask(req: AskRequest) -> AskResponse:
 
 @app.post(
     "/ask/stream",
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(limit_agent_requests)],
     summary="Ask a question (streamed)",
     description=SSE_DESCRIPTION,
     responses={

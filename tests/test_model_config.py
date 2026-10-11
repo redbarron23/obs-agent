@@ -304,9 +304,12 @@ class TestAPI:
 
         import api
 
-        monkeypatch.delenv("OBS_AGENT_API_KEY", raising=False)
+        monkeypatch.setenv("OBS_AGENT_API_KEY", "test-api-key")
         api.sessions = api.SessionStore()
-        return TestClient(api.app)
+        api.agent_limiter = api.AgentRequestLimiter(
+            api.MAX_AGENT_REQUESTS_PER_MINUTE, api.MAX_CONCURRENT_AGENT_REQUESTS
+        )
+        return TestClient(api.app, headers={"X-API-Key": "test-api-key"})
 
     def test_providers_reflect_env(self, client, monkeypatch):
         monkeypatch.setenv("OBS_AGENT_PROVIDER", "anthropic")

@@ -8,6 +8,7 @@ x-agent: &agent
       required: false
   environment:
     OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    OBS_AGENT_API_KEY: ${OBS_AGENT_API_KEY:?Set OBS_AGENT_API_KEY in .env}
   extra_hosts:
     - "host.docker.internal:host-gateway"
   volumes:
@@ -18,7 +19,7 @@ services:
   api:
     <<: *agent
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -29,7 +30,7 @@ services:
     <<: *agent
     command: ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
 
 volumes:
   label-state:
