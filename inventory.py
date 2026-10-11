@@ -185,29 +185,88 @@ END_DATE = datetime(2026, 6, 1)
 N_DAYS = 60
 
 
+# ── Hardness profiles ──────────────────────────────────────────────────
+# The default estate is deliberately tidy, which makes the headline metrics
+# an upper bound (see README). "harsh" dials the mess up toward what a real
+# estate looks like when nobody has enforced a tagging policy for years:
+# overlapping team vocabulary, missing owners, reorg-shuffled parents, and
+# resources whose names carry no env token at all.
+#
+# Keeping "clean" the default means INVENTORY_DF and everything asserted
+# against it are unchanged; the harsh estate is opt-in.
+HARDNESS = {
+    "clean": {
+        "p_missing_base": 0.20,
+        "p_missing_age": 0.11,
+        "p_shared_prefix": 0.33,
+        "p_env_in_name": 0.75,
+        "p_parent_own": 0.65,
+        "p_parent_borrowed": 0.80,
+        "p_borrowed_owner": 0.30,
+        "p_no_owner": 0.0,
+        "p_opaque_name": 0.15,
+        "p_generic_name": 0.07,  # cumulative with p_opaque_name
+        "team_vocab_overlap": False,
+    },
+    "harsh": {
+        "p_missing_base": 0.34,
+        "p_missing_age": 0.13,
+        "p_shared_prefix": 0.55,
+        "p_env_in_name": 0.40,
+        "p_parent_own": 0.45,
+        "p_parent_borrowed": 0.62,
+        "p_borrowed_owner": 0.55,
+        "p_no_owner": 0.22,
+        "p_opaque_name": 0.28,
+        "p_generic_name": 0.20,
+        "team_vocab_overlap": True,
+    },
+}
+
+# Vocabulary teams share once nobody enforces naming, so the model cannot
+# lean on a prefix meaning exactly one team. Only used by "harsh".
+OVERLAP_PREFIXES = ["platform", "core", "data", "cloud", "app", "ops", "sec"]
+OVERLAP_COMPONENTS = ["service", "worker", "api", "gateway", "pipeline", "store"]
+
+
 def _pick(seq):
     return seq[RNG.integers(len(seq))]
 
 
-def _resource_name(cloud: str, team: dict, env: str, region: str) -> str:
-    """Name built from team vocabulary — or an opaque one, as in real estates."""
+def _resource_name(cloud: str, team: dict, env: str, region: str, prof: dict) -> str:
+    """Name built from team vocabulary — or an opaque one, as in real estates.
+
+    The RNG calls below are in a fixed order for every profile, so a "clean"
+    estate is reproducible byte for byte regardless of the other profiles.
+    """
     roll = RNG.random()
-    if roll < 0.15:
+    if roll < prof["p_opaque_name"]:
         # Opaque: GUID-ish subscription or auto-generated project id
         if cloud == "azure":
             return f"sub-{RNG.integers(16**8):08x}"
         return f"proj-{RNG.integers(10**6):06d}"
-    if roll < 0.22:
+    if roll < prof["p_opaque_name"] + prof["p_generic_name"]:
         # Generic name with no team vocabulary
         return f"{_pick(['legacy', 'shared', 'app', 'migration'])}-{RNG.integers(1, 40)}"
-    if env == "sandbox" and RNG.random() < 0.6:
+    is_sbx_name = env == "sandbox" and RNG.random() < 0.6
+    if is_sbx_name:
+        # Sandbox names are built from the owner, not the prefix/component pools,
+        # so they consume fewer RNG calls and return before those draws.
         return f"sbx-{_pick(team['owners'])}-{RNG.integers(1, 9)}"
-    # A third of names start with a prefix every team uses ("core-", "api-").
-    prefix = _pick(SHARED_PREFIXES) if RNG.random() < 0.33 else _pick(team["prefixes"])
-    component = _pick(team["components"]) if RNG.random() < 0.75 else _pick(SHARED_COMPONENTS)
+    # Draw order matches the original exactly: roll, pick, roll, pick.
+    prefix = (
+        _pick(SHARED_PREFIXES)
+        if RNG.random() < prof["p_shared_prefix"]
+        else _pick(OVERLAP_PREFIXES if prof["team_vocab_overlap"] else team["prefixes"])
+    )
+    component = (
+        _pick(team["components"])
+        if RNG.random() < 0.75
+        else _pick(OVERLAP_COMPONENTS if prof["team_vocab_overlap"] else SHARED_COMPONENTS)
+    )
     parts = [prefix, component]
-    # Not everyone puts the env in the name.
-    if RNG.random() < 0.75:
+    # Not everyone puts the env in the name (fewer do on the harsh estate).
+    if RNG.random() < prof["p_env_in_name"]:
         parts.append(_pick(ENV_NAME_TOKENS[env]))
     if RNG.random() < 0.5:
         parts.append(REGION_SHORT[region])
@@ -250,7 +309,17 @@ def _observed(
     return true_value
 
 
-def generate_inventory(n: int = N_RESOURCES) -> pd.DataFrame:
+def generate_inventory(n: int = N_RESOURCES, hardness: str = "clean") -> pd.DataFrame:
+    """Build a synthetic estate at the given *hardness* ("clean" or "harsh").
+
+    "clean" is the default and produces exactly the estate the README's
+    metrics describe. "harsh" adds the failure modes a real, ungoverned
+    estate has — see HARDNESS above — so inference can be scored on data it
+    was not tuned for.
+    """
+    if hardness not in HARDNESS:
+        raise ValueError(f"Unknown hardness '{hardness}'. Choose from {list(HARDNESS)}.")
+    prof = HARDNESS[hardness]
     weights = np.array([t["weight"] for t in TEAMS.values()])
     weights = weights / weights.sum()
     rows = []
@@ -263,28 +332,43 @@ def generate_inventory(n: int = N_RESOURCES) -> pd.DataFrame:
         cloud = "azure" if RNG.random() < 0.5 else "gcp"
         region = _pick(REGIONS[cloud])
 
-        name = _resource_name(cloud, team, env, region)
+        name = _resource_name(cloud, team, env, region, prof)
         while name in seen_ids:  # keep resource_id unique
             name = f"{name}-{RNG.integers(2, 99)}"
         seen_ids.add(name)
 
         # Most sit under the team's own parent; reorgs leave some under another
-        # team's parent, and older ones in a catch-all.
+        # team's parent, and older ones in a catch-all. The harsh estate is
+        # shuffled more, so parent inheritance misleads more often.
+        # Thresholds are explicit per profile so "clean" stays byte-identical.
         parent_key = "azure_parent" if cloud == "azure" else "gcp_parent"
+        p_own = prof["p_parent_own"]
+        p_borrowed = prof["p_parent_borrowed"]
         roll = RNG.random()
-        if roll < 0.65:
+        if roll < p_own:
             parent = team[parent_key]
-        elif roll < 0.80:
+        elif roll < p_borrowed:
             parent = TEAMS[_pick([t for t in TEAM_NAMES if t != team_name])][parent_key]
         else:
             parent = _pick(SHARED_PARENTS[cloud])
 
-        # Owners mostly from the team, sometimes a borrowed engineer.
-        k = int(RNG.integers(1, 4))
-        owners = list(RNG.choice(team["owners"], size=min(k, len(team["owners"])), replace=False))
-        if RNG.random() < 0.30:
-            other = TEAMS[_pick([t for t in TEAM_NAMES if t != team_name])]
-            owners.append(_pick(other["owners"]))
+        # Owners mostly from the team, sometimes a borrowed engineer. The
+        # harsh estate also lets owner records go missing entirely.
+        drop_owner = prof["p_no_owner"] > 0 and RNG.random() < prof["p_no_owner"]
+        owners: list[str] = []
+        if drop_owner:
+            # Still consume the draws the clean estate would, so the two
+            # estates stay independent of the profile.
+            RNG.integers(1, 4)
+            RNG.random()
+        else:
+            k = int(RNG.integers(1, 4))
+            owners = list(
+                RNG.choice(team["owners"], size=min(k, len(team["owners"])), replace=False)
+            )
+            if RNG.random() < prof["p_borrowed_owner"]:
+                other = TEAMS[_pick([t for t in TEAM_NAMES if t != team_name])]
+                owners.append(_pick(other["owners"]))
 
         # Services: cloud-appropriate half of the team profile + one random.
         own = team["services"][:3] if cloud == "azure" else team["services"][3:]
@@ -304,7 +388,7 @@ def generate_inventory(n: int = N_RESOURCES) -> pd.DataFrame:
 
         # Older resources are more likely untagged (tagging policy came late),
         # so the labelled half is NOT a random sample of the estate.
-        p_missing = min(0.85, 0.20 + 0.11 * age_years)
+        p_missing = min(0.85, prof["p_missing_base"] + prof["p_missing_age"] * age_years)
 
         observed_team = _observed(team_name, TEAM_VARIANTS, TEAM_NAMES, p_missing, 0.12, 0.05)
         # cost_center is tagged together with team (same tagging moment).
@@ -320,7 +404,7 @@ def generate_inventory(n: int = N_RESOURCES) -> pd.DataFrame:
                 "parent": parent,
                 "billing_account": "ba-azure-01" if cloud == "azure" else "ba-gcp-01",
                 "owners": sorted(owners),
-                "created_by": owners[0],
+                "created_by": owners[0] if owners else None,
                 "created_at": created_at.date(),
                 "region": region,
                 "top_services": services,
@@ -335,6 +419,16 @@ def generate_inventory(n: int = N_RESOURCES) -> pd.DataFrame:
         )
 
     return pd.DataFrame(rows)
+
+
+def make_estate(hardness: str = "clean", seed: int = 7, n: int = N_RESOURCES) -> pd.DataFrame:
+    """Build an estate with its own RNG, so one estate never shifts another."""
+    global RNG
+    saved, RNG = RNG, np.random.default_rng(seed=seed)
+    try:
+        return generate_inventory(n=n, hardness=hardness)
+    finally:
+        RNG = saved
 
 
 INVENTORY_DF = generate_inventory()

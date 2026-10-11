@@ -23,7 +23,8 @@ takes about 30 seconds to wake up.
 | Wrong existing tags caught by the mislabel check | 11 of 16, with 11 of 13 flags correct |
 
 These are an upper bound: the synthetic owners map more neatly onto teams than a real estate's
-would ([details](#how-it-works)).
+would. A second, deliberately messy estate measures the gap — team accuracy falls 98% → 85% on it,
+while auto-apply precision holds at 100% ([details](#how-it-works)).
 
 - **Tag inference** (the core): cleaning, a rules baseline and a scikit-learn model over names,
   folders / management groups, owners, services and spend shape — with a reason and a confidence
@@ -114,9 +115,30 @@ Label suggestions for svc-ingest [azure, parent mg-security, owners hana]:
     → implies cost_center=CC-2002
 ```
 
-The synthetic data is cleaner than a real estate (owners map neatly onto teams), so treat these
-numbers as an upper bound. On real data, untagged resources skew older, so measure on a reviewed
-sample of them and not only on held-out tagged ones.
+The numbers above are from the **clean** estate, which is deliberately tidy — the synthetic
+owners map more neatly onto teams than a real estate's would. So `inventory.py` also builds a
+**harsh** estate (`uv run labeling.py --hardness both`) with the failure modes a real, ungoverned
+estate has: shared naming vocabulary, missing owners, reorg-shuffled parents, and fewer resources
+whose name carries an `env` token. Scored against the same ground truth, the drop is what to
+expect before measuring on your own data:
+
+| team / model | clean | harsh | delta |
+|---|---|---|---|
+| accuracy | 98% | **85%** | −13% |
+| macro-F1 | 0.98 | **0.83** | −0.15 |
+| auto-apply coverage (≥0.9) | 37% | **21%** | −16% |
+| auto-apply precision | 100% | **100%** | +0% |
+
+Three things worth noting. The **model still beats the rules baseline by a wide margin** — team
+rules fall from 94% to 58% accuracy as the hierarchy stops predicting the team, which is the
+argument for the model in one table. **Auto-apply precision holds at 100%**: the whole point of the
+confidence threshold is that it stays trustworthy on messy data, and it does. But the **mislabel
+check degrades badly** — it catches 6/6 genuine wrong team tags on the clean estate and **0** on
+the harsh one, because overlapping vocabulary makes the out-of-fold model much less sure. Treat
+mislabel flags as a hint to review, not a verdict.
+
+On real data, untagged resources also skew older, so measure on a reviewed sample of them and not
+only on held-out tagged ones.
 
 ## Review & export
 
@@ -272,7 +294,8 @@ streaming, conversation memory, the CLI, provider support and sample conversatio
 
 ### Label inference scored against ground truth
 
-`uv run labeling.py` prints the strategy comparison table shown in [How it works](#how-it-works).
+`uv run labeling.py` prints the strategy comparison table shown in [How it works](#how-it-works);
+add `--hardness both` to score the clean and harsh estates side by side with the degradation table.
 The inventory keeps true labels beside observed ones, so every strategy — rules, model, hybrid and
 the mislabel check — is scored honestly. `tests/test_labeling.py` pins accuracy and precision
 floors against that ground truth, so a regression in the model fails CI rather than quietly
@@ -424,7 +447,7 @@ flowchart TD
 
 | Module | Role |
 |---|---|
-| `inventory.py` | Synthetic estate with true *and* observed labels, so inference can be scored against ground truth |
+| `inventory.py` | Synthetic estate with true *and* observed labels, plus `clean`/`harsh` hardness profiles, so inference can be scored against ground truth and stressed on messy data |
 | `labeling.py` | Cleaning, rules baseline, logistic-regression model, out-of-fold mislabel check, evaluation |
 | `label_review.py` | Review reports, decision store, and CSV / `az`+`gcloud` / tfvars export |
 
@@ -441,7 +464,7 @@ The agent side of the repo (`agent.py`, `tools.py`, `data.py`, `app.py`, `api.py
 ```
 obs-agent/
 ├── labeling.py           # Tag inference: cleaning, rules, model, mislabel check, evaluation
-├── inventory.py          # Synthetic inventory with true vs observed team/env labels
+├── inventory.py          # Synthetic inventory (clean + harsh estates) with true vs observed labels
 ├── label_review.py       # Review reports, decision store, CSV / az+gcloud / tfvars export
 ├── pages/
 │   └── 1_Label_review.py # Streamlit page: review queue, decisions, exports
@@ -608,7 +631,7 @@ tool-call-through-streaming.
 
 | Group | Tests | What's verified |
 |---|---|---|
-| Label inference (`test_labeling.py`) | 34 | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools |
+| Label inference (`test_labeling.py`) | 45 | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools, clean-estate stability and harsh-estate degradation |
 | Label review (`test_label_review.py`) | 45 | Reports, decision validation and persistence, table-edit diffing, export resolution and formats, label endpoints + auth, review page (headless) |
 | Tool logic (`test_tools.py`) | 34 | Top-N ranking, zero filtering, spike thresholds / platform filter / limit, cross-cloud totals, edge cases |
 | Agent loop (`test_agent.py`) | 16 | Simple answer, single/multi tool call, conversation memory, history pruning, empty/long questions, safety rails |

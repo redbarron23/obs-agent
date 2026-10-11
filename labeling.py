@@ -407,11 +407,66 @@ def format_report(results: dict) -> str:
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    raw = INVENTORY_DF
-    print(f"Inventory: {len(raw)} resources")
+def format_degradation(clean: dict, harsh: dict) -> str:
+    """Side-by-side comparison of the two estates, as a degradation table.
+
+    This is the honest version of the headline metrics: the clean estate is
+    what the pipeline was tuned against, the harsh one is closer to a real,
+    ungoverned estate. The delta is what to expect before measuring on your
+    own data.
+    """
+    lines = ["", "Degradation: clean → harsh estate", "=".rjust(58, "=")]
+    lines.append(f"  {'label/strategy':20} {'metric':16} {'clean':>8} {'harsh':>8} {'delta':>8}")
     for label in LABELS:
-        raw_ok = raw[label].isin(ALLOWED[label]).mean()
-        clean_ok = clean(raw)[f"{label}_clean"].notna().mean()
-        print(f"  {label}: {raw_ok:.0%} usable as-is → {clean_ok:.0%} usable after cleaning")
-    print(format_report(evaluate()))
+        strategy = BEST_STRATEGY[label]
+        c, h = clean[label][strategy], harsh[label][strategy]
+        for key in ("coverage", "accuracy", "macro_f1", "auto_coverage", "auto_precision"):
+            delta = h[key] - c[key]
+            if key == "macro_f1":
+                c_s, h_s, d_s = f"{c[key]:.2f}", f"{h[key]:.2f}", f"{delta:+.2f}"
+            else:
+                c_s, h_s, d_s = f"{c[key]:.0%}", f"{h[key]:.0%}", f"{delta:+.0%}"
+            lines.append(f"  {label + '/' + strategy:20} {key:16} {c_s:>8} {h_s:>8} {d_s:>8}")
+    lines += ["", "  mislabel check (flags that were genuinely wrong):"]
+    for label in LABELS:
+        c, h = clean[label]["mislabels"], harsh[label]["mislabels"]
+        cf = f"{c['flagged_and_wrong']}/{c['flagged']}" if c["flagged"] else "n/a"
+        hf = f"{h['flagged_and_wrong']}/{h['flagged']}" if h["flagged"] else "n/a"
+        lines.append(f"    {label:20} clean {cf:>8}   harsh {hf:>8}")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Score label inference against ground truth.")
+    ap.add_argument(
+        "--hardness",
+        choices=("clean", "harsh", "both"),
+        default="clean",
+        help="which synthetic estate to score (default: clean, the published one)",
+    )
+    args = ap.parse_args()
+
+    if args.hardness in ("clean", "both"):
+        raw = INVENTORY_DF
+        print(f"Inventory (clean): {len(raw)} resources")
+        for label in LABELS:
+            raw_ok = raw[label].isin(ALLOWED[label]).mean()
+            clean_ok = clean(raw)[f"{label}_clean"].notna().mean()
+            print(f"  {label}: {raw_ok:.0%} usable as-is → {clean_ok:.0%} usable after cleaning")
+        print(format_report(evaluate()))
+
+    if args.hardness in ("harsh", "both"):
+        from inventory import make_estate
+
+        harsh_df = make_estate("harsh")
+        print(f"\n\nInventory (harsh): {len(harsh_df)} resources")
+        for label in LABELS:
+            raw_ok = harsh_df[label].isin(ALLOWED[label]).mean()
+            clean_ok = clean(harsh_df)[f"{label}_clean"].notna().mean()
+            print(f"  {label}: {raw_ok:.0%} usable as-is → {clean_ok:.0%} usable after cleaning")
+        print(format_report(evaluate(harsh_df)))
+
+    if args.hardness == "both":
+        print(format_degradation(evaluate(INVENTORY_DF), evaluate(make_estate("harsh"))))
