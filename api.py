@@ -26,6 +26,7 @@ Pass the same ``session_id`` on follow-up requests to keep conversation memory.
 Environment variables:
     OBS_AGENT_API_KEY  — if set, requests must send it in the X-API-Key header
     OBS_AGENT_DECISIONS — SQLite database for review decisions (default label_decisions.db)
+    OBS_AGENT_PROVIDER / OBS_AGENT_MODEL — default provider and model for /ask
     plus the usual provider keys (DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, ...)
 """
 
@@ -45,10 +46,27 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import label_review
-from agent import DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS, run, stream_run
+from agent import (
+    PROVIDER_DEFAULT_MODELS,
+    PROVIDERS,
+    ConfigError,
+    check_config,
+    default_model,
+    default_provider,
+    model_warning,
+    run,
+    served_by,
+    stream_run,
+)
 from label_review import DecisionError, DecisionStore
 
 MAX_SESSIONS = 200
+
+# Fail at startup, not on the first request, if the defaults are misconfigured.
+try:
+    check_config()
+except ConfigError as exc:
+    raise RuntimeError(f"obs-agent API: {exc}") from exc
 
 app = FastAPI(
     title="obs-agent API",
@@ -120,7 +138,10 @@ class AskRequest(BaseModel):
     }
 
     question: str = Field(min_length=1, max_length=4000)
-    provider: str = Field(default=DEFAULT_PROVIDER)
+    provider: str | None = Field(
+        default=None,
+        description="Omit to use the server default (OBS_AGENT_PROVIDER, else ollama).",
+    )
     model: str | None = Field(
         default=None, description="Provider-specific model; omit for the provider default."
     )
@@ -140,7 +161,9 @@ class AskResponse(BaseModel):
                     "session_id": "demo",
                     "provider": "ollama",
                     "model": "qwen2.5:7b",
+                    "served_by": None,
                     "tools_called": ["get_azure_top_overages"],
+                    "warning": "qwen2.5:7b is a small local model: ...",
                 }
             ]
         }
@@ -149,9 +172,17 @@ class AskResponse(BaseModel):
     answer: str
     session_id: str
     provider: str
-    model: str
+    model: str = Field(description="Model that was requested.")
+    served_by: str | None = Field(
+        default=None,
+        description="Model that actually answered, when the provider reports it "
+        "(differs from `model` after a refusal fallback).",
+    )
     tools_called: list[str] = Field(
         description="Tools the agent invoked while answering this question."
+    )
+    warning: str | None = Field(
+        default=None, description="Caveat about answer reliability, e.g. a small local model."
     )
 
 
@@ -179,7 +210,9 @@ Events, in order:
 data: {"token": "The top "}            <- repeated, one per text chunk
 
 event: done
-data: {"session_id": "demo", "tools_called": ["get_gcp_top_projects"]}
+data: {"session_id": "demo", "provider": "openai", "model": "gpt-5.4-mini",
+       "served_by": "gpt-5.4-mini", "tools_called": ["get_gcp_top_projects"],
+       "warning": null}
 ```
 
 If the backend fails mid-stream the final event is instead:
@@ -193,14 +226,15 @@ Errors that occur before streaming starts (401, 422) are normal HTTP errors.
 """
 
 
-def _validate(req: AskRequest) -> str:
-    if req.provider not in PROVIDER_DEFAULT_MODELS:
+def _validate(req: AskRequest) -> tuple[str, str]:
+    """(provider, model) for this request, falling back to the server defaults."""
+    provider = req.provider or default_provider()
+    if provider not in PROVIDERS:
         raise HTTPException(
             status_code=422,
-            detail=f"Unknown provider '{req.provider}'. "
-            f"Choose from {sorted(PROVIDER_DEFAULT_MODELS)}.",
+            detail=f"Unknown provider '{provider}'. Choose from {sorted(PROVIDERS)}.",
         )
-    return req.model or PROVIDER_DEFAULT_MODELS[req.provider]
+    return provider, req.model or default_model(provider)
 
 
 def _tools_called(history: list[dict]) -> list[str]:
@@ -228,7 +262,13 @@ def health() -> dict:
     responses={401: ERROR_RESPONSES[401]},
 )
 def providers() -> dict:
-    return {"default": DEFAULT_PROVIDER, "models": PROVIDER_DEFAULT_MODELS}
+    provider, model = check_config()
+    return {
+        "default": provider,
+        "default_model": model,
+        "models": PROVIDER_DEFAULT_MODELS,
+        "warning": model_warning(provider, model),
+    }
 
 
 @app.post(
@@ -239,12 +279,12 @@ def providers() -> dict:
     responses={k: v for k, v in ERROR_RESPONSES.items()},
 )
 def ask(req: AskRequest) -> AskResponse:
-    model = _validate(req)
+    provider, model = _validate(req)
     session_id = req.session_id or uuid.uuid4().hex
     try:
         answer, history = run(
             req.question,
-            provider=req.provider,
+            provider=provider,
             model=model,
             messages=sessions.get(session_id),
         )
@@ -254,9 +294,11 @@ def ask(req: AskRequest) -> AskResponse:
     return AskResponse(
         answer=answer,
         session_id=session_id,
-        provider=req.provider,
+        provider=provider,
         model=model,
+        served_by=served_by(history),
         tools_called=_tools_called(history),
+        warning=model_warning(provider, model),
     )
 
 
@@ -272,7 +314,7 @@ def ask(req: AskRequest) -> AskResponse:
     },
 )
 def ask_stream(req: AskRequest) -> StreamingResponse:
-    model = _validate(req)
+    provider, model = _validate(req)
     session_id = req.session_id or uuid.uuid4().hex
 
     def events() -> Iterator[str]:
@@ -280,7 +322,7 @@ def ask_stream(req: AskRequest) -> StreamingResponse:
         try:
             for token in stream_run(
                 req.question,
-                provider=req.provider,
+                provider=provider,
                 model=model,
                 messages=sessions.get(session_id),
                 result_holder=holder,
@@ -293,7 +335,14 @@ def ask_stream(req: AskRequest) -> StreamingResponse:
             yield f"event: error\ndata: {json.dumps({'detail': 'LLM backend error'})}\n\n"
             return
         sessions.put(session_id, holder["messages"])
-        done = {"session_id": session_id, "tools_called": _tools_called(holder["messages"])}
+        done = {
+            "session_id": session_id,
+            "provider": provider,
+            "model": model,
+            "served_by": served_by(holder["messages"]),
+            "tools_called": _tools_called(holder["messages"]),
+            "warning": model_warning(provider, model),
+        }
         yield f"event: done\ndata: {json.dumps(done)}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")

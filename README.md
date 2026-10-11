@@ -19,7 +19,7 @@ These are an upper bound: the synthetic owners map more neatly onto teams than a
 - **Tag inference**: cleaning, a rules baseline and a scikit-learn model over names, folders / management groups, owners, services and spend shape, with a reason for every suggestion.
 - **Human in the loop**: a review queue in the web UI and REST API; accept, reject or override; export as an `az` / `gcloud` script, Terraform tfvars or CSV.
 - **Cost agent**: *"Which Azure subscription has the highest overage?"* answered by tool calls over billing data, with Ollama (local, free), Claude, OpenAI or DeepSeek.
-- **Engineering**: ground-truth eval harness, 180+ tests, CI on Python 3.10–3.12, FastAPI + Streamlit, Docker Compose, uv.
+- **Engineering**: ground-truth eval harness, 200+ tests, CI on Python 3.10–3.12, FastAPI + Streamlit, Docker Compose, uv.
 
 ## What it does
 
@@ -297,7 +297,7 @@ uv run agent.py -q "Any cost spikes?" --stream
 uv run agent.py -q "Compare costs" --verbose
 
 # Specific model
-uv run agent.py -q "Show me spikes" --model claude-sonnet-4-6
+uv run agent.py -q "Show me spikes" --model claude-opus-5-5
 ```
 
 ### Provider support
@@ -306,7 +306,7 @@ uv run agent.py -q "Show me spikes" --model claude-sonnet-4-6
 |---|---|---|
 | **Ollama** (local, default) | `qwen2.5:7b` | none — runs locally |
 | **DeepSeek** | `deepseek-chat` | `DEEPSEEK_API_KEY` |
-| **Anthropic** | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+| **Anthropic** | `claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | **OpenAI** | `gpt-5.4-mini` | `OPENAI_API_KEY` |
 
 Switch providers:
@@ -317,6 +317,19 @@ uv run agent.py --provider anthropic -q "Which Azure subscription has the highes
 # Pick a specific Ollama model (no API key needed)
 uv run agent.py --model qwen2.5:7b -q "Compare Azure and GCP"
 ```
+
+#### Choosing the default provider and model
+
+Set `OBS_AGENT_PROVIDER` (and optionally `OBS_AGENT_MODEL`) once, for example in `.env`, and the CLI, the REST API, the web UI and Docker Compose all use it. `--provider` / `--model` flags, the API's `provider` / `model` fields and the UI dropdown still override it per call. An unsupported value stops the CLI and API at startup with a clear message.
+
+```bash
+export OBS_AGENT_PROVIDER=deepseek     # or anthropic / openai; unset = ollama
+uv run agent.py -q "How many projects are missing a team tag?"
+```
+
+Small local models answer fast and free but can misread tool output or guess. On the regression question *"How many projects are missing a team tag, and which team does svc-ingest probably belong to?"* (eval `label-count-and-team`), `qwen2.5:7b` gave the right count but invented a team, while `deepseek-chat` called both tools and answered correctly. So every interface flags it: the UI sidebar shows a warning, `/ask` returns a `warning` field, and the CLI prints a note. `/ask` and the UI also report which model actually answered (`served_by`), which can differ from the requested one when Claude's refusal fallback kicks in.
+
+With Claude Opus 5.5, Sonnet 5.5 or Fable 5.1, requests use adaptive thinking at `medium` effort, pass thinking blocks back unchanged between tool calls, drop stale ones after history pruning instead of failing, and opt into server-side refusal fallbacks.
 
 The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind a common interface, so tool logic and the agent loop work identically regardless of backend.
 
@@ -334,7 +347,7 @@ obs-agent/
 ├── inventory.py          # Synthetic inventory with true vs observed team/env labels
 ├── labeling.py           # Label inference: cleaning, rules, model, mislabel check, evaluation
 ├── label_review.py       # Review reports, decision store, CSV / az+gcloud / tfvars export
-├── evals.py              # 11 eval cases with ground-truth checks against the synthetic data
+├── evals.py              # 12 eval cases with ground-truth checks against the synthetic data
 ├── tests/
 │   ├── conftest.py       # Shared fixtures
 │   ├── test_agent.py
@@ -512,19 +525,22 @@ uv run evals.py --dry-run -v
 
 Dry-run mode calls the tools directly and verifies ground-truth identifiers appear in the output — fully deterministic, suitable for CI. Live mode runs the full agent loop and checks that the LLM's answer contains the expected facts.
 
-This runs 8 eval cases with known-correct answers and checks that the agent's response contains the expected identifiers. Covers all five tools:
+This runs 12 eval cases with known-correct answers and checks that the agent's response contains the expected identifiers. Covers all seven tools:
 
 - Azure top overage, GCP top project, GCP top 3
 - Daily trends (Azure and GCP)
 - Spike detection (Azure and GCP)
 - Multi-cloud summary
+- Label coverage, a team suggestion, a suspected-wrong tag
+- `label-count-and-team`: count plus team in one question (the issue #5 regression)
 
 ### Latest results
 
 | Mode | Cases | Passed | Needs API key |
 |---|---|---|---|
-| Deterministic dry-run (`--dry-run`) | 8 | 8 (100%) | No |
-| Live, DeepSeek (`--provider deepseek`) | 8 | 8 (100%) | Yes |
+| Deterministic dry-run (`--dry-run`) | 12 | 12 (100%) | No |
+| Live, DeepSeek (`--provider deepseek`, `deepseek-chat`) | 12 | 12 (100%) | Yes |
+| Live, Ollama (`--provider ollama`, `qwen2.5:7b`) | 12 | 10 (83%): fails `suspect-label`, `label-count-and-team` | No |
 
 The dry-run result is reproducible and runs in CI on every push. Live results for Claude, OpenAI and Ollama are not yet published.
 
@@ -652,6 +668,7 @@ tests/
 ├── test_api.py        # FastAPI service — mocked LLM, SSE, auth, sessions, OpenAPI
 ├── test_labeling.py   # Label cleaning, rules, model, quality floors, label tools
 ├── test_label_review.py # Review reports, decisions, exports, label API, review page
+├── test_model_config.py # OBS_AGENT_PROVIDER/MODEL, Claude request profile, refusals, served_by
 └── test_evals.py      # Eval dry-run (deterministic) + live integration tests
 ```
 
@@ -664,9 +681,10 @@ tests/
 | Message formatting | 3 | Canonical ↔ provider message conversion |
 | CLI parsing | 8 | All flags, defaults, combinations |
 | REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
-| Label review (`test_label_review.py`) | 40 | Reports, decision validation and persistence, table-edit diffing, export resolution and formats, label endpoints + auth, review page (headless) |
+| Label review (`test_label_review.py`) | 43 | Reports, decision validation and persistence, table-edit diffing, export resolution and formats, label endpoints + auth, review page (headless) |
 | Label inference (`test_labeling.py`) | 34 | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools |
-| Evals (`test_evals.py`) | 16 | 11 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
+| Model config (`test_model_config.py`) | 24 | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting |
+| Evals (`test_evals.py`) | 17 | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
 
 ## Sample conversations
 
@@ -712,7 +730,7 @@ Spikes detected (both clouds):
 ```
 $ uv run agent.py
 obs-agent — Multi-Cloud Cost Triage Agent
-Provider: anthropic  |  Model: claude-sonnet-4-6  |  Mode: batch  |  Type 'quit' to exit.
+Provider: anthropic  |  Model: claude-opus-5-5  |  Mode: batch  |  Type 'quit' to exit.
 
 You: Which GCP project costs the most?
 Agent: **project-alpha** is the most expensive at **$12,672.00** over the past 30 days.

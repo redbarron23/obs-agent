@@ -20,7 +20,16 @@ import os
 
 import streamlit as st
 
-from agent import run, stream_run
+from agent import (
+    PROVIDERS,
+    ConfigError,
+    check_config,
+    default_model,
+    model_warning,
+    run,
+    served_by,
+    stream_run,
+)
 from label_review import demo_enabled
 
 # ── Page config ────────────────────────────────────────────────────────
@@ -34,21 +43,31 @@ st.set_page_config(
 
 # ── Sidebar ────────────────────────────────────────────────────────────
 
+try:
+    configured_provider, _ = check_config()
+except ConfigError as exc:
+    st.error(f"Configuration error: {exc}")
+    st.stop()
+
 st.sidebar.title("☁️ obs-agent")
 st.sidebar.caption("Multi-Cloud Cost Triage Agent")
 
 provider = st.sidebar.selectbox(
     "Provider",
-    options=["anthropic", "deepseek", "openai", "ollama"],
-    index=3,
-    help="LLM provider to use for answering questions. Ollama (local, no API key) is the default.",
+    options=list(PROVIDERS),
+    index=PROVIDERS.index(configured_provider),
+    help="LLM provider to use for answering questions. The default comes from "
+    "OBS_AGENT_PROVIDER (Ollama, local and free, when unset).",
 )
 
 model = st.sidebar.text_input(
     "Model (optional)",
-    placeholder="e.g. claude-sonnet-4-6, gpt-5.4-mini, or qwen2.5:7b",
-    help="Leave blank for provider default.",
+    placeholder=f"default: {default_model(provider)}",
+    help="Leave blank for the provider default (OBS_AGENT_MODEL for the default provider).",
 )
+effective_model = model or default_model(provider)
+if warning := model_warning(provider, effective_model):
+    st.sidebar.warning(warning, icon="⚠️")
 
 use_streaming = st.sidebar.checkbox(
     "Stream responses",
@@ -102,8 +121,7 @@ if DEMO:
     )
     st.page_link("pages/1_Label_review.py", label="Open Label review", icon="🏷️")
 st.caption(
-    f"Provider: **{provider}**"
-    + (f"  ·  Model: **{model}**" if model else "")
+    f"Provider: **{provider}**  ·  Model: **{effective_model}**"
     + ("  ·  Streaming" if use_streaming else "")
 )
 
@@ -113,6 +131,8 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        if msg.get("via"):
+            st.caption(msg["via"])
 
 if prompt := st.chat_input("Ask a question about cloud costs...", disabled=DEMO):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -150,7 +170,10 @@ if prompt := st.chat_input("Ask a question about cloud costs...", disabled=DEMO)
                 st.markdown(answer)
                 st.session_state["_agent_history"] = updated
 
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+            answered_by = served_by(st.session_state["_agent_history"]) or effective_model
+            via = f"Answered by {provider} · {answered_by}"
+            st.caption(via)
+            st.session_state.messages.append({"role": "assistant", "content": answer, "via": via})
         except Exception as e:
             error_msg = f"Error: {e}"
             st.error(error_msg)
