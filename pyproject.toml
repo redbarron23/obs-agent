@@ -22,6 +22,9 @@ dev = [
     "httpx>=0.27.0",
     "ruff>=0.17.0",
 ]
+mlops = [
+    "mlflow>=3.17.0",
+]
 
 [tool.uv]
 # Flat modules, not an installable package: uv manages the env only.

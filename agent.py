@@ -32,6 +32,7 @@ import os
 import sys
 from collections.abc import Callable, Iterator
 
+import observability
 from tools import TOOL_DEFINITIONS, TOOL_DISPATCH
 
 # ── System prompt ──────────────────────────────────────────────────────
@@ -162,6 +163,14 @@ def _prune_history(messages: list[dict], max_history: int = MAX_HISTORY) -> None
 
 
 def _execute_tool(block, *, verbose: bool) -> str:
+    """Dispatch a tool call (traced as a TOOL span when MLflow is on)."""
+    with observability.span(block.name, "TOOL", inputs=dict(block.input or {})) as s:
+        result = _dispatch_tool(block, verbose=verbose)
+        observability.set_outputs(s, result)
+        return result
+
+
+def _dispatch_tool(block, *, verbose: bool) -> str:
     """Dispatch a tool call, returning an error string on failure."""
     name = block.name
     if name not in TOOL_DISPATCH:
@@ -655,6 +664,63 @@ def run(
     if model is None:
         model = default_model(provider)
 
+    observability.setup()
+    with observability.span(
+        "agent",
+        "AGENT",
+        inputs={"question": question},
+        attributes={"provider": provider, "model": model},
+    ) as s:
+        answer, messages = _run_loop(
+            question,
+            provider=provider,
+            model=model,
+            verbose=verbose,
+            stream=stream,
+            messages=messages,
+            on_token=on_token,
+        )
+        observability.set_outputs(s, {"answer": answer, "served_by": served_by(messages)})
+        return answer, messages
+
+
+def _llm_span(provider: str, model: str, messages: list[dict]):
+    return observability.span(
+        f"llm: {provider}/{model}",
+        "CHAT_MODEL",
+        inputs={"messages": len(messages), "last": messages[-1].get("content")},
+        attributes={"provider": provider, "model": model},
+    )
+
+
+def _llm_outputs(s, response, stop_reason: str, tool_calls: list[str]) -> None:
+    usage = getattr(response, "usage", None)
+    observability.set_outputs(
+        s,
+        {
+            "stop_reason": stop_reason,
+            "tool_calls": tool_calls,
+            "served_by": getattr(response, "model", None)
+            if isinstance(getattr(response, "model", None), str)
+            else None,
+            "input_tokens": getattr(usage, "input_tokens", None)
+            or getattr(usage, "prompt_tokens", None),
+            "output_tokens": getattr(usage, "output_tokens", None)
+            or getattr(usage, "completion_tokens", None),
+        },
+    )
+
+
+def _run_loop(
+    question: str,
+    *,
+    provider: str,
+    model: str,
+    verbose: bool,
+    stream: bool,
+    messages: list[dict] | None,
+    on_token: Callable[[str], None] | None,
+) -> tuple[str, list[dict]]:
     backend = Provider(provider, model)
 
     if messages is None:
@@ -664,14 +730,16 @@ def run(
 
     for _turn in range(MAX_TURNS):
         if stream:
-            stream_obj = backend.create(messages, stream=True)
-            final_resp, text_blocks, tool_blocks = Provider.stream_response(
-                provider,
-                stream_obj,
-                verbose=verbose,
-                on_token=on_token,
-            )
-            sr = Provider.stop_reason(final_resp)
+            with _llm_span(provider, model, messages) as s:
+                stream_obj = backend.create(messages, stream=True)
+                final_resp, text_blocks, tool_blocks = Provider.stream_response(
+                    provider,
+                    stream_obj,
+                    verbose=verbose,
+                    on_token=on_token,
+                )
+                sr = Provider.stop_reason(final_resp)
+                _llm_outputs(s, final_resp, sr, [b.name for b in tool_blocks])
 
             if sr == "refusal":
                 return _finish_refusal(final_resp, provider, messages, on_token)
@@ -695,8 +763,19 @@ def run(
             messages.append({"role": "assistant", "content": text_answer})
             return text_answer, messages
 
-        response = backend.create(messages, stream=False)
-        sr = Provider.stop_reason(response)
+        with _llm_span(provider, model, messages) as s:
+            response = backend.create(messages, stream=False)
+            sr = Provider.stop_reason(response)
+            _llm_outputs(
+                s,
+                response,
+                sr,
+                [
+                    b.name
+                    for b in Provider.iter_content_blocks(response)
+                    if getattr(b, "type", None) == "tool_use"
+                ],
+            )
         if verbose:
             print(f"  [stop_reason: {sr}]", file=sys.stderr)
 

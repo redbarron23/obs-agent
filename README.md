@@ -351,6 +351,8 @@ obs-agent/
 ├── labeling.py           # Label inference: cleaning, rules, model, mislabel check, evaluation
 ├── label_review.py       # Review reports, decision store, CSV / az+gcloud / tfvars export
 ├── evals.py              # 12 eval cases with ground-truth checks against the synthetic data
+├── evals_mlflow.py       # Live evals as MLflow runs: fact + trace-based tool scorers
+├── observability.py      # Optional MLflow tracing (agent / llm / tool spans); no-op when off
 ├── tests/
 │   ├── conftest.py       # Shared fixtures
 │   ├── test_agent.py
@@ -545,9 +547,40 @@ This runs 12 eval cases with known-correct answers and checks that the agent's r
 | Live, DeepSeek (`--provider deepseek`, `deepseek-chat`) | 12 | 12 (100%) | Yes |
 | Live, Ollama (`--provider ollama`, `qwen2.5:7b`) | 12 | 10 (83%): fails `suspect-label`, `label-count-and-team` | No |
 
-The dry-run result is reproducible and runs in CI on every push. Live results for Claude, OpenAI and Ollama are not yet published.
+The dry-run result is reproducible and runs in CI on every push. Live results for Claude and OpenAI are not yet published.
 
 Because LLM output is non-deterministic, evals check for **presence of correct facts** (`must_contain`) rather than exact-string matching — the right testing strategy for AI systems.
+
+## Tracing and eval runs with MLflow (optional)
+
+MLflow is an optional dependency group, so CI, the Docker image and the hosted demo never install it. Turn it on with an environment variable:
+
+```bash
+uv sync --group mlops
+OBS_AGENT_MLFLOW=1 uv run agent.py -q "Which team does svc-ingest belong to?"
+uv run mlflow ui --backend-store-uri sqlite:///mlflow.db     # http://localhost:5000
+```
+
+**Tracing.** Every question becomes one trace: an `agent` span, an `llm: <provider>/<model>` span per model call (stop reason, tool calls, tokens, served-by model), and a span per tool call with its inputs and output. MLflow's OpenAI autolog adds SDK-level detail inside the `llm` spans for DeepSeek, OpenAI and Ollama. The `llm` span is the agent's own, because MLflow's Anthropic autolog does not patch the beta endpoint or `messages.stream` that Claude Opus 5.5 and streaming use. Set `MLFLOW_TRACKING_URI` to send traces to a remote server instead of the local `mlflow.db`.
+
+**Eval runs.** `evals_mlflow.py` runs the same 12 cases through `mlflow.genai.evaluate`, one MLflow run per provider and model, with two scorers:
+
+- `facts_present`: the same fact check as `evals.py`
+- `tools_called`: reads the trace and checks the agent called every tool the question needs (the tools its dry run uses). A model that guesses can pass the fact check by luck, but not this one.
+
+```bash
+uv run evals_mlflow.py --provider deepseek
+uv run evals_mlflow.py --provider ollama
+```
+
+Recorded runs (2026-10-11):
+
+| Run | `facts_present` | `tools_called` | Failed cases |
+|---|---|---|---|
+| `deepseek/deepseek-chat` | 100% | 100% | none |
+| `ollama/qwen2.5:7b` | 83% | 92% | `gcp-top-3` (skipped the tool), `label-count-and-team` (wrong facts) |
+
+The local model fails different cases from run to run, which is why each run is recorded rather than reported once. The trace check also caught a flaw in the evals themselves: both models answered `multi-cloud-summary` with two specific tools instead of `compare_cross_cloud`, which is equally valid, so cases can now list `accepted_tools`.
 
 ## Design decisions
 
