@@ -24,6 +24,7 @@ Both the label review and the agent are available as a standalone HTTP service, 
 (dashboards, chat bots, pipelines) can call them without importing any Python:
 
 ```bash
+export OBS_AGENT_API_KEY="$(openssl rand -hex 32)"
 uv run uvicorn api:app --reload          # http://localhost:8000/docs for interactive OpenAPI docs
 ```
 
@@ -54,9 +55,11 @@ See [docs/agent.md](agent.md) for request/response detail and the SSE streaming 
 
 ```bash
 curl -X PUT localhost:8000/resources/svc-ingest/labels/team/decision \
+  -H "X-API-Key: $OBS_AGENT_API_KEY" \
   -H 'content-type: application/json' -d '{"decision": "accept"}'
 
 curl -s localhost:8000/ask -H 'content-type: application/json' \
+  -H "X-API-Key: $OBS_AGENT_API_KEY" \
   -d '{"question": "Which Azure subscription has the highest overage?", "session_id": "demo"}'
 ```
 
@@ -64,7 +67,9 @@ curl -s localhost:8000/ask -H 'content-type: application/json' \
 
 | Status | Meaning |
 |---|---|
-| `401` | Missing or wrong `X-API-Key` (only when `OBS_AGENT_API_KEY` is set) |
+| `401` | Missing or wrong `X-API-Key` |
+| `429` | More than 20 agent requests/minute from one directly connected client, or more than 4 agent requests are running |
+| `503` | `OBS_AGENT_API_KEY` is not configured (except `/health`) |
 | `404` | `DELETE /sessions/{id}` for an unknown session |
 | `422` | Invalid body (empty question, over 4000 chars) or unknown provider |
 | `502` | The LLM backend failed: bad key, no credits, Ollama not running |
@@ -77,15 +82,17 @@ All error bodies are `{"detail": "..."}`. Interactive docs with schemas and exam
 - **Sessions are in memory** (LRU, 200 max) and lost on restart. Run a single replica, or put
   sticky sessions (by `session_id`) in front. For multiple replicas, move `SessionStore` to Redis
   ([issue #16](https://github.com/redbarron23/obs-agent/issues/16)).
-- **Set `OBS_AGENT_API_KEY`** whenever the port is reachable by anything but you. `/health` stays
-  open for load-balancer probes.
+- **Set `OBS_AGENT_API_KEY`** before starting the API. Every route except `/health` rejects
+  requests until it is configured. Docker Compose also binds both ports to loopback only; put an
+  authenticated reverse proxy in front to expose either service.
 - **Behind a gateway** (AWS API Gateway, Azure APIM, nginx): the service is plain HTTP/JSON plus
   SSE. Disable response buffering and use a long idle timeout on `/ask/stream`, or tokens arrive
   in one burst. Local models can take a minute for a multi-tool question.
 - **Provider keys** go in environment variables (`.env` with Compose, a secret store elsewhere),
   never in requests.
-- **Request size and cost:** questions are capped at 4000 characters, but there is no built-in
-  rate limit. Add one at the gateway.
+- **Request size and cost:** questions are capped at 4000 characters. The API additionally allows
+  20 `/ask` requests per minute per directly connected client and four concurrent agent requests;
+  keep a stricter distributed limit at the gateway when running multiple replicas.
 
 ## Docker
 

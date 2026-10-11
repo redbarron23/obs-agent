@@ -215,9 +215,9 @@ class TestExport:
 class TestLabelAPI:
     @pytest.fixture
     def client(self, store, monkeypatch):
-        monkeypatch.delenv("OBS_AGENT_API_KEY", raising=False)
+        monkeypatch.setenv("OBS_AGENT_API_KEY", "test-api-key")
         monkeypatch.setattr(api, "decisions", store)
-        return TestClient(api.app)
+        return TestClient(api.app, headers={"X-API-Key": "test-api-key"})
 
     def test_coverage(self, client):
         assert client.get("/labels/coverage").json()["labels"]["team"]["untagged"] == 170
