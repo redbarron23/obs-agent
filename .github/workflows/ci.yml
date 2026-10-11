@@ -39,6 +39,27 @@ jobs:
       - name: Run eval dry-run (deterministic)
         run: uv run evals.py --dry-run
 
+  mlops:
+    # Optional MLflow tracing/eval integration (dependency group "mlops").
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (with mlops group)
+        run: uv sync --locked --group mlops
+
+      - name: Run MLflow integration tests
+        env:
+          MLFLOW_DISABLE_AGENT_HINT: "1"
+        run: uv run pytest tests/test_observability.py -v --tb=short
+
   docker:
     runs-on: ubuntu-latest
     steps:

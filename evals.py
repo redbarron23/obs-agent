@@ -49,6 +49,11 @@ EVALS = [
             "project-alpha",
         ],
         "dry_run_tool": ("compare_cross_cloud", {}),
+        # Either tool route answers it; evals_mlflow.py's tool check accepts both.
+        "accepted_tools": [
+            ["compare_cross_cloud"],
+            ["get_azure_top_overages", "get_gcp_top_projects"],
+        ],
     },
     {
         "id": "azure-daily-trend",
