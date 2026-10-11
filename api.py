@@ -74,7 +74,7 @@ except ConfigError as exc:
 app = FastAPI(
     title="obs-agent API",
     description="Chat-based cloud logging cost triage across Azure and GCP.",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 
