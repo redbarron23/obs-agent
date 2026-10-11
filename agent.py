@@ -200,6 +200,28 @@ def _emit_token(token: str, on_token: Callable[[str], None] | None) -> None:
 
 # Claude models with always-on adaptive thinking and preserved thinking.
 ANTHROPIC_ADAPTIVE_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"}
+
+# Max answer tokens for models without adaptive thinking. Thinking is off on
+# these models, so the whole budget goes to the answer — 1024 truncated long
+# answers and large tool-call payloads mid-stream. Override per deployment
+# with OBS_AGENT_MAX_TOKENS if a model needs more or less.
+DEFAULT_MAX_TOKENS = 4096
+
+
+def max_tokens_setting() -> int:
+    """Answer-token budget: OBS_AGENT_MAX_TOKENS, else DEFAULT_MAX_TOKENS."""
+    raw = os.environ.get("OBS_AGENT_MAX_TOKENS", "").strip()
+    if not raw:
+        return DEFAULT_MAX_TOKENS
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ConfigError(f"OBS_AGENT_MAX_TOKENS={raw!r} must be a positive integer.") from None
+    if value <= 0:
+        raise ConfigError(f"OBS_AGENT_MAX_TOKENS={raw!r} must be a positive integer.")
+    return value
+
+
 ANTHROPIC_ADAPTIVE_PARAMS = dict(
     # Thinking counts toward max_tokens, so leave room for it.
     max_tokens=16000,
@@ -253,7 +275,7 @@ class Provider:
             api_messages = _format_messages_for_anthropic(messages)
             kwargs = dict(
                 model=self.model,
-                max_tokens=1024,
+                max_tokens=max_tokens_setting(),
                 system=SYSTEM,
                 tools=TOOL_DEFINITIONS,
                 messages=api_messages,
@@ -276,7 +298,7 @@ class Provider:
             tools=_to_openai_tools(TOOL_DEFINITIONS),
             messages=oai_messages,
         )
-        kwargs[token_param] = 1024
+        kwargs[token_param] = max_tokens_setting()
         if stream:
             return self._client.chat.completions.create(**kwargs, stream=True)
         return self._client.chat.completions.create(**kwargs)
@@ -300,7 +322,7 @@ class Provider:
         if hasattr(response, "stop_reason"):  # Anthropic
             return response.stop_reason or ""
         reason = response.choices[0].finish_reason or ""
-        mapping = {"stop": "end_turn", "tool_calls": "tool_use"}
+        mapping = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
         return mapping.get(reason, reason)
 
     @staticmethod
@@ -760,6 +782,8 @@ def _run_loop(
                 continue
 
             text_answer = "\n".join(text_blocks)
+            if sr == "max_tokens":
+                return _finish_truncated(final_resp, provider, messages, on_token, text_answer)
             messages.append({"role": "assistant", "content": text_answer})
             return text_answer, messages
 
@@ -810,6 +834,8 @@ def _run_loop(
             continue
 
         text_answer = "\n".join(text_blocks)
+        if sr == "max_tokens":
+            return _finish_truncated(response, provider, messages, None, text_answer)
         messages.append({"role": "assistant", "content": text_answer})
         return text_answer, messages
 
@@ -882,6 +908,25 @@ def _final_message(provider: str, response, text: str) -> dict:
         msg["content"] = text
         return msg
     return {"role": "assistant", "content": text}
+
+
+def _finish_truncated(response, provider: str, messages: list[dict], on_token, partial: str):
+    """End the turn when the model hit the token cap, saying so explicitly.
+
+    Returning the partial text as if it were a complete answer is the worst
+    outcome: the caller cannot tell a short answer from a cut-off one. Instead
+    keep whatever streamed, then append a note naming the setting to raise.
+    """
+    note = (
+        "\n\n[Response truncated: the model hit the output-token limit before finishing. "
+        "Raise OBS_AGENT_MAX_TOKENS (currently "
+        f"{max_tokens_setting()}) or ask a narrower question.]"
+    )
+    text = (partial + note) if partial else note.lstrip("\n")
+    if on_token:
+        on_token(note)
+    messages.append(_final_message(provider, response, text))
+    return text, messages
 
 
 def _finish_refusal(response, provider: str, messages: list[dict], on_token):

@@ -640,7 +640,7 @@ tool-call-through-streaming.
 | Message formatting | 3 | Canonical ↔ provider message conversion |
 | CLI parsing | 8 | All flags, defaults, combinations |
 | REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
-| Model config (`test_model_config.py`) | 24 | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting |
+| Model config (`test_model_config.py`) | 32 | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
 | Evals (`test_evals.py`) | 17 | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
 
 ## References

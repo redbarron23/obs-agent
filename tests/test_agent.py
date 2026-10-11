@@ -229,13 +229,13 @@ class TestProviderAbstraction:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         from unittest.mock import MagicMock
 
-        from agent import Provider
+        from agent import DEFAULT_MAX_TOKENS, Provider
 
         p = Provider("openai", "gpt-5.4-mini")
         p._client = MagicMock()
         p.create([{"role": "user", "content": "hi"}])
         kwargs = p._client.chat.completions.create.call_args.kwargs
-        assert kwargs["max_completion_tokens"] == 1024
+        assert kwargs["max_completion_tokens"] == DEFAULT_MAX_TOKENS
         assert "max_tokens" not in kwargs
 
     def test_anthropic_stop_reason_end_turn(self):
