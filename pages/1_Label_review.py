@@ -5,6 +5,10 @@ Decisions are shared with the REST API through the same DecisionStore file
 (OBS_AGENT_DECISIONS, default label_decisions.json).
 """
 
+import tempfile
+import uuid
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -12,6 +16,7 @@ from label_review import (
     DecisionError,
     DecisionStore,
     coverage,
+    demo_enabled,
     editor_changes,
     export,
     pending_changes,
@@ -21,7 +26,15 @@ from labeling import ALLOWED, AUTO_APPLY_THRESHOLD
 
 st.set_page_config(page_title="Label review — obs-agent", page_icon="🏷️", layout="wide")
 
-store = DecisionStore()
+DEMO = demo_enabled()
+if DEMO:
+    # Public demo: each browser session gets its own throwaway decisions file,
+    # so visitors never see or overwrite each other's choices.
+    st.session_state.setdefault("demo_id", uuid.uuid4().hex)
+    demo_file = f"obs-agent-{st.session_state.demo_id}.json"
+    store = DecisionStore(Path(tempfile.gettempdir()) / demo_file)
+else:
+    store = DecisionStore()
 st.session_state.setdefault("editor_version", 0)
 
 
@@ -40,10 +53,17 @@ st.caption(
     "confidence are safe to auto-apply; everything else needs a human."
 )
 
+if DEMO:
+    st.info(
+        "Demo on synthetic data: your decisions are private to this browser session "
+        "and are discarded when it ends. Try accepting a few, then download the export.",
+        icon="🧪",
+    )
+
 cov = coverage()
 decided = {f"{d['resource_id']}|{d['label']}": d for d in store.all()}
 cols = st.columns(6)
-cols[0].metric("Need attention", f"{cov['needs_attention']} / {cov['total']}")
+cols[0].metric("Need attention", cov["needs_attention"], help=f"of {cov['total']} resources")
 cols[1].metric("Untagged team", cov["labels"]["team"]["untagged"])
 cols[2].metric("Untagged env", cov["labels"]["env"]["untagged"])
 cols[3].metric("Suspect tags", sum(c["suspect"] for c in cov["labels"].values()))
@@ -145,7 +165,7 @@ else:
     )
 
     left, right = st.columns([1, 3])
-    if left.button("💾 Save decisions", type="primary"):
+    if left.button("Save decisions", icon=":material/save:", type="primary"):
         errors, saved = [], 0
         for rid, decision, override in editor_changes(df, edited):
             try:
@@ -163,7 +183,11 @@ else:
             _refresh()
 
     auto = df[(df["action"] == "auto-apply") & (df["decision"] == "")]
-    if right.button(f"✅ Accept all {len(auto)} auto-apply suggestions shown", disabled=auto.empty):
+    if right.button(
+        f"Accept all {len(auto)} auto-apply suggestions shown",
+        icon=":material/done_all:",
+        disabled=auto.empty,
+    ):
         for rid in auto["resource_id"]:
             store.set(rid, label, "accept")
         st.toast(f"Accepted {len(auto)} suggestion(s)")
@@ -186,24 +210,27 @@ st.caption(
 
 c1, c2, c3 = st.columns(3)
 c1.download_button(
-    "⬇️ CSV",
+    "CSV",
     export(store, "csv", include_auto),
     "label-changes.csv",
     "text/csv",
+    icon=":material/download:",
     disabled=not changes,
 )
 c2.download_button(
-    "⬇️ az / gcloud script",
+    "az / gcloud script",
     export(store, "sh", include_auto),
     "apply-labels.sh",
     "text/x-shellscript",
+    icon=":material/download:",
     disabled=not changes,
 )
 c3.download_button(
-    "⬇️ Terraform tfvars",
+    "Terraform tfvars",
     export(store, "tfvars", include_auto),
     "labels.auto.tfvars.json",
     "application/json",
+    icon=":material/download:",
     disabled=not changes,
 )
 

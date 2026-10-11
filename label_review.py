@@ -45,6 +45,19 @@ EXPORT_FORMATS = ("csv", "sh", "tfvars")
 DEFAULT_DECISIONS_PATH = "label_decisions.json"
 
 
+def demo_enabled() -> bool:
+    """True for the public demo: OBS_AGENT_DEMO=1 in the environment or in
+    Streamlit secrets (Community Cloud's settings dialog sets the latter)."""
+    if os.environ.get("OBS_AGENT_DEMO") == "1":
+        return True
+    try:
+        import streamlit as st
+
+        return str(st.secrets.get("OBS_AGENT_DEMO", "")) == "1"
+    except Exception:  # no secrets file, or not running under Streamlit
+        return False
+
+
 # ── Reports ────────────────────────────────────────────────────────────
 
 

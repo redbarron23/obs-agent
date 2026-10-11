@@ -53,7 +53,7 @@ MAX_SESSIONS = 200
 app = FastAPI(
     title="obs-agent API",
     description="Chat-based cloud logging cost triage across Azure and GCP.",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
