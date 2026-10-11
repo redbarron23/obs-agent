@@ -16,14 +16,19 @@ dependencies = [
     "scikit-learn>=1.3.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=8.0.0",
     "httpx>=0.27.0",
 ]
 
+[tool.uv]
+# Flat modules, not an installable package: uv manages the env only.
+package = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "integration: tests that call live LLM APIs (require API keys)",
 ]

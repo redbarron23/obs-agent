@@ -1,13 +1,18 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
+    UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Install the exact locked runtime deps (no dev group) into /app/.venv.
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
-RUN uv pip install --system --no-cache -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev
+ENV PATH="/app/.venv/bin:$PATH"
 
 COPY agent.py api.py app.py data.py inventory.py labeling.py tools.py ./
 

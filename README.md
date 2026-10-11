@@ -31,21 +31,20 @@ The agent decides which tools to call, executes them against the billing data, a
 ```bash
 # 1. Clone and set up
 git clone https://github.com/redbarron23/obs-agent.git && cd obs-agent
-uv venv && source .venv/bin/activate        # install uv: https://docs.astral.sh/uv/
-uv pip install -r requirements.txt
+uv sync                                     # install uv: https://docs.astral.sh/uv/
 
 # 2. Start Ollama and pull a tool-capable model (default), or set a provider API key
 #    ollama serve & ollama pull qwen2.5:7b
 #    export DEEPSEEK_API_KEY=sk-...   # then add --provider deepseek
 
 # 3. Generate synthetic data and run the interactive REPL
-python agent.py
+uv run agent.py
 
 # 4. Or ask a single question (scriptable)
-python agent.py -q "Which Azure subscription has the highest overage?" --verbose
+uv run agent.py -q "Which Azure subscription has the highest overage?" --verbose
 
 # 5. Or launch the web UI
-streamlit run app.py
+uv run streamlit run app.py
 ```
 
 ## Features
@@ -55,7 +54,7 @@ streamlit run app.py
 Watch tokens arrive in real-time instead of waiting for the full response:
 
 ```bash
-python agent.py -q "Compare costs across Azure and GCP" --stream
+uv run agent.py -q "Compare costs across Azure and GCP" --stream
 ```
 
 Streaming works through the full tool-use loop — if the model calls a tool mid-stream, it prints text up to that point, executes the tool, and continues streaming.
@@ -96,7 +95,7 @@ Typical estates have ~half their Azure subscriptions and GCP projects missing a 
 3. **Model** — logistic regression over name tokens, parent, owners, creator, services and spend shape (weekend/weekday ratio, volatility). Every prediction comes with a confidence and the features that drove it.
 4. **Mislabel check** — out-of-fold predictions flag existing tags the model confidently disagrees with.
 
-The synthetic inventory (`inventory.py`, 320 resources) keeps the *true* labels next to the observed ones, so every strategy is scored against ground truth (`python labeling.py`):
+The synthetic inventory (`inventory.py`, 320 resources) keeps the *true* labels next to the observed ones, so every strategy is scored against ground truth (`uv run labeling.py`):
 
 | Label | Strategy | Coverage | Accuracy | Macro-F1 | Auto-apply (≥0.9) | Auto-apply precision |
 |---|---|---|---|---|---|---|
@@ -122,7 +121,7 @@ The synthetic data is cleaner than a real estate (owners map neatly onto teams),
 ### Web UI (Streamlit)
 
 ```bash
-streamlit run app.py
+uv run streamlit run app.py
 ```
 
 Opens a chat interface in your browser with provider/model selection, conversation history, and example prompts. Multi-turn memory works natively.
@@ -132,7 +131,7 @@ Opens a chat interface in your browser with provider/model selection, conversati
 The agent is also available as a standalone HTTP service, so other apps (dashboards, chat bots, pipelines) can call it without importing any Python:
 
 ```bash
-uvicorn api:app --reload          # http://localhost:8000/docs for interactive OpenAPI docs
+uv run uvicorn api:app --reload          # http://localhost:8000/docs for interactive OpenAPI docs
 ```
 
 | Endpoint | Purpose |
@@ -231,16 +230,16 @@ Containers reach the host's Ollama through `host.docker.internal` (override with
 
 ```bash
 # Single answer (for scripts, CI, or demos)
-python agent.py -q "Show me the top 3 GCP projects"
+uv run agent.py -q "Show me the top 3 GCP projects"
 
 # Stream mode
-python agent.py -q "Any cost spikes?" --stream
+uv run agent.py -q "Any cost spikes?" --stream
 
 # Verbose mode (see tool calls)
-python agent.py -q "Compare costs" --verbose
+uv run agent.py -q "Compare costs" --verbose
 
 # Specific model
-python agent.py -q "Show me spikes" --model claude-sonnet-4-6
+uv run agent.py -q "Show me spikes" --model claude-sonnet-4-6
 ```
 
 ### Provider support
@@ -255,10 +254,10 @@ python agent.py -q "Show me spikes" --model claude-sonnet-4-6
 Switch providers:
 ```bash
 # Use Anthropic instead of Ollama
-python agent.py --provider anthropic -q "Which Azure subscription has the highest overage?"
+uv run agent.py --provider anthropic -q "Which Azure subscription has the highest overage?"
 
 # Pick a specific Ollama model (no API key needed)
-python agent.py --model qwen2.5:7b -q "Compare Azure and GCP"
+uv run agent.py --model qwen2.5:7b -q "Compare Azure and GCP"
 ```
 
 The provider abstraction (`Provider` class in `agent.py`) wraps both APIs behind a common interface, so tool logic and the agent loop work identically regardless of backend.
@@ -270,23 +269,26 @@ obs-agent/
 ├── app.py                # Streamlit web UI (chat interface with provider/model selection)
 ├── api.py                # FastAPI REST service (/ask, /ask/stream, sessions, optional API key)
 ├── agent.py              # Agent loop + CLI (REPL / --question) + streaming + provider abstraction
-├── tools.py              # 5 tool functions + LLM tool definitions + dispatch table
+├── tools.py              # 7 tool functions + LLM tool definitions + dispatch table
 ├── data.py               # Deterministic synthetic data generator (seeded RNG, no CSVs needed)
-├── evals.py              # 8 eval cases with ground-truth checks against the synthetic data
+├── inventory.py          # Synthetic inventory with true vs observed team/env labels
+├── labeling.py           # Label inference: cleaning, rules, model, mislabel check, evaluation
+├── evals.py              # 11 eval cases with ground-truth checks against the synthetic data
 ├── tests/
 │   ├── conftest.py       # Shared fixtures
 │   ├── test_agent.py
 │   ├── test_api.py
 │   ├── test_evals.py
+│   ├── test_labeling.py
 │   └── test_tools.py
 ├── .github/workflows/
 │   └── ci.yml            # Unit tests + eval dry-run + Docker build/smoke test
 ├── Dockerfile
 ├── docker-compose.yml   # API on :8000 + Streamlit UI on :8501
 ├── .env.example
-├── pyproject.toml
-├── requirements.txt
-├── requirements-dev.txt
+├── pyproject.toml        # Dependencies (single source of truth)
+├── uv.lock               # Exact locked versions (commit with pyproject.toml)
+├── .python-version       # Local Python version for uv
 ├── LICENSE
 └── README.md
 ```
@@ -436,14 +438,14 @@ Key identifiers in the synthetic data:
 
 ```bash
 # Deterministic dry-run — checks tool outputs directly, no API key needed
-python evals.py --dry-run
+uv run evals.py --dry-run
 
 # Live evals against the LLM (needs the provider's API key; default: Ollama)
-python evals.py
-python evals.py --provider anthropic --model claude-haiku-4-5-20251001
+uv run evals.py
+uv run evals.py --provider anthropic --model claude-haiku-4-5-20251001
 
 # Verbose output for every case
-python evals.py --dry-run -v
+uv run evals.py --dry-run -v
 ```
 
 Dry-run mode calls the tools directly and verifies ground-truth identifiers appear in the output — fully deterministic, suitable for CI. Live mode runs the full agent loop and checks that the LLM's answer contains the expected facts.
@@ -472,7 +474,7 @@ Because LLM output is non-deterministic, evals check for **presence of correct f
 
 Real billing CSVs contain sensitive subscription IDs and project names. Using deterministic synthetic data means:
 
-- The project runs with zero setup beyond `uv pip install`
+- The project runs with zero setup beyond `uv sync`
 - Evals are reproducible — they pass or fail deterministically
 - No risk of committing credentials or PII to version control
 - Anyone can clone and run it immediately
@@ -503,46 +505,36 @@ Building API-agnostic agents is a practical skill for production systems where p
 ## Requirements
 
 - Python 3.10+
-- [uv](https://docs.astral.sh/uv/) for environments and installs (`pip` works too, but uv is what the Dockerfile and CI use)
+- [uv](https://docs.astral.sh/uv/) for Python, environments and dependencies (used locally, in CI and in the Dockerfile)
 - **Ollama** (default): no API key needed — install Ollama and pull a tool-capable model
 - **DeepSeek / OpenAI / Anthropic** (optional): `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
 
 ### Dependencies
 
-Runtime (`requirements.txt`):
+`pyproject.toml` is the single source of truth and `uv.lock` pins exact versions; both are committed. Runtime deps are under `[project] dependencies`, test tools under the `dev` dependency group (installed by `uv sync`, left out of the Docker image).
 
-```
-anthropic>=0.50.0
-openai>=1.0.0
-streamlit>=1.28.0
-pandas>=2.0.0
-numpy>=1.24.0
-fastapi>=0.110.0
-uvicorn>=0.29.0
-scikit-learn>=1.3.0
+```bash
+uv sync                      # create/update .venv from uv.lock (Python version from .python-version)
+uv run <command>             # run anything inside that env, no activation needed
+uv add <package>             # add a runtime dependency (updates pyproject.toml + uv.lock)
+uv add --dev <package>       # add a test/dev dependency
+uv lock --upgrade            # bump locked versions within the declared ranges
 ```
 
-Dev/test (`requirements-dev.txt`, includes the runtime set):
-
-```
--r requirements.txt
-pytest>=8.0.0
-httpx>=0.27.0
-```
+CI runs `uv sync --locked`, which fails if `uv.lock` is out of date with `pyproject.toml`. Commit both files together.
 
 ## Testing
 
 Unit tests and deterministic eval dry-runs:
 
 ```bash
-uv pip install -r requirements-dev.txt
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 
 # Skip live LLM evals (default in CI)
-python -m pytest tests/ -v -m "not integration"
+uv run pytest tests/ -v -m "not integration"
 
 # Run live evals (requires a configured, reachable provider)
-OBS_AGENT_RUN_LIVE_EVALS=1 python -m pytest tests/ -v -m integration
+OBS_AGENT_RUN_LIVE_EVALS=1 uv run pytest tests/ -v -m integration
 ```
 
 CI runs on every push/PR via GitHub Actions: unit tests and the eval dry-run on Python 3.10–3.12, plus a Docker job that builds the image and smoke-tests `/health`.
@@ -616,7 +608,7 @@ All examples use the synthetic data (seed 42) so you get identical output. Run t
 ### Single question with streaming
 
 ```bash
-python agent.py -q "Which Azure subscription has the highest overage cost?" --stream
+uv run agent.py -q "Which Azure subscription has the highest overage cost?" --stream
 ```
 
 Live output (streaming, token by token):
@@ -630,7 +622,7 @@ with 3.7 GB exceeding its allocation.
 ### Verbose mode (see tool calls)
 
 ```bash
-python agent.py -q "Find cost spikes in the last 60 days" --verbose
+uv run agent.py -q "Find cost spikes in the last 60 days" --verbose
 ```
 
 ```
@@ -651,7 +643,7 @@ Spikes detected (both clouds):
 ### Multi-turn conversation (REPL)
 
 ```
-$ python agent.py
+$ uv run agent.py
 obs-agent — Multi-Cloud Cost Triage Agent
 Provider: anthropic  |  Model: claude-sonnet-4-6  |  Mode: batch  |  Type 'quit' to exit.
 
@@ -684,7 +676,7 @@ Grand total:               $44,764.00
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
-python agent.py --provider deepseek --model deepseek-chat -q "Top 3 GCP projects" --verbose
+uv run agent.py --provider deepseek --model deepseek-chat -q "Top 3 GCP projects" --verbose
 ```
 
 ### Ollama (local)
@@ -695,19 +687,19 @@ python agent.py --provider deepseek --model deepseek-chat -q "Top 3 GCP projects
 ollama pull qwen2.5:7b
 
 # Run the agent — no API key needed
-python agent.py --provider ollama --model qwen2.5:7b -q "Compare costs across Azure and GCP"
+uv run agent.py --provider ollama --model qwen2.5:7b -q "Compare costs across Azure and GCP"
 
 # Stream mode works too
-python agent.py --provider ollama --model qwen2.5:7b -q "Any cost spikes?" --stream --verbose
+uv run agent.py --provider ollama --model qwen2.5:7b -q "Any cost spikes?" --stream --verbose
 
 # Custom host (if Ollama isn't on localhost)
 export OLLAMA_HOST=http://my-server:11434
-python agent.py --provider ollama --model qwen2.5:7b -q "Which Azure sub has the highest overage?"
+uv run agent.py --provider ollama --model qwen2.5:7b -q "Which Azure sub has the highest overage?"
 ```
 
 ### Web UI example prompts
 
-Launch `streamlit run app.py`, select your provider, and try:
+Launch `uv run streamlit run app.py`, select your provider, and try:
 
 - *"Which Azure sub costs the most?"*
 - *"Show me top 3 GCP projects"*
