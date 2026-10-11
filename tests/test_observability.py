@@ -52,7 +52,12 @@ class TestOff:
 
 # ── With MLflow installed ──────────────────────────────────────────────
 
-mlflow = pytest.importorskip("mlflow")
+try:
+    import mlflow
+except ImportError:  # the CI test jobs; only the mlops job installs it
+    mlflow = None
+
+needs_mlflow = pytest.mark.skipif(mlflow is None, reason="needs the mlops dependency group")
 
 
 def _tool_then_answer():
@@ -77,6 +82,7 @@ def tracking(tmp_path, monkeypatch):
     yield
 
 
+@needs_mlflow
 class TestTracing:
     def test_agent_run_produces_nested_trace(self, tracking):
         import agent
@@ -102,6 +108,7 @@ class TestTracing:
         assert llm_outputs[0]["tool_calls"] == ["get_label_coverage"]
 
 
+@needs_mlflow
 class TestEvalRunner:
     def test_accepted_tool_sets(self):
         import evals_mlflow
