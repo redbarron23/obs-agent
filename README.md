@@ -207,20 +207,30 @@ import json
 import requests
 
 BASE = "http://localhost:8000"
-HEADERS = {"X-API-Key": "..."}          # omit if OBS_AGENT_API_KEY is not set
+HEADERS = {"X-API-Key": "..."}  # omit if OBS_AGENT_API_KEY is not set
 
 # One-shot, with conversation memory via session_id
-r = requests.post(f"{BASE}/ask", headers=HEADERS, json={
-    "question": "Which Azure subscription has the highest overage?",
-    "session_id": "demo",
-})
+r = requests.post(
+    f"{BASE}/ask",
+    headers=HEADERS,
+    json={
+        "question": "Which Azure subscription has the highest overage?",
+        "session_id": "demo",
+    },
+)
 r.raise_for_status()
 print(r.json()["answer"], r.json()["tools_called"])
 
 # Streaming
-with requests.post(f"{BASE}/ask/stream", headers=HEADERS, stream=True, json={
-    "question": "And the second GCP project?", "session_id": "demo",
-}) as resp:
+with requests.post(
+    f"{BASE}/ask/stream",
+    headers=HEADERS,
+    stream=True,
+    json={
+        "question": "And the second GCP project?",
+        "session_id": "demo",
+    },
+) as resp:
     event = "message"
     for line in resp.iter_lines(decode_unicode=True):
         if line.startswith("event:"):
@@ -231,7 +241,7 @@ with requests.post(f"{BASE}/ask/stream", headers=HEADERS, stream=True, json={
                 print(data["token"], end="", flush=True)
             elif event == "error":
                 raise RuntimeError(data["detail"])
-            else:                        # done
+            else:  # done
                 print("\ntools:", data["tools_called"])
 ```
 
@@ -578,11 +588,14 @@ CI runs on every push/PR via GitHub Actions: unit tests and the eval dry-run on 
 # conftest.py — fixtures with transparent data
 @pytest.fixture
 def azure_summary():
-    return pd.DataFrame([
-        {"subscription_id": "sub-a", "estimated_overage_cost_30d": 5000},
-        {"subscription_id": "sub-b", "estimated_overage_cost_30d": 2000},
-        ...
-    ])
+    return pd.DataFrame(
+        [
+            {"subscription_id": "sub-a", "estimated_overage_cost_30d": 5000},
+            {"subscription_id": "sub-b", "estimated_overage_cost_30d": 2000},
+            ...,
+        ]
+    )
+
 
 # test_tools.py — verifies logic, not API behaviour
 def test_top_1(self, patch_azure_summary):

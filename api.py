@@ -37,7 +37,8 @@ import os
 import threading
 import uuid
 from collections import OrderedDict
-from typing import Iterator, Literal
+from collections.abc import Iterator
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -58,6 +59,7 @@ app = FastAPI(
 
 # ── Auth ───────────────────────────────────────────────────────────────
 
+
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     """Enforce X-API-Key when OBS_AGENT_API_KEY is configured."""
     expected = os.environ.get("OBS_AGENT_API_KEY")
@@ -68,6 +70,7 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
 
 
 # ── Session memory ─────────────────────────────────────────────────────
+
 
 class SessionStore:
     """Thread-safe in-memory conversation store with LRU eviction."""
@@ -102,12 +105,19 @@ decisions = DecisionStore()
 
 # ── Schemas ────────────────────────────────────────────────────────────
 
+
 class AskRequest(BaseModel):
-    model_config = {"json_schema_extra": {"examples": [{
-        "question": "Which Azure subscription has the highest overage?",
-        "provider": "ollama",
-        "session_id": "demo",
-    }]}}
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "question": "Which Azure subscription has the highest overage?",
+                    "provider": "ollama",
+                    "session_id": "demo",
+                }
+            ]
+        }
+    }
 
     question: str = Field(min_length=1, max_length=4000)
     provider: str = Field(default=DEFAULT_PROVIDER)
@@ -117,18 +127,24 @@ class AskRequest(BaseModel):
     session_id: str | None = Field(
         default=None,
         description="Reuse across requests to keep conversation memory. "
-                    "Generated and returned if omitted.",
+        "Generated and returned if omitted.",
     )
 
 
 class AskResponse(BaseModel):
-    model_config = {"json_schema_extra": {"examples": [{
-        "answer": "sub-a1b2c3d4 has the highest overage at $18,411.",
-        "session_id": "demo",
-        "provider": "ollama",
-        "model": "qwen2.5:7b",
-        "tools_called": ["get_azure_top_overages"],
-    }]}}
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "answer": "sub-a1b2c3d4 has the highest overage at $18,411.",
+                    "session_id": "demo",
+                    "provider": "ollama",
+                    "model": "qwen2.5:7b",
+                    "tools_called": ["get_azure_top_overages"],
+                }
+            ]
+        }
+    }
 
     answer: str
     session_id: str
@@ -144,11 +160,15 @@ class ErrorResponse(BaseModel):
 
 
 ERROR_RESPONSES = {
-    401: {"model": ErrorResponse, "description": "Missing or invalid X-API-Key "
-                                                  "(only when OBS_AGENT_API_KEY is set)."},
+    401: {
+        "model": ErrorResponse,
+        "description": "Missing or invalid X-API-Key (only when OBS_AGENT_API_KEY is set).",
+    },
     422: {"description": "Invalid request body or unknown provider."},
-    502: {"model": ErrorResponse, "description": "The LLM backend failed "
-                                                  "(bad key, no credits, server down)."},
+    502: {
+        "model": ErrorResponse,
+        "description": "The LLM backend failed (bad key, no credits, server down).",
+    },
 }
 
 SSE_DESCRIPTION = """Answer a question as server-sent events (`text/event-stream`).
@@ -178,24 +198,23 @@ def _validate(req: AskRequest) -> str:
         raise HTTPException(
             status_code=422,
             detail=f"Unknown provider '{req.provider}'. "
-                   f"Choose from {sorted(PROVIDER_DEFAULT_MODELS)}.",
+            f"Choose from {sorted(PROVIDER_DEFAULT_MODELS)}.",
         )
     return req.model or PROVIDER_DEFAULT_MODELS[req.provider]
 
 
 def _tools_called(history: list[dict]) -> list[str]:
     """Names of tools invoked during the conversation's latest turn."""
-    last_user = max(
-        (i for i, m in enumerate(history) if m.get("role") == "user"), default=-1
-    )
+    last_user = max((i for i, m in enumerate(history) if m.get("role") == "user"), default=-1)
     names: list[str] = []
-    for m in history[last_user + 1:]:
+    for m in history[last_user + 1 :]:
         for call in m.get("tool_calls") or []:
             names.append(call["name"])
     return names
 
 
 # ── Routes ─────────────────────────────────────────────────────────────
+
 
 @app.get("/health", summary="Liveness probe")
 def health() -> dict:
@@ -284,7 +303,10 @@ def ask_stream(req: AskRequest) -> StreamingResponse:
     "/sessions/{session_id}",
     dependencies=[Depends(require_api_key)],
     summary="Forget a conversation",
-    responses={401: ERROR_RESPONSES[401], 404: {"model": ErrorResponse, "description": "Unknown session."}},
+    responses={
+        401: ERROR_RESPONSES[401],
+        404: {"model": ErrorResponse, "description": "Unknown session."},
+    },
 )
 def delete_session(session_id: str) -> dict:
     if not sessions.delete(session_id):
@@ -320,17 +342,33 @@ class CostCenter(BaseModel):
 
 
 class ResourceLabels(BaseModel):
-    model_config = {"json_schema_extra": {"examples": [{
-        "resource_id": "svc-ingest", "cloud": "azure", "parent": "mg-security",
-        "owners": ["hana"], "needs_attention": True,
-        "cost_center": {"current": None, "implied": "CC-2002"},
-        "labels": {"team": {
-            "current": None, "raw": None, "status": "untagged",
-            "suggested": "data-platform", "confidence": 0.6, "action": "needs review",
-            "source": "model", "reason": "strongest signals: creator=hana (+1.27), ...",
-            "alternatives": [{"value": "observability", "confidence": 0.12}],
-        }},
-    }]}}
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "resource_id": "svc-ingest",
+                    "cloud": "azure",
+                    "parent": "mg-security",
+                    "owners": ["hana"],
+                    "needs_attention": True,
+                    "cost_center": {"current": None, "implied": "CC-2002"},
+                    "labels": {
+                        "team": {
+                            "current": None,
+                            "raw": None,
+                            "status": "untagged",
+                            "suggested": "data-platform",
+                            "confidence": 0.6,
+                            "action": "needs review",
+                            "source": "model",
+                            "reason": "strongest signals: creator=hana (+1.27), ...",
+                            "alternatives": [{"value": "observability", "confidence": 0.12}],
+                        }
+                    },
+                }
+            ]
+        }
+    }
 
     resource_id: str
     cloud: Literal["azure", "gcp"]
@@ -360,10 +398,14 @@ class Coverage(BaseModel):
 
 
 class DecisionRequest(BaseModel):
-    model_config = {"json_schema_extra": {"examples": [
-        {"decision": "accept"},
-        {"decision": "override", "value": "data-platform"},
-    ]}}
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"decision": "accept"},
+                {"decision": "override", "value": "data-platform"},
+            ]
+        }
+    }
 
     decision: Literal["accept", "reject", "override"]
     value: str | None = Field(default=None, description="Required for override.")
@@ -407,7 +449,7 @@ def labels_coverage() -> dict:
     dependencies=[Depends(require_api_key)],
     summary="Review queue",
     description="Resources with an untagged or suspected-wrong label, most confident "
-                "suggestions first. Filters combine with AND.",
+    "suggestions first. Filters combine with AND.",
     tags=["labels"],
     responses={401: ERROR_RESPONSES[401]},
 )
@@ -422,10 +464,14 @@ def list_resources(
     offset: int = Query(default=0, ge=0),
 ) -> dict:
     items = label_review.review_queue(
-        label=label, status=status, cloud=cloud, min_confidence=min_confidence,
-        max_confidence=max_confidence, search=search,
+        label=label,
+        status=status,
+        cloud=cloud,
+        min_confidence=min_confidence,
+        max_confidence=max_confidence,
+        search=search,
     )
-    return {"total": len(items), "items": items[offset:offset + limit]}
+    return {"total": len(items), "items": items[offset : offset + limit]}
 
 
 @app.get(
@@ -446,10 +492,13 @@ def resource_labels(resource_id: str) -> dict:
     dependencies=[Depends(require_api_key)],
     summary="Record a review decision",
     description="`accept` applies the suggestion, `override` applies `value` instead, "
-                "`reject` keeps the current tag. Replaces any earlier decision.",
+    "`reject` keeps the current tag. Replaces any earlier decision.",
     tags=["labels"],
-    responses={401: ERROR_RESPONSES[401], **NOT_FOUND,
-               422: {"model": ErrorResponse, "description": "Invalid value, or nothing to accept."}},
+    responses={
+        401: ERROR_RESPONSES[401],
+        **NOT_FOUND,
+        422: {"model": ErrorResponse, "description": "Invalid value, or nothing to accept."},
+    },
 )
 def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> dict:
     _report_or_404(resource_id)
@@ -464,7 +513,10 @@ def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> di
     dependencies=[Depends(require_api_key)],
     summary="Undo a review decision",
     tags=["labels"],
-    responses={401: ERROR_RESPONSES[401], 404: {"model": ErrorResponse, "description": "No such decision."}},
+    responses={
+        401: ERROR_RESPONSES[401],
+        404: {"model": ErrorResponse, "description": "No such decision."},
+    },
 )
 def delete_decision(resource_id: str, label: LabelName) -> dict:
     if not decisions.delete(resource_id, label):
@@ -485,8 +537,11 @@ def list_decisions() -> list[dict]:
 
 
 EXPORT_MEDIA = {"csv": "text/csv", "sh": "text/x-shellscript", "tfvars": "application/json"}
-EXPORT_FILENAME = {"csv": "label-changes.csv", "sh": "apply-labels.sh",
-                   "tfvars": "labels.auto.tfvars.json"}
+EXPORT_FILENAME = {
+    "csv": "label-changes.csv",
+    "sh": "apply-labels.sh",
+    "tfvars": "labels.auto.tfvars.json",
+}
 
 
 @app.get(
@@ -495,12 +550,11 @@ EXPORT_FILENAME = {"csv": "label-changes.csv", "sh": "apply-labels.sh",
     dependencies=[Depends(require_api_key)],
     summary="Export label changes",
     description="Every resource whose resolved tags differ from today's: reviewer "
-                "overrides, then accepts, then (if `include_auto`) suggestions at or "
-                "above the auto-apply threshold. `sh` emits `az tag update` / "
-                "`gcloud projects update` commands; `tfvars` a map for Terraform.",
+    "overrides, then accepts, then (if `include_auto`) suggestions at or "
+    "above the auto-apply threshold. `sh` emits `az tag update` / "
+    "`gcloud projects update` commands; `tfvars` a map for Terraform.",
     tags=["labels"],
-    responses={200: {"content": {m: {} for m in EXPORT_MEDIA.values()}},
-               401: ERROR_RESPONSES[401]},
+    responses={200: {"content": {m: {} for m in EXPORT_MEDIA.values()}}, 401: ERROR_RESPONSES[401]},
 )
 def export_labels(
     format: Literal["csv", "sh", "tfvars"] = Query(default="csv"),
@@ -508,6 +562,7 @@ def export_labels(
 ) -> PlainTextResponse:
     body = label_review.export(decisions, format, include_auto)
     return PlainTextResponse(
-        body, media_type=EXPORT_MEDIA[format],
+        body,
+        media_type=EXPORT_MEDIA[format],
         headers={"Content-Disposition": f'attachment; filename="{EXPORT_FILENAME[format]}"'},
     )

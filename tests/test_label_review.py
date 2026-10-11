@@ -15,8 +15,8 @@ import api
 import label_review as lr
 from label_review import DecisionError, DecisionStore
 
-UNTAGGED = "svc-ingest"            # no team/env tag; team → data-platform
-SUSPECT = "api-login-d-ew1"        # tagged security, really identity
+UNTAGGED = "svc-ingest"  # no team/env tag; team → data-platform
+SUSPECT = "api-login-d-ew1"  # tagged security, really identity
 AUTO_ENV = "platform-backend-poc-uc1"  # env untagged, 'poc' → sandbox at 95%
 REVIEW_PAGE = Path(__file__).parent.parent / "pages" / "1_Label_review.py"
 
@@ -81,12 +81,15 @@ class TestDecisions:
     def test_reject_has_no_value(self, store):
         assert store.set(SUSPECT, "team", "reject")["value"] is None
 
-    @pytest.mark.parametrize("args,msg", [
-        ((UNTAGGED, "team", "override", "martians"), "not a valid team"),
-        ((AUTO_ENV, "team", "accept"), "no team suggestion"),
-        ((UNTAGGED, "owner", "accept"), "Unknown label"),
-        ((UNTAGGED, "team", "maybe"), "Unknown decision"),
-    ])
+    @pytest.mark.parametrize(
+        "args,msg",
+        [
+            ((UNTAGGED, "team", "override", "martians"), "not a valid team"),
+            ((AUTO_ENV, "team", "accept"), "no team suggestion"),
+            ((UNTAGGED, "owner", "accept"), "Unknown label"),
+            ((UNTAGGED, "team", "maybe"), "Unknown decision"),
+        ],
+    )
     def test_invalid(self, store, args, msg):
         with pytest.raises(DecisionError, match=msg):
             store.set(*args)
@@ -150,8 +153,8 @@ class TestExport:
         assert all(how == "auto-apply" for c in auto for _, how in c["tags"].values())
 
     def test_formats(self, store):
-        store.set(UNTAGGED, "team", "accept")         # azure
-        store.set(AUTO_ENV, "env", "accept")          # gcp
+        store.set(UNTAGGED, "team", "accept")  # azure
+        store.set(AUTO_ENV, "env", "accept")  # gcp
         csv_out = lr.export(store, "csv", include_auto=False)
         assert csv_out.splitlines()[0] == "resource_id,cloud,label,previous,new,how"
         assert f"{UNTAGGED},azure,team,,data-platform,accept" in csv_out
@@ -164,8 +167,9 @@ class TestExport:
         assert tf["project_labels"][AUTO_ENV] == {"env": "sandbox"}
 
     def test_gcp_values_lowercased(self, store):
-        gcp_untagged = next(r["resource_id"] for r in lr.review_queue(label="team", status="untagged",
-                                                                       cloud="gcp"))
+        gcp_untagged = next(
+            r["resource_id"] for r in lr.review_queue(label="team", status="untagged", cloud="gcp")
+        )
         store.set(gcp_untagged, "team", "override", "payments")
         sh = lr.export(store, "sh", include_auto=False)
         assert "cost_center=cc-1001" in sh
@@ -209,16 +213,27 @@ class TestLabelAPI:
     def test_decision_errors(self, client):
         url = f"/resources/{UNTAGGED}/labels/team/decision"
         assert client.put(url, json={"decision": "override", "value": "x"}).status_code == 422
-        assert client.put(f"/resources/{UNTAGGED}/labels/owner/decision",
-                          json={"decision": "accept"}).status_code == 422
-        assert client.put("/resources/nope/labels/team/decision",
-                          json={"decision": "accept"}).status_code == 404
+        assert (
+            client.put(
+                f"/resources/{UNTAGGED}/labels/owner/decision", json={"decision": "accept"}
+            ).status_code
+            == 422
+        )
+        assert (
+            client.put(
+                "/resources/nope/labels/team/decision", json={"decision": "accept"}
+            ).status_code
+            == 404
+        )
 
-    @pytest.mark.parametrize("fmt,media,filename", [
-        ("csv", "text/csv", "label-changes.csv"),
-        ("sh", "text/x-shellscript", "apply-labels.sh"),
-        ("tfvars", "application/json", "labels.auto.tfvars.json"),
-    ])
+    @pytest.mark.parametrize(
+        "fmt,media,filename",
+        [
+            ("csv", "text/csv", "label-changes.csv"),
+            ("sh", "text/x-shellscript", "apply-labels.sh"),
+            ("tfvars", "application/json", "labels.auto.tfvars.json"),
+        ],
+    )
     def test_export(self, client, fmt, media, filename):
         r = client.get("/labels/export", params={"format": fmt})
         assert r.status_code == 200
@@ -235,6 +250,7 @@ class TestReviewPage:
     @pytest.fixture
     def page(self, store, monkeypatch):
         from streamlit.testing.v1 import AppTest
+
         monkeypatch.setenv("OBS_AGENT_DECISIONS", str(store.path))
         return AppTest.from_file(str(REVIEW_PAGE), default_timeout=60)
 

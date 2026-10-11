@@ -43,10 +43,7 @@ EVALS = [
     },
     {
         "id": "multi-cloud-summary",
-        "question": (
-            "Give me a summary of the top overage on Azure "
-            "and the top cost on GCP"
-        ),
+        "question": ("Give me a summary of the top overage on Azure and the top cost on GCP"),
         "must_contain": [
             "sub-a1b2c3d4",
             "project-alpha",
@@ -55,9 +52,7 @@ EVALS = [
     },
     {
         "id": "azure-daily-trend",
-        "question": (
-            "What is the daily cost trend for subscription sub-a1b2c3d4?"
-        ),
+        "question": ("What is the daily cost trend for subscription sub-a1b2c3d4?"),
         "must_contain": ["sub-a1b2c3d4"],
         "dry_run_tool": (
             "get_daily_trend",
@@ -66,9 +61,7 @@ EVALS = [
     },
     {
         "id": "gcp-daily-trend",
-        "question": (
-            "Show me the daily cost trend for project project-bravo"
-        ),
+        "question": ("Show me the daily cost trend for project project-bravo"),
         "must_contain": ["project-bravo"],
         "dry_run_tool": (
             "get_daily_trend",
@@ -77,17 +70,13 @@ EVALS = [
     },
     {
         "id": "find-spikes-azure",
-        "question": (
-            "Find any cost spikes above 200% across Azure"
-        ),
+        "question": ("Find any cost spikes above 200% across Azure"),
         "must_contain": ["sub-a1b2c3d4"],
         "dry_run_tool": ("find_spikes", {"threshold_pct": 200}),
     },
     {
         "id": "find-spikes-gcp",
-        "question": (
-            "Find any cost spikes above 200% across GCP"
-        ),
+        "question": ("Find any cost spikes above 200% across GCP"),
         "must_contain": ["project-bravo"],
         "dry_run_tool": ("find_spikes", {"threshold_pct": 200, "platform": "gcp"}),
     },
@@ -185,7 +174,8 @@ if __name__ == "__main__":
         help="Check tool outputs directly (no LLM API calls).",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Print details for every eval case.",
     )

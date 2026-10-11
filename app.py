@@ -17,7 +17,9 @@ Environment variables:
 """
 
 import os
+
 import streamlit as st
+
 from agent import run, stream_run
 
 # ── Page config ────────────────────────────────────────────────────────
@@ -113,14 +115,16 @@ if prompt := st.chat_input("Ask a question about cloud costs..."):
 
             if use_streaming:
                 holder: dict = {}
-                st.write_stream(stream_run(
-                    prompt,
-                    provider=provider,
-                    model=model_arg,
-                    verbose=True,
-                    messages=history,
-                    result_holder=holder,
-                ))
+                st.write_stream(
+                    stream_run(
+                        prompt,
+                        provider=provider,
+                        model=model_arg,
+                        verbose=True,
+                        messages=history,
+                        result_holder=holder,
+                    )
+                )
                 answer = holder["answer"]
                 st.session_state["_agent_history"] = holder["messages"]
             else:
@@ -135,12 +139,8 @@ if prompt := st.chat_input("Ask a question about cloud costs..."):
                 st.markdown(answer)
                 st.session_state["_agent_history"] = updated
 
-            st.session_state.messages.append(
-                {"role": "assistant", "content": answer}
-            )
+            st.session_state.messages.append({"role": "assistant", "content": answer})
         except Exception as e:
             error_msg = f"Error: {e}"
             st.error(error_msg)
-            st.session_state.messages.append(
-                {"role": "assistant", "content": error_msg}
-            )
+            st.session_state.messages.append({"role": "assistant", "content": error_msg})

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Multi-Cloud Cost Triage Agent — agent loop with tool-use.
 
-Supports multiple LLM providers via a --provider flag (ollama [default], deepseek, anthropic, or openai).
+Supports multiple LLM providers via a --provider flag (ollama [default], deepseek,
+anthropic, or openai).
 
 Usage
 -----
@@ -51,6 +52,7 @@ MAX_HISTORY = 20
 
 # ── Message formatting (canonical ↔ provider-specific) ─────────────────
 
+
 def _format_messages_for_anthropic(messages: list[dict]) -> list[dict]:
     """Convert canonical internal messages to Anthropic API format."""
     formatted: list[dict] = []
@@ -61,11 +63,13 @@ def _format_messages_for_anthropic(messages: list[dict]) -> list[dict]:
             tool_results = []
             while i < len(messages) and messages[i]["role"] == "tool":
                 t = messages[i]
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": t["tool_call_id"],
-                    "content": t["content"],
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": t["tool_call_id"],
+                        "content": t["content"],
+                    }
+                )
                 i += 1
             formatted.append({"role": "user", "content": tool_results})
             continue
@@ -74,12 +78,14 @@ def _format_messages_for_anthropic(messages: list[dict]) -> list[dict]:
             if msg.get("content"):
                 content.append({"type": "text", "text": msg["content"]})
             for tc in msg["tool_calls"]:
-                content.append({
-                    "type": "tool_use",
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "input": tc["input"],
-                })
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "input": tc["input"],
+                    }
+                )
             formatted.append({"role": "assistant", "content": content})
         else:
             formatted.append(msg)
@@ -109,11 +115,13 @@ def _format_messages_for_openai(messages: list[dict]) -> list[dict]:
             }
             formatted.append(oai_msg)
         elif msg["role"] == "tool":
-            formatted.append({
-                "role": "tool",
-                "tool_call_id": msg["tool_call_id"],
-                "content": msg["content"],
-            })
+            formatted.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": msg["tool_call_id"],
+                    "content": msg["content"],
+                }
+            )
         else:
             formatted.append(msg)
     return formatted
@@ -172,6 +180,7 @@ def _emit_token(token: str, on_token: Callable[[str], None] | None) -> None:
 
 # ── Provider abstraction ───────────────────────────────────────────────
 
+
 class Provider:
     """Minimal wrapper over Anthropic and OpenAI-compatible APIs."""
 
@@ -181,18 +190,22 @@ class Provider:
 
         if name == "anthropic":
             import anthropic
+
             self._client = anthropic.Anthropic()
         elif name == "deepseek":
             from openai import OpenAI
+
             self._client = OpenAI(
                 base_url="https://api.deepseek.com",
                 api_key=os.environ.get("DEEPSEEK_API_KEY"),
             )
         elif name == "openai":
             from openai import OpenAI
+
             self._client = OpenAI()  # reads OPENAI_API_KEY
         elif name == "ollama":
             from openai import OpenAI
+
             host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
             self._client = OpenAI(
                 base_url=f"{host}/v1",
@@ -265,10 +278,14 @@ class Provider:
         """Consume a streaming response and return accumulated blocks."""
         if provider_name == "anthropic":
             return Provider._stream_anthropic(
-                stream_obj, verbose=verbose, on_token=on_token,
+                stream_obj,
+                verbose=verbose,
+                on_token=on_token,
             )
         return Provider._stream_openai(
-            stream_obj, verbose=verbose, on_token=on_token,
+            stream_obj,
+            verbose=verbose,
+            on_token=on_token,
         )
 
     @staticmethod
@@ -289,7 +306,8 @@ class Provider:
                             func_name = event.content_block.name
                             print(
                                 f"\n  [tool: {func_name}(...)]",
-                                file=sys.stderr, flush=True,
+                                file=sys.stderr,
+                                flush=True,
                             )
                 elif event.type == "content_block_stop":
                     if current_text:
@@ -302,7 +320,8 @@ class Provider:
                             if verbose:
                                 print(
                                     f"\n  [tool: {block.name}({block.input})]",
-                                    file=sys.stderr, flush=True,
+                                    file=sys.stderr,
+                                    flush=True,
                                 )
 
             if current_text:
@@ -312,9 +331,7 @@ class Provider:
 
         if on_token is None:
             print()
-        tool_use_blocks = [
-            block for block in final_response.content if block.type == "tool_use"
-        ]
+        tool_use_blocks = [block for block in final_response.content if block.type == "tool_use"]
         return final_response, collected["text_blocks"], tool_use_blocks
 
     @staticmethod
@@ -353,20 +370,23 @@ class Provider:
                     if tc_chunk.function and tc_chunk.function.name and verbose:
                         print(
                             f"\n  [tool: {tc_chunk.function.name}(...)]",
-                            file=sys.stderr, flush=True,
+                            file=sys.stderr,
+                            flush=True,
                         )
 
         if on_token is None:
             print()
 
         tool_use_blocks = [
-            _OaiToolCall.from_dict({
-                "id": tcc["id"],
-                "function": {
-                    "name": tcc["function"]["name"],
-                    "arguments": tcc["function"]["arguments"],
-                },
-            })
+            _OaiToolCall.from_dict(
+                {
+                    "id": tcc["id"],
+                    "function": {
+                        "name": tcc["function"]["name"],
+                        "arguments": tcc["function"]["arguments"],
+                    },
+                }
+            )
             for _, tcc in sorted(tool_call_chunks.items())
         ]
 
@@ -432,6 +452,7 @@ PROVIDER_DEFAULT_MODELS = {
 
 # ── Agent loop ─────────────────────────────────────────────────────────
 
+
 def _parse_assistant_response(
     provider: str,
     response: object,
@@ -442,7 +463,8 @@ def _parse_assistant_response(
         content_blocks = [_content_block_to_dict(b) for b in response.content]
         tool_calls = [
             {"id": b["id"], "name": b["name"], "input": b["input"]}
-            for b in content_blocks if b.get("type") == "tool_use"
+            for b in content_blocks
+            if b.get("type") == "tool_use"
         ]
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
         if tool_calls:
@@ -458,8 +480,7 @@ def _parse_assistant_response(
             "role": "assistant",
             "content": None,
             "tool_calls": [
-                {"id": tb.id, "name": tb.name, "input": tb.input}
-                for tb in tool_blocks_override
+                {"id": tb.id, "name": tb.name, "input": tb.input} for tb in tool_blocks_override
             ],
         }
 
@@ -470,11 +491,13 @@ def _parse_assistant_response(
             text_parts.append(choice.message.content)
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
-                tool_calls.append({
-                    "id": tc.id,
-                    "name": tc.function.name,
-                    "input": json.loads(tc.function.arguments),
-                })
+                tool_calls.append(
+                    {
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "input": json.loads(tc.function.arguments),
+                    }
+                )
     if tool_calls:
         return {
             "role": "assistant",
@@ -495,14 +518,17 @@ def _append_tool_results(
         if verbose:
             print(
                 f"  [tool result: {block.name}({block.input})]",
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
         result = _execute_tool(block, verbose=verbose)
-        messages.append({
-            "role": "tool",
-            "tool_call_id": block.id,
-            "content": result,
-        })
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": block.id,
+                "content": result,
+            }
+        )
 
 
 def run(
@@ -550,7 +576,10 @@ def run(
         if stream:
             stream_obj = backend.create(messages, stream=True)
             final_resp, text_blocks, tool_blocks = Provider.stream_response(
-                provider, stream_obj, verbose=verbose, on_token=on_token,
+                provider,
+                stream_obj,
+                verbose=verbose,
+                on_token=on_token,
             )
             sr = Provider.stop_reason(final_resp)
 
@@ -561,7 +590,9 @@ def run(
 
             if sr == "tool_use":
                 assistant_msg = _parse_assistant_response(
-                    provider, final_resp, tool_blocks_override=tool_blocks,
+                    provider,
+                    final_resp,
+                    tool_blocks_override=tool_blocks,
                 )
                 messages.append(assistant_msg)
                 _append_tool_results(messages, tool_blocks, verbose=verbose)
@@ -576,10 +607,7 @@ def run(
         if verbose:
             print(f"  [stop_reason: {sr}]", file=sys.stderr)
 
-        text_blocks = [
-            b.text for b in Provider.iter_content_blocks(response)
-            if hasattr(b, "text")
-        ]
+        text_blocks = [b.text for b in Provider.iter_content_blocks(response) if hasattr(b, "text")]
 
         if sr == "end_turn":
             text_answer = "\n".join(text_blocks)
@@ -591,8 +619,7 @@ def run(
             messages.append(assistant_msg)
 
             tool_blocks = [
-                b for b in Provider.iter_content_blocks(response)
-                if b.type == "tool_use"
+                b for b in Provider.iter_content_blocks(response) if b.type == "tool_use"
             ]
             for block in tool_blocks:
                 if verbose:
@@ -689,12 +716,14 @@ _build_assistant_content = _parse_assistant_response
 
 # ── CLI ────────────────────────────────────────────────────────────────
 
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Multi-Cloud Cost Triage Agent",
     )
     parser.add_argument(
-        "-q", "--question",
+        "-q",
+        "--question",
         help="Single question to answer (omit for interactive REPL).",
     )
     parser.add_argument(
@@ -709,12 +738,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Model name (provider-specific default if omitted).",
     )
     parser.add_argument(
-        "--stream", "-s",
+        "--stream",
+        "-s",
         action="store_true",
         help="Stream output tokens as they arrive (instead of printing all at once).",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Show tool calls and stop reasons.",
     )
@@ -725,10 +756,7 @@ def _repl(provider: str, model: str, verbose: bool, stream: bool) -> None:
     """Run the interactive REPL with conversation memory."""
     print("obs-agent — Multi-Cloud Cost Triage Agent")
     mode = "stream" if stream else "batch"
-    print(
-        f"Provider: {provider}  |  Model: {model}  |  Mode: {mode}  "
-        f"|  Type 'quit' to exit.\n"
-    )
+    print(f"Provider: {provider}  |  Model: {model}  |  Mode: {mode}  |  Type 'quit' to exit.\n")
     messages: list[dict] = []
     while True:
         try:
