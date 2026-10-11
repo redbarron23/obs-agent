@@ -140,6 +140,23 @@ Since [the harsh estate](../README.md#how-it-works) landed, those floors are che
 estate too — including that auto-apply precision stays ≥95% when the data is adversarial, and that
 the clean estate stays byte-identical so the published metrics keep meaning the same thing.
 
+## Test groups
+
+| Group | Tests | What's verified |
+|---|---|---|
+| Label inference (`test_labeling.py`) | 45 | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools, clean-estate stability and harsh-estate degradation |
+| Label review (`test_label_review.py`) | 45 | Reports, decision validation and persistence, table-edit diffing, export resolution and formats, label endpoints + auth, review page (headless) |
+| Tool logic (`test_tools.py`) | 34 | Top-N ranking, zero filtering, spike thresholds / platform filter / limit, cross-cloud totals, edge cases |
+| Agent loop (`test_agent.py`) | 16 | Simple answer, single/multi tool call, conversation memory, history pruning, empty/long questions, safety rails |
+| Provider abstraction | 10 | Stop reason mapping + content block parsing for Anthropic and OpenAI shapes |
+| Streaming | 7 | Streaming with/without tools, OpenAI-compatible streaming, stop-reason normalisation |
+| Message formatting | 3 | Canonical ↔ provider message conversion |
+| CLI parsing | 8 | All flags, defaults, combinations |
+| REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
+| Model config (`test_model_config.py`) | 32 | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
+| Evals (`test_evals.py`) | 17 | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
+| Observability (`test_observability.py`) | 6 | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent |
+
 ## CI
 
 `uv run pytest -q -m "not integration"` and `uv run evals.py --dry-run` run on every push and PR
