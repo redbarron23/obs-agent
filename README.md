@@ -3,8 +3,11 @@
 [![CI](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![Live demo](https://img.shields.io/badge/live%20demo-obs--agent.streamlit.app-FF4B4B?logo=streamlit&logoColor=white)](https://obs-agent.streamlit.app/Label_review)
 
 **About half of a typical cloud estate has missing or wrong cost tags, so nobody can say which team owns the spend.** obs-agent infers the missing `team` / `env` / `cost_center` tags across Azure subscriptions and GCP projects, flags the wrong ones, has a human approve the changes, and exports them ready to apply. It also answers cost questions in plain English through an LLM agent with tool calling.
+
+**[Try the live demo](https://obs-agent.streamlit.app/Label_review)**: no install or API key, synthetic data, and your review decisions stay private to your browser session. A sleeping app takes about 30 seconds to wake up.
 
 ![Reviewing inferred tags and exporting them](docs/label-review.gif)
 
@@ -276,7 +279,7 @@ Containers reach the host's Ollama through `host.docker.internal` (override with
 
 ### Hosted demo (Streamlit Community Cloud)
 
-The Label review page needs no LLM, so it can be hosted for free:
+Live at **https://obs-agent.streamlit.app** (Label review: [/Label_review](https://obs-agent.streamlit.app/Label_review)). The Label review page needs no LLM, so it can be hosted for free:
 
 1. Open [share.streamlit.io](https://share.streamlit.io) → **Create app** → repository `redbarron23/obs-agent`, branch `main`, main file `app.py`.
 2. **Advanced settings**: Python **3.12**, and under Secrets add `OBS_AGENT_DEMO = "1"`.
