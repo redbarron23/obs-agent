@@ -236,3 +236,112 @@ class TestLabelTools:
 
         names = {t["name"] for t in TOOL_DEFINITIONS}
         assert {"get_label_coverage", "suggest_labels"} <= names <= set(TOOL_DISPATCH)
+
+
+class TestEstateHardness:
+    """The two synthetic estates: clean is published, harsh is the stress test.
+
+    The clean estate is what the README's metrics describe, so it must not
+    move. The harsh one exists to show how the pipeline degrades on data it
+    was not tuned for, and to keep that story honest in CI.
+    """
+
+    def test_clean_estate_is_the_default(self):
+        from inventory import INVENTORY_DF, make_estate
+
+        pd.testing.assert_frame_equal(INVENTORY_DF, make_estate("clean"))
+
+    def test_clean_estate_shape_is_stable(self):
+        # Pinned because evals and tools assert against these exact values.
+        from inventory import INVENTORY_DF
+
+        assert len(INVENTORY_DF) == 320
+        assert INVENTORY_DF["team"].isna().sum() == 170
+        assert INVENTORY_DF["env"].isna().sum() == 168
+
+    def test_unknown_hardness_is_rejected(self):
+        from inventory import generate_inventory
+
+        with pytest.raises(ValueError):
+            generate_inventory(hardness="nope")
+
+    def test_harsh_estate_is_messier(self):
+        from inventory import INVENTORY_DF, make_estate
+
+        harsh = make_estate("harsh")
+        assert len(harsh) == len(INVENTORY_DF)
+        # More untagged, and more resources with no recorded owner.
+        assert harsh["team"].isna().sum() > INVENTORY_DF["team"].isna().sum()
+        assert (harsh["owners"].map(len) == 0).sum() > 0
+        assert (INVENTORY_DF["owners"].map(len) == 0).sum() == 0
+
+    def test_harsh_estate_keeps_the_same_schema(self):
+        from inventory import INVENTORY_DF, make_estate
+
+        harsh = make_estate("harsh")
+        # Same columns, same order as the published estate.
+        assert list(harsh.columns) == list(INVENTORY_DF.columns)
+        # Ground truth is still present, so the estate is still scoreable.
+        assert harsh["true_team"].notna().all()
+        assert harsh["true_env"].notna().all()
+
+    def test_estates_are_independent(self):
+        # Building the harsh estate must not disturb the published one.
+        from inventory import INVENTORY_DF, make_estate
+
+        before = INVENTORY_DF.copy()
+        make_estate("harsh")
+        pd.testing.assert_frame_equal(INVENTORY_DF, before)
+
+
+class TestDegradation:
+    """The harsh estate must actually be harder, and the report must say so."""
+
+    @pytest.fixture(scope="class")
+    def both(self):
+        from inventory import INVENTORY_DF, make_estate
+
+        return evaluate(INVENTORY_DF), evaluate(make_estate("harsh"))
+
+    def test_team_model_degrades_but_stays_useful(self, both):
+        clean, harsh = both
+        # Accuracy drops, but the model is still well above chance and covers
+        # every resource — that is the point of using it over rules.
+        assert harsh["team"]["model"]["accuracy"] < clean["team"]["model"]["accuracy"]
+        assert harsh["team"]["model"]["accuracy"] >= 0.75
+        assert harsh["team"]["model"]["coverage"] == 1.0
+
+    def test_rules_collapse_on_the_harsh_estate(self, both):
+        clean, harsh = both
+        # Parent/prefix inheritance depends on the hierarchy being tidy, which
+        # is exactly what the harsh estate breaks.
+        assert harsh["team"]["rules"]["accuracy"] < clean["team"]["rules"]["accuracy"]
+        assert harsh["team"]["rules"]["coverage"] < clean["team"]["rules"]["coverage"]
+
+    def test_auto_apply_stays_precise_on_the_harsh_estate(self, both):
+        # The safety property that matters in production: suggestions the
+        # pipeline is confident about remain trustworthy, even on messy data.
+        _, harsh = both
+        assert harsh["team"]["model"]["auto_precision"] >= 0.95
+
+    def test_degradation_report_renders(self, both, capsys=None):
+        from labeling import format_degradation
+
+        text = format_degradation(*both)
+        assert "Degradation: clean → harsh estate" in text
+        assert "team/model" in text
+
+
+class TestSuspectOnHarsh:
+    def test_mislabel_check_weakens_on_harsh_estate(self):
+        # A real finding: with overlapping vocabulary the out-of-fold check
+        # flags far fewer genuine mislabels, so it must not be trusted blindly.
+        from inventory import INVENTORY_DF, make_estate
+        from labeling import evaluate
+
+        clean = evaluate(INVENTORY_DF)
+        harsh = evaluate(make_estate("harsh"))
+        clean_caught = clean["team"]["mislabels"]["flagged_and_wrong"]
+        harsh_caught = harsh["team"]["mislabels"]["flagged_and_wrong"]
+        assert clean_caught >= 4
+        assert harsh_caught <= clean_caught
