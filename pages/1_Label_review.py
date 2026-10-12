@@ -50,7 +50,8 @@ st.title("🏷️ Label review")
 st.caption(
     "Suggested `team` / `env` tags for untagged Azure subscriptions and GCP projects, "
     f"plus existing tags the model thinks are wrong. Suggestions at ≥{AUTO_APPLY_THRESHOLD:.0%} "
-    "confidence are safe to auto-apply; everything else needs a human."
+    "confidence are eligible for expedited review; everything else needs an explicit "
+    "human decision."
 )
 
 if DEMO:
@@ -199,8 +200,8 @@ st.divider()
 st.subheader("Export")
 include_auto = st.checkbox(
     f"Include unreviewed auto-apply suggestions (≥{AUTO_APPLY_THRESHOLD:.0%})",
-    value=True,
-    help="Off: export only what a reviewer accepted or overrode.",
+    value=False,
+    help="Off by default: export only what a reviewer accepted or overrode.",
 )
 changes = pending_changes(store, include_auto)
 st.caption(
