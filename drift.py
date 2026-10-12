@@ -45,9 +45,7 @@ def detect_drift(
 
         old_spend, new_spend = float(old["avg_daily_cost"]), float(new["avg_daily_cost"])
         if old_spend and abs(new_spend - old_spend) / old_spend >= spend_change:
-            changes.append(
-                {"field": "avg_daily_cost", "previous": old_spend, "current": new_spend}
-            )
+            changes.append({"field": "avg_daily_cost", "previous": old_spend, "current": new_spend})
         for column in ("weekend_ratio", "cost_cv"):
             old_value, new_value = float(old[column]), float(new[column])
             if abs(new_value - old_value) >= shape_change:
