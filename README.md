@@ -213,8 +213,9 @@ repo responsible only for the step that needs a model.
 
 One gap worth stating plainly: these exports are not a reconciler. Applying the same file twice
 issues the same commands twice (harmless — the `az` path merges, and re-setting a value is a
-no-op), but nothing here notices when a tag that was correct last month is wrong now. That is
-drift, and detecting drift is Custodian's job, not this repo's.
+no-op). `drift.detect_drift(previous, current)` compares two inventory snapshots and returns
+resources whose hierarchy, owners, services or cost shape changed enough to need review; it does
+not collect inventory or mutate cloud tags.
 
 Decisions are stored in a SQLite database (`OBS_AGENT_DECISIONS`, default `label_decisions.db`,
 git-ignored). The API and UI share it safely across processes, so a decision made in one shows up
@@ -438,6 +439,7 @@ flowchart TD
 |---|---|
 | `inventory.py` | Synthetic estate with true *and* observed labels, plus `clean`/`harsh` hardness profiles, so inference can be scored against ground truth and stressed on messy data |
 | `labeling.py` | Cleaning, rules baseline, logistic-regression model, out-of-fold mislabel check, evaluation |
+| `drift.py` | Snapshot comparison that identifies resources needing a renewed label review |
 | `label_review.py` | Review reports, decision store, and CSV / `az`+`gcloud` / tfvars export |
 
 `BEST_STRATEGY` in `labeling.py` picks rules for `env` and the model for `team`, and the reason is
@@ -453,6 +455,7 @@ The agent side of the repo (`agent.py`, `providers.py`, `tools.py`, `data.py`, `
 ```
 obs-agent/
 ├── labeling.py           # Tag inference: cleaning, rules, model, mislabel check, evaluation
+├── drift.py              # Snapshot drift detection for renewed label review
 ├── inventory.py          # Synthetic inventory (clean + harsh estates) with true vs observed labels
 ├── label_review.py       # Review reports, decision store, CSV / az+gcloud / tfvars export
 ├── pages/
