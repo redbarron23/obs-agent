@@ -20,6 +20,7 @@ UNTAGGED = "svc-ingest"  # no team/env tag; team → data-platform
 SUSPECT = "api-login-d-ew1"  # tagged security, really identity
 AUTO_ENV = "platform-backend-poc-uc1"  # env untagged, 'poc' → sandbox at 95%
 REVIEW_PAGE = Path(__file__).parent.parent / "pages" / "1_Label_review.py"
+FEEDBACK_FIXTURE = Path(__file__).parent.parent / "fixtures" / "anonymized_review_feedback.json"
 
 
 def _override_team(path: Path, resource_id: str) -> None:
@@ -126,6 +127,64 @@ class TestDecisions:
         assert feedback[0]["confidence"] == report["confidence"]
         assert feedback[0]["reason"] == report["reason"]
         assert feedback[1]["value"] == "ml"
+
+    def test_feedback_metrics_tracks_reviewer_agreement_by_month(self):
+        feedback = [
+            {
+                "resource_id": "az-01",
+                "label": "team",
+                "decision": "accept",
+                "value": "payments",
+                "suggested": "payments",
+                "previous": None,
+                "decided_at": "2026-01-05T12:00:00+00:00",
+            },
+            {
+                "resource_id": "az-02",
+                "label": "team",
+                "decision": "override",
+                "value": "identity",
+                "suggested": "security",
+                "previous": None,
+                "decided_at": "2026-02-05T12:00:00+00:00",
+            },
+            {
+                "resource_id": "az-03",
+                "label": "team",
+                "decision": "reject",
+                "value": None,
+                "suggested": "security",
+                "previous": "identity",
+                "decided_at": "2026-02-06T12:00:00+00:00",
+            },
+            {
+                "resource_id": "az-04",
+                "label": "env",
+                "decision": "reject",
+                "value": None,
+                "suggested": "prod",
+                "previous": None,
+                "decided_at": "2026-02-06T12:00:00+00:00",
+            },
+        ]
+
+        metrics = lr.feedback_metrics(feedback)
+
+        assert metrics["reviewed"] == 4 and metrics["scored"] == 3
+        assert metrics["unresolved"] == 1
+        assert metrics["labels"]["team"]["precision"] == 0.333
+        assert metrics["labels"]["team"]["recall"] == 0.333
+        assert [p["period"] for p in metrics["labels"]["team"]["periods"]] == [
+            "2026-01",
+            "2026-02",
+        ]
+
+    def test_anonymized_feedback_fixture_matches_metric_contract(self):
+        metrics = lr.feedback_metrics(json.loads(FEEDBACK_FIXTURE.read_text()))
+        assert metrics["reviewed"] == 8
+        assert metrics["scored"] == 7
+        assert metrics["unresolved"] == 1
+        assert set(metrics["labels"]) == {"team", "env"}
 
     def test_imports_legacy_json(self, tmp_path):
         legacy = tmp_path / "decisions.json"
@@ -267,6 +326,12 @@ class TestLabelAPI:
         assert feedback[0]["confidence"] is not None
         assert client.delete(url).status_code == 200
         assert client.delete(url).status_code == 404
+
+    def test_feedback_metrics(self, client):
+        client.put(f"/resources/{UNTAGGED}/labels/team/decision", json={"decision": "accept"})
+        report = client.get("/labels/feedback/metrics")
+        assert report.status_code == 200
+        assert report.json()["labels"]["team"]["scored"] == 1
 
     def test_decision_errors(self, client):
         url = f"/resources/{UNTAGGED}/labels/team/decision"

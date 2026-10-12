@@ -1,0 +1,10 @@
+[
+  {"resource_id": "az-7f3c8a", "label": "team", "decision": "accept", "value": "payments", "suggested": "payments", "previous": null, "confidence": 0.94, "source": "model", "reason": "anonymized review sample", "decided_at": "2026-01-08T10:15:00+00:00"},
+  {"resource_id": "gcp-01b6d2", "label": "team", "decision": "override", "value": "data-platform", "suggested": "ml", "previous": null, "confidence": 0.72, "source": "model", "reason": "anonymized review sample", "decided_at": "2026-01-11T14:30:00+00:00"},
+  {"resource_id": "az-93ad51", "label": "env", "decision": "accept", "value": "prod", "suggested": "prod", "previous": null, "confidence": 0.95, "source": "rule:name", "reason": "anonymized review sample", "decided_at": "2026-01-12T09:00:00+00:00"},
+  {"resource_id": "gcp-34e2f7", "label": "team", "decision": "reject", "value": null, "suggested": "security", "previous": "identity", "confidence": 0.82, "source": "out-of-fold model", "reason": "anonymized review sample", "decided_at": "2026-02-03T11:00:00+00:00"},
+  {"resource_id": "az-cc84e9", "label": "env", "decision": "override", "value": "staging", "suggested": "prod", "previous": null, "confidence": 0.61, "source": "model", "reason": "anonymized review sample", "decided_at": "2026-02-10T15:45:00+00:00"},
+  {"resource_id": "gcp-66fa20", "label": "team", "decision": "accept", "value": "web", "suggested": "web", "previous": null, "confidence": 0.91, "source": "model", "reason": "anonymized review sample", "decided_at": "2026-02-16T08:20:00+00:00"},
+  {"resource_id": "az-e19b4d", "label": "env", "decision": "reject", "value": null, "suggested": "dev", "previous": "prod", "confidence": 0.77, "source": "out-of-fold model", "reason": "anonymized review sample", "decided_at": "2026-03-05T13:10:00+00:00"},
+  {"resource_id": "gcp-b72d3e", "label": "team", "decision": "reject", "value": null, "suggested": "finance-apps", "previous": null, "confidence": 0.55, "source": "model", "reason": "anonymized review sample", "decided_at": "2026-03-09T16:35:00+00:00"}
+]
