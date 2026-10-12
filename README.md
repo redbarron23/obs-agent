@@ -34,7 +34,8 @@ while auto-apply precision holds at 100% ([details](#how-it-works)).
   folders / management groups, owners, services and spend shape — with a reason and a confidence
   for every suggestion.
 - **Human in the loop**: a review queue in the web UI and REST API; accept, reject or override;
-  export as an `az` / `gcloud` script, Terraform tfvars or CSV.
+  retain each reviewer action with the model's suggestion, confidence and explanation; export as an
+  `az` / `gcloud` script, Terraform tfvars or CSV.
 - **Second feature — cost Q&A agent**: *"Which Azure subscription has the highest overage?"*
   answered by tool calls over billing data. See [docs/agent.md](docs/agent.md).
 - **Engineering**: ground-truth eval harness, 200+ tests, CI on Python 3.10–3.12,

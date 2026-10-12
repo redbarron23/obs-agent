@@ -5,8 +5,8 @@ Human-in-the-loop label review on top of labeling.py.
                      reasons, suspected-wrong flags (shared by the agent
                      tool, the REST API and the Streamlit review page)
   review_queue()     every resource with an untagged or suspect label
-  DecisionStore      reviewer decisions (accept / reject / override),
-                     persisted as JSON so the API and UI share them
+  DecisionStore      reviewer decisions (accept / reject / override), with an
+                     append-only feedback trail shared by the API and UI
   export_*()         resolved label changes as CSV, a shell script of
                      az / gcloud commands, or a Terraform tfvars map
 
@@ -226,6 +226,23 @@ class DecisionStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS review_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    resource_id TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    value TEXT,
+                    suggested TEXT,
+                    previous TEXT,
+                    confidence REAL,
+                    source TEXT,
+                    reason TEXT,
+                    decided_at TEXT NOT NULL
+                )
+                """
+            )
             if is_new and self._legacy_path.exists():
                 for entry in json.loads(self._legacy_path.read_text()):
                     conn.execute(
@@ -251,6 +268,12 @@ class DecisionStore:
                 "SELECT * FROM decisions WHERE resource_id = ? AND label = ?", (resource_id, label)
             ).fetchone()
             return dict(row) if row else None
+
+    def feedback(self) -> list[dict]:
+        """All reviewer actions with the model snapshot they were based on."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM review_feedback ORDER BY id")
+            return [dict(row) for row in rows]
 
     def set(self, resource_id: str, label: str, decision: str, value: str | None = None) -> dict:
         report = resource_report(resource_id)
@@ -279,6 +302,11 @@ class DecisionStore:
             "previous": lr["current"],
             "decided_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
+        feedback = entry | {
+            "confidence": lr["confidence"],
+            "source": lr["source"],
+            "reason": lr["reason"],
+        }
         with self._connect() as conn:
             conn.execute(
                 """
@@ -293,6 +321,16 @@ class DecisionStore:
                     decided_at = excluded.decided_at
                 """,
                 entry,
+            )
+            conn.execute(
+                """
+                INSERT INTO review_feedback
+                (resource_id, label, decision, value, suggested, previous,
+                 confidence, source, reason, decided_at)
+                VALUES (:resource_id, :label, :decision, :value, :suggested, :previous,
+                        :confidence, :source, :reason, :decided_at)
+                """,
+                feedback,
             )
         return entry
 
