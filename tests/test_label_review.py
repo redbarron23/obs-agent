@@ -115,6 +115,18 @@ class TestDecisions:
         store.set(UNTAGGED, "team", "accept")
         assert DecisionStore(store.path).get(UNTAGGED, "team")["value"] == "data-platform"
 
+    def test_feedback_retains_the_model_context_for_each_action(self, store):
+        report = lr.resource_report(UNTAGGED)["labels"]["team"]
+        store.set(UNTAGGED, "team", "accept")
+        store.set(UNTAGGED, "team", "override", "ml")
+
+        feedback = store.feedback()
+        assert [entry["decision"] for entry in feedback] == ["accept", "override"]
+        assert feedback[0]["suggested"] == report["suggested"]
+        assert feedback[0]["confidence"] == report["confidence"]
+        assert feedback[0]["reason"] == report["reason"]
+        assert feedback[1]["value"] == "ml"
+
     def test_imports_legacy_json(self, tmp_path):
         legacy = tmp_path / "decisions.json"
         legacy.write_text(
@@ -240,6 +252,9 @@ class TestLabelAPI:
         url = f"/resources/{UNTAGGED}/labels/team/decision"
         assert client.put(url, json={"decision": "accept"}).json()["value"] == "data-platform"
         assert len(client.get("/labels/decisions").json()) == 1
+        feedback = client.get("/labels/feedback").json()
+        assert feedback[0]["suggested"] == "data-platform"
+        assert feedback[0]["confidence"] is not None
         assert client.delete(url).status_code == 200
         assert client.delete(url).status_code == 404
 

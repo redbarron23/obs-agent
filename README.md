@@ -34,7 +34,8 @@ while auto-apply precision holds at 100% ([details](#how-it-works)).
   folders / management groups, owners, services and spend shape — with a reason and a confidence
   for every suggestion.
 - **Human in the loop**: a review queue in the web UI and REST API; accept, reject or override;
-  export as an `az` / `gcloud` script, Terraform tfvars or CSV.
+  retain each reviewer action with the model's suggestion, confidence and explanation; export as an
+  `az` / `gcloud` script, Terraform tfvars or CSV.
 - **Second feature — cost Q&A agent**: *"Which Azure subscription has the highest overage?"*
   answered by tool calls over billing data. See [docs/agent.md](docs/agent.md).
 - **Engineering**: ground-truth eval harness, 200+ tests, CI on Python 3.10–3.12,
@@ -148,8 +149,9 @@ The numbers above are from the **clean** estate, which is deliberately tidy — 
 owners map more neatly onto teams than a real estate's would. So `inventory.py` also builds a
 **harsh** estate (`uv run labeling.py --hardness both`) with the failure modes a real, ungoverned
 estate has: shared naming vocabulary, missing owners, reorg-shuffled parents, and fewer resources
-whose name carries an `env` token. Scored against the same ground truth, the drop is what to
-expect before measuring on your own data:
+whose name carries an `env` token. A separate **reorg** scenario (`uv run labeling.py --hardness reorg`)
+isolates stale parent groups while retaining useful names and owners. Scored against the same ground
+truth, the drop is what to expect before measuring on your own data:
 
 | team / model | clean | harsh | delta |
 |---|---|---|---|
@@ -211,8 +213,9 @@ repo responsible only for the step that needs a model.
 
 One gap worth stating plainly: these exports are not a reconciler. Applying the same file twice
 issues the same commands twice (harmless — the `az` path merges, and re-setting a value is a
-no-op), but nothing here notices when a tag that was correct last month is wrong now. That is
-drift, and detecting drift is Custodian's job, not this repo's.
+no-op). `drift.detect_drift(previous, current)` compares two inventory snapshots and returns
+resources whose hierarchy, owners, services or cost shape changed enough to need review; it does
+not collect inventory or mutate cloud tags.
 
 Decisions are stored in a SQLite database (`OBS_AGENT_DECISIONS`, default `label_decisions.db`,
 git-ignored). The API and UI share it safely across processes, so a decision made in one shows up
@@ -281,9 +284,12 @@ streaming, conversation memory, the CLI, provider support and sample conversatio
 `uv run labeling.py` prints the strategy comparison table shown in [How it works](#how-it-works);
 add `--hardness both` to score the clean and harsh estates side by side with the degradation table.
 The inventory keeps true labels beside observed ones, so every strategy — rules, model, hybrid and
-the mislabel check — is scored honestly. `tests/test_labeling.py` pins accuracy and precision
-floors against that ground truth, so a regression in the model fails CI rather than quietly
-changing the README's numbers.
+the mislabel check — is scored honestly. Its report also includes expected calibration error (ECE):
+the gap between a confidence score and observed accuracy, where lower is better. The synthetic
+estate has an explicit calibration budget; a production calibrator should be fitted only from a
+reviewed sample of currently unlabelled resources, not from the biased already-tagged subset.
+`tests/test_labeling.py` pins accuracy, precision and calibration floors against that ground truth,
+so a regression in the model fails CI rather than quietly changing the README's numbers.
 
 ### Agent evals
 
@@ -433,6 +439,7 @@ flowchart TD
 |---|---|
 | `inventory.py` | Synthetic estate with true *and* observed labels, plus `clean`/`harsh` hardness profiles, so inference can be scored against ground truth and stressed on messy data |
 | `labeling.py` | Cleaning, rules baseline, logistic-regression model, out-of-fold mislabel check, evaluation |
+| `drift.py` | Snapshot comparison that identifies resources needing a renewed label review |
 | `label_review.py` | Review reports, decision store, and CSV / `az`+`gcloud` / tfvars export |
 
 `BEST_STRATEGY` in `labeling.py` picks rules for `env` and the model for `team`, and the reason is
@@ -448,6 +455,7 @@ The agent side of the repo (`agent.py`, `providers.py`, `tools.py`, `data.py`, `
 ```
 obs-agent/
 ├── labeling.py           # Tag inference: cleaning, rules, model, mislabel check, evaluation
+├── drift.py              # Snapshot drift detection for renewed label review
 ├── inventory.py          # Synthetic inventory (clean + harsh estates) with true vs observed labels
 ├── label_review.py       # Review reports, decision store, CSV / az+gcloud / tfvars export
 ├── pages/

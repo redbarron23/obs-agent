@@ -519,6 +519,13 @@ class Decision(BaseModel):
     decided_at: str
 
 
+class ReviewFeedback(Decision):
+    id: int
+    confidence: float | None
+    source: str | None
+    reason: str | None
+
+
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Unknown resource."}}
 
 
@@ -632,6 +639,20 @@ def delete_decision(resource_id: str, label: LabelName) -> dict:
 )
 def list_decisions() -> list[dict]:
     return decisions.all()
+
+
+@app.get(
+    "/labels/feedback",
+    response_model=list[ReviewFeedback],
+    dependencies=[Depends(require_api_key)],
+    summary="Reviewer feedback with model context",
+    description="Append-only review actions, including the suggestion, confidence and explanation "
+    "shown when each decision was made.",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401]},
+)
+def list_feedback() -> list[dict]:
+    return decisions.feedback()
 
 
 EXPORT_MEDIA = {"csv": "text/csv", "sh": "text/x-shellscript", "tfvars": "application/json"}

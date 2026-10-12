@@ -45,6 +45,7 @@ BEST_STRATEGY = {"team": "model", "env": "hybrid"}
 
 # Confidence above which a suggestion would be applied without review.
 AUTO_APPLY_THRESHOLD = 0.9
+CALIBRATION_BINS = 10
 
 # ── Cleaning ───────────────────────────────────────────────────────────
 # Built by eyeballing value_counts() of the raw tags — the unglamorous
@@ -325,6 +326,27 @@ def get_suspects(label: str) -> pd.DataFrame:
 # ── Evaluation against ground truth ────────────────────────────────────
 
 
+def expected_calibration_error(
+    predicted: pd.Series,
+    confidence: pd.Series,
+    truth: pd.Series,
+    bins: int = CALIBRATION_BINS,
+) -> float:
+    """Return the confidence-weighted gap between predicted and observed accuracy."""
+    covered = predicted.notna()
+    if not covered.any():
+        return 0.0
+    conf = confidence[covered]
+    correct = (predicted[covered] == truth[covered]).astype(float)
+    ece = 0.0
+    edges = np.linspace(0, 1, bins + 1)
+    for lower, upper in zip(edges[:-1], edges[1:], strict=False):
+        members = (conf > lower) & (conf <= upper)
+        if members.any():
+            ece += members.mean() * abs(conf[members].mean() - correct[members].mean())
+    return float(ece)
+
+
 def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
     """Score every strategy on the unlabelled resources.
 
@@ -334,6 +356,7 @@ def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
                     on the suggested rows
     auto_coverage   share with confidence >= AUTO_APPLY_THRESHOLD
     auto_precision  accuracy on that auto-applied slice
+    ece             expected calibration error (lower is better)
     top3            true label among the model's top 3 (model only)
     """
     inf = LabelInference(inventory)
@@ -356,6 +379,7 @@ def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
                 else 0.0,
                 "auto_coverage": auto.mean(),
                 "auto_precision": (pred[auto] == truth[auto]).mean() if auto.any() else 0.0,
+                "ece": expected_calibration_error(pred, conf, truth),
             }
             if strategy == "model":
                 m["top3"] = float(
@@ -389,7 +413,7 @@ def format_report(results: dict) -> str:
         lines += [
             f"\n{label.upper()}  ({r['n_unlabelled']} unlabelled after cleaning)",
             f"  {'strategy':8} {'coverage':>9} {'accuracy':>9} {'macroF1':>8} "
-            f"{'auto≥' + str(AUTO_APPLY_THRESHOLD):>8} {'auto-prec':>10} {'top3':>6}",
+            f"{'auto≥' + str(AUTO_APPLY_THRESHOLD):>8} {'auto-prec':>10} {'ECE':>6} {'top3':>6}",
         ]
         for strategy in ("rules", "model", "hybrid"):
             m = r[strategy]
@@ -397,7 +421,7 @@ def format_report(results: dict) -> str:
             lines.append(
                 f"  {strategy:8} {m['coverage']:>9.0%} {m['accuracy']:>9.0%} "
                 f"{m['macro_f1']:>8.2f} {m['auto_coverage']:>8.0%} "
-                f"{m['auto_precision']:>10.0%} {top3:>6}"
+                f"{m['auto_precision']:>10.0%} {m['ece']:>6.1%} {top3:>6}"
             )
         ml = r["mislabels"]
         lines.append(
@@ -420,7 +444,7 @@ def format_degradation(clean: dict, harsh: dict) -> str:
     for label in LABELS:
         strategy = BEST_STRATEGY[label]
         c, h = clean[label][strategy], harsh[label][strategy]
-        for key in ("coverage", "accuracy", "macro_f1", "auto_coverage", "auto_precision"):
+        for key in ("coverage", "accuracy", "macro_f1", "auto_coverage", "auto_precision", "ece"):
             delta = h[key] - c[key]
             if key == "macro_f1":
                 c_s, h_s, d_s = f"{c[key]:.2f}", f"{h[key]:.2f}", f"{delta:+.2f}"
@@ -442,7 +466,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Score label inference against ground truth.")
     ap.add_argument(
         "--hardness",
-        choices=("clean", "harsh", "both"),
+        choices=("clean", "harsh", "reorg", "both"),
         default="clean",
         help="which synthetic estate to score (default: clean, the published one)",
     )
@@ -467,6 +491,13 @@ if __name__ == "__main__":
             clean_ok = clean(harsh_df)[f"{label}_clean"].notna().mean()
             print(f"  {label}: {raw_ok:.0%} usable as-is → {clean_ok:.0%} usable after cleaning")
         print(format_report(evaluate(harsh_df)))
+
+    if args.hardness == "reorg":
+        from inventory import make_estate
+
+        reorg_df = make_estate("reorg")
+        print(f"Inventory (reorg): {len(reorg_df)} resources")
+        print(format_report(evaluate(reorg_df)))
 
     if args.hardness == "both":
         print(format_degradation(evaluate(INVENTORY_DF), evaluate(make_estate("harsh"))))
