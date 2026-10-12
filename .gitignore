@@ -25,6 +25,7 @@ Thumbs.db
 .env
 label_decisions.json
 label_decisions.db
+TBD.md
 
 # MLflow (optional tracing / eval runs)
 mlflow.db
