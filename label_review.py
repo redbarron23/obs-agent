@@ -40,7 +40,7 @@ from labeling import (
 
 STATUSES = ("ok", "untagged", "suspect")
 DECISIONS = ("accept", "reject", "override")
-EXPORT_FORMATS = ("csv", "sh", "tfvars")
+EXPORT_FORMATS = ("csv", "sh", "tfvars", "plan")
 
 DEFAULT_DECISIONS_PATH = "label_decisions.db"
 
@@ -419,9 +419,42 @@ def _gcp_value(value: str) -> str:
     return value.lower()
 
 
+def approved_change_plan(store: DecisionStore) -> dict:
+    """An auditable, reviewed-only change set for approval before application."""
+    decisions = {f"{d['resource_id']}|{d['label']}": d for d in store.all()}
+    feedback = {f"{d['resource_id']}|{d['label']}": d for d in store.feedback()}
+    changes = pending_changes(store, include_auto=False)
+    approvals = []
+    for change in changes:
+        for label in change["tags"]:
+            decision_label = "team" if label == "cost_center" else label
+            key = f"{change['resource_id']}|{decision_label}"
+            if key in decisions and key in feedback and feedback[key] not in approvals:
+                approvals.append(feedback[key])
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "reviewed_only": True,
+        "changes": [
+            {
+                "resource_id": change["resource_id"],
+                "cloud": change["cloud"],
+                "tags": {
+                    label: {"previous": change["previous"][label], "new": value, "how": how}
+                    for label, (value, how) in change["tags"].items()
+                },
+            }
+            for change in changes
+        ],
+        "approvals": approvals,
+    }
+
+
 def export(store: DecisionStore, fmt: str, include_auto: bool = True) -> str:
     if fmt not in EXPORT_FORMATS:
         raise ValueError(f"Unknown format '{fmt}'. Choose from {list(EXPORT_FORMATS)}.")
+    if fmt == "plan":
+        return json.dumps(approved_change_plan(store), indent=2) + "\n"
     changes = pending_changes(store, include_auto)
     if fmt == "csv":
         buf = io.StringIO()

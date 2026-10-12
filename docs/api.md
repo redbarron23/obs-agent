@@ -39,7 +39,8 @@ The ones the review UI is built on, and the ones that need no LLM:
 | `GET /resources/{id}/labels` | Current tags, suggestions, confidence, reasons and alternatives for one resource |
 | `PUT` / `DELETE /resources/{id}/labels/{label}/decision` | Record (`accept` / `reject` / `override` + `value`) or undo a review decision |
 | `GET /labels/decisions` | All recorded decisions |
-| `GET /labels/export?format=csv\|sh\|tfvars` | Resolved changes as a download; `include_auto=false` exports reviewed decisions only |
+| `GET /labels/feedback` | Append-only reviewer actions with their model context |
+| `GET /labels/export?format=csv\|sh\|tfvars\|plan` | Resolved changes as a download; `plan` is reviewed-only and includes approval evidence |
 
 ### Agent endpoints
 

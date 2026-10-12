@@ -35,7 +35,7 @@ while auto-apply precision holds at 100% ([details](#how-it-works)).
   for every suggestion.
 - **Human in the loop**: a review queue in the web UI and REST API; accept, reject or override;
   retain each reviewer action with the model's suggestion, confidence and explanation; export as an
-  `az` / `gcloud` script, Terraform tfvars or CSV.
+  auditable reviewed-only change plan, `az` / `gcloud` script, Terraform tfvars or CSV.
 - **Second feature — cost Q&A agent**: *"Which Azure subscription has the highest overage?"*
   answered by tool calls over billing data. See [docs/agent.md](docs/agent.md).
 - **Engineering**: ground-truth eval harness, 200+ tests, CI on Python 3.10–3.12,
@@ -203,6 +203,11 @@ The three export formats map onto the three ways teams apply tags:
 All three carry only the changes a human resolved (or that cleared the 90% auto-apply bar, if you
 keep `include_auto=true`), so the diff is the review — you are never applying an unreviewed
 inference.
+
+For a safer handoff, download the **Reviewed change plan** first. It is JSON containing only
+accepted or overridden changes, the before/after tag diff, and the reviewer/model evidence. Review
+and approve that artifact before producing a Terraform or shell export; obs-agent never calls a
+cloud API or applies tags itself.
 
 **Composing with enforcement tools.** Once the gaps are filled, tools like
 [Cloud Custodian](https://github.com/cloud-custodian/cloud-custodian) and
