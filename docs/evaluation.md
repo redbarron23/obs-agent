@@ -16,6 +16,25 @@ Synthetic evaluation is necessary but insufficient. In production, validate the 
 reviewed sample of unlabelled resources, then use reviewer feedback to monitor calibration and
 retrain only when enough representative data exists.
 
+## Anonymized review fixture and post-review metrics
+
+[`fixtures/anonymized_review_feedback.json`](../fixtures/anonymized_review_feedback.json) is a
+small, hand-curated production-style sample with opaque resource IDs and no people, account IDs,
+or billing data. It exercises the feedback-reporting contract without claiming to be a production
+benchmark. Replace it with an approved, anonymized export before drawing conclusions about a real
+estate.
+
+Every review action retains the original suggestion and the reviewer outcome. `GET
+/labels/feedback/metrics` reports macro precision, recall, and F1 against the reviewer-resolved
+value, grouped by label and month. An accept or override supplies that value; a rejection of an
+already-tagged resource uses its prior label. Rejecting an untagged suggestion is **unresolved**,
+not a false label, because no replacement truth was supplied.
+
+These are reviewer-agreement metrics, not an unbiased production benchmark: reviewers choose what
+to inspect, and repeated decisions are retained as historical events. Track the `reviewed`,
+`scored`, and `unresolved` counts with the scores; do not compare periods with too little reviewed
+data.
+
 ## Cost-agent evaluations
 
 The agent has three complementary layers:

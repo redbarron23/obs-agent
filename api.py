@@ -655,6 +655,20 @@ def list_feedback() -> list[dict]:
     return decisions.feedback()
 
 
+@app.get(
+    "/labels/feedback/metrics",
+    dependencies=[Depends(require_api_key)],
+    summary="Reviewer-agreement metrics over time",
+    description="Macro precision, recall, and F1 of suggestions against reviewer-resolved labels, "
+    "grouped by label and calendar month. Untagged rejections are reported as unresolved because "
+    "they supply no replacement truth.",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401]},
+)
+def feedback_metric_report() -> dict:
+    return label_review.feedback_metrics(decisions.feedback())
+
+
 EXPORT_MEDIA = {
     "csv": "text/csv",
     "sh": "text/x-shellscript",

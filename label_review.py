@@ -366,6 +366,74 @@ def editor_changes(
     return out
 
 
+# ── Post-review quality ───────────────────────────────────────────────
+
+
+def _resolved_feedback_value(entry: dict) -> str | None:
+    """Reviewer-selected label value, when the decision establishes one."""
+    if entry["decision"] in ("accept", "override"):
+        return entry["value"]
+    if entry["decision"] == "reject":
+        return entry["previous"]
+    return None
+
+
+def _agreement_scores(rows: list[dict]) -> dict:
+    """Macro precision/recall against reviewer-resolved labels."""
+    if not rows:
+        return {"scored": 0, "precision": 0.0, "recall": 0.0, "macro_f1": 0.0}
+    values = sorted({r["suggested"] for r in rows} | {r["resolved"] for r in rows})
+    precision, recall, f1 = [], [], []
+    for value in values:
+        tp = sum(r["suggested"] == value and r["resolved"] == value for r in rows)
+        predicted = sum(r["suggested"] == value for r in rows)
+        actual = sum(r["resolved"] == value for r in rows)
+        p = tp / predicted if predicted else 0.0
+        r = tp / actual if actual else 0.0
+        precision.append(p)
+        recall.append(r)
+        f1.append(2 * p * r / (p + r) if p + r else 0.0)
+    return {
+        "scored": len(rows),
+        "precision": round(sum(precision) / len(precision), 3),
+        "recall": round(sum(recall) / len(recall), 3),
+        "macro_f1": round(sum(f1) / len(f1), 3),
+    }
+
+
+def feedback_metrics(feedback: list[dict]) -> dict:
+    """Summarise model agreement with reviewer decisions, overall and by month.
+
+    An accepted or overridden value is the reviewer's resolved label. A rejected
+    suggestion can be scored only when the resource already had a usable label;
+    rejecting an untagged suggestion supplies no replacement truth.
+    """
+    result = {"reviewed": len(feedback), "scored": 0, "unresolved": 0, "labels": {}}
+    for label in LABELS:
+        entries = [entry for entry in feedback if entry["label"] == label]
+        rows = [
+            {
+                "suggested": entry["suggested"],
+                "resolved": _resolved_feedback_value(entry),
+                "period": entry["decided_at"][:7],
+            }
+            for entry in entries
+            if entry["suggested"] and _resolved_feedback_value(entry)
+        ]
+        summary = _agreement_scores(rows)
+        summary["reviewed"] = len(entries)
+        summary["unresolved"] = len(entries) - len(rows)
+        periods = []
+        for period in sorted({row["period"] for row in rows}):
+            period_rows = [row for row in rows if row["period"] == period]
+            periods.append({"period": period} | _agreement_scores(period_rows))
+        summary["periods"] = periods
+        result["labels"][label] = summary
+        result["scored"] += summary["scored"]
+        result["unresolved"] += summary["unresolved"]
+    return result
+
+
 # ── Resolution and export ──────────────────────────────────────────────
 
 
