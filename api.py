@@ -655,11 +655,17 @@ def list_feedback() -> list[dict]:
     return decisions.feedback()
 
 
-EXPORT_MEDIA = {"csv": "text/csv", "sh": "text/x-shellscript", "tfvars": "application/json"}
+EXPORT_MEDIA = {
+    "csv": "text/csv",
+    "sh": "text/x-shellscript",
+    "tfvars": "application/json",
+    "plan": "application/json",
+}
 EXPORT_FILENAME = {
     "csv": "label-changes.csv",
     "sh": "apply-labels.sh",
     "tfvars": "labels.auto.tfvars.json",
+    "plan": "approved-label-change-plan.json",
 }
 
 
@@ -670,13 +676,14 @@ EXPORT_FILENAME = {
     summary="Export label changes",
     description="Every resource whose resolved tags differ from today's: reviewer "
     "overrides, then accepts, then (if `include_auto`) suggestions at or "
-    "above the auto-apply threshold. `sh` emits `az tag update` / "
-    "`gcloud projects update` commands; `tfvars` a map for Terraform.",
+    "above the auto-apply threshold. `plan` is always reviewed-only and includes "
+    "the approval evidence; `sh` emits `az tag update` / `gcloud projects update` "
+    "commands; `tfvars` a map for Terraform.",
     tags=["labels"],
     responses={200: {"content": {m: {} for m in EXPORT_MEDIA.values()}}, 401: ERROR_RESPONSES[401]},
 )
 def export_labels(
-    format: Literal["csv", "sh", "tfvars"] = Query(default="csv"),
+    format: Literal["csv", "sh", "tfvars", "plan"] = Query(default="csv"),
     include_auto: bool = Query(default=True),
 ) -> PlainTextResponse:
     body = label_review.export(decisions, format, include_auto)

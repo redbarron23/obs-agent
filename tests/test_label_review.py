@@ -211,6 +211,16 @@ class TestExport:
         assert tf["subscription_tags"][UNTAGGED]["cost_center"] == "CC-2002"
         assert tf["project_labels"][AUTO_ENV] == {"env": "sandbox"}
 
+    def test_change_plan_is_reviewed_only_and_has_approval_evidence(self, store):
+        store.set(UNTAGGED, "team", "accept")
+
+        plan = json.loads(lr.export(store, "plan", include_auto=True))
+
+        assert plan["reviewed_only"] is True
+        assert [change["resource_id"] for change in plan["changes"]] == [UNTAGGED]
+        assert plan["changes"][0]["tags"]["team"]["new"] == "data-platform"
+        assert plan["approvals"][0]["confidence"] is not None
+
     def test_gcp_values_lowercased(self, store):
         gcp_untagged = next(
             r["resource_id"] for r in lr.review_queue(label="team", status="untagged", cloud="gcp")
@@ -280,6 +290,7 @@ class TestLabelAPI:
             ("csv", "text/csv", "label-changes.csv"),
             ("sh", "text/x-shellscript", "apply-labels.sh"),
             ("tfvars", "application/json", "labels.auto.tfvars.json"),
+            ("plan", "application/json", "approved-label-change-plan.json"),
         ],
     )
     def test_export(self, client, fmt, media, filename):

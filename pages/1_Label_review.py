@@ -208,8 +208,17 @@ st.caption(
     "accepts over auto-apply; rejected suggestions are never exported."
 )
 
-c1, c2, c3 = st.columns(3)
+c1, c2, c3, c4 = st.columns(4)
 c1.download_button(
+    "Reviewed change plan",
+    export(store, "plan"),
+    "approved-label-change-plan.json",
+    "application/json",
+    help="Reviewed decisions only, with the before/after diff and approval evidence.",
+    icon=":material/fact_check:",
+    disabled=not pending_changes(store, include_auto=False),
+)
+c2.download_button(
     "CSV",
     export(store, "csv", include_auto),
     "label-changes.csv",
@@ -217,7 +226,7 @@ c1.download_button(
     icon=":material/download:",
     disabled=not changes,
 )
-c2.download_button(
+c3.download_button(
     "az / gcloud script",
     export(store, "sh", include_auto),
     "apply-labels.sh",
@@ -225,7 +234,7 @@ c2.download_button(
     icon=":material/download:",
     disabled=not changes,
 )
-c3.download_button(
+c4.download_button(
     "Terraform tfvars",
     export(store, "tfvars", include_auto),
     "labels.auto.tfvars.json",
