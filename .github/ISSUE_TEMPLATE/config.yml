@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: General feedback or questions
+    url: https://github.com/redbarron23/obs-agent/discussions/26
+    about: Not a specific finding? Reply in the "Feedback wanted" discussion.

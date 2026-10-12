@@ -14,6 +14,10 @@ the changes, and exports them ready to apply as `az` / `gcloud` commands or Terr
 synthetic data, and your review decisions stay private to your browser session. A sleeping app
 takes about 30 seconds to wake up.
 
+**Reviews welcome.** I'd value honest feedback: start with the
+[four questions in the feedback thread](https://github.com/redbarron23/obs-agent/discussions/26),
+or use the [reviewer guide](docs/reviewing.md) to go straight to the claims that matter.
+
 ![Reviewing inferred tags and exporting them](docs/label-review.gif)
 
 | On a synthetic estate of 320 subscriptions / projects, scored against ground truth | |

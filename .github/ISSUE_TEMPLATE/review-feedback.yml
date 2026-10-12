@@ -1,0 +1,37 @@
+name: Review feedback
+description: A peer review of a claim, the code, the docs or the demo.
+title: "Review: "
+labels: ["review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reviewing! [docs/reviewing.md](https://github.com/redbarron23/obs-agent/blob/main/docs/reviewing.md)
+        lists the claims that matter most and what isn't worth your time.
+  - type: dropdown
+    id: area
+    attributes:
+      label: What did you look at?
+      options:
+        - Tag inference (model, rules, numbers)
+        - Review workflow and exports
+        - LLM agent or evals
+        - API, security or deployment
+        - Code quality or tests
+        - Docs or README
+        - Live demo
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: finding
+    attributes:
+      label: What you found
+      description: What holds up, what doesn't, what you'd do differently. File and line references help.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Your context (optional)
+      description: e.g. "I run FinOps for ~2k Azure subscriptions", or "ML engineer". It helps me weigh the feedback.
