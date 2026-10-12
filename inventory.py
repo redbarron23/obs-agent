@@ -221,6 +221,21 @@ HARDNESS = {
         "p_generic_name": 0.20,
         "team_vocab_overlap": True,
     },
+    # A post-reorganisation estate: names and owners still identify the team,
+    # but the management hierarchy reflects yesterday's organisation.
+    "reorg": {
+        "p_missing_base": 0.20,
+        "p_missing_age": 0.11,
+        "p_shared_prefix": 0.33,
+        "p_env_in_name": 0.75,
+        "p_parent_own": 0.15,
+        "p_parent_borrowed": 0.90,
+        "p_borrowed_owner": 0.30,
+        "p_no_owner": 0.0,
+        "p_opaque_name": 0.15,
+        "p_generic_name": 0.07,
+        "team_vocab_overlap": False,
+    },
 }
 
 # Vocabulary teams share once nobody enforces naming, so the model cannot
@@ -310,12 +325,13 @@ def _observed(
 
 
 def generate_inventory(n: int = N_RESOURCES, hardness: str = "clean") -> pd.DataFrame:
-    """Build a synthetic estate at the given *hardness* ("clean" or "harsh").
+    """Build a synthetic estate at the given scenario.
 
     "clean" is the default and produces exactly the estate the README's
     metrics describe. "harsh" adds the failure modes a real, ungoverned
     estate has — see HARDNESS above — so inference can be scored on data it
-    was not tuned for.
+    was not tuned for. "reorg" isolates one failure mode: parents are stale
+    while names and owners remain useful evidence.
     """
     if hardness not in HARDNESS:
         raise ValueError(f"Unknown hardness '{hardness}'. Choose from {list(HARDNESS)}.")

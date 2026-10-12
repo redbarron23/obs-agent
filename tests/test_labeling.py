@@ -14,6 +14,7 @@ from labeling import (
     Rules,
     clean,
     evaluate,
+    expected_calibration_error,
     name_tokens,
     normalise,
 )
@@ -170,6 +171,15 @@ class TestModel:
             assert "strongest signals" in s.reason
 
 
+class TestCalibration:
+    def test_expected_calibration_error_is_zero_for_matching_confidence(self):
+        predicted = pd.Series(["a", "b", "c", "d"])
+        confidence = pd.Series([0.5, 0.5, 1.0, 1.0])
+        truth = pd.Series(["a", "x", "c", "d"])
+
+        assert expected_calibration_error(predicted, confidence, truth, bins=2) == 0.0
+
+
 class TestQuality:
     """Floors on the seeded synthetic inventory — guards against regressions."""
 
@@ -194,6 +204,10 @@ class TestQuality:
     def test_auto_apply_is_precise(self, results):
         for label in ("team", "env"):
             assert results[label]["model"]["auto_precision"] >= 0.95
+
+    def test_model_confidence_is_calibrated_on_the_clean_estate(self, results):
+        for label in ("team", "env"):
+            assert results[label]["model"]["ece"] <= 0.2
 
     @pytest.mark.parametrize("label,floor", [("team", 0.9), ("env", 0.65)])
     def test_mislabel_flags_are_mostly_right(self, results, label, floor):
@@ -284,6 +298,21 @@ class TestEstateHardness:
         # Ground truth is still present, so the estate is still scoreable.
         assert harsh["true_team"].notna().all()
         assert harsh["true_env"].notna().all()
+
+    def test_reorg_estate_shuffles_parents_but_keeps_schema(self):
+        from inventory import INVENTORY_DF, TEAMS, make_estate
+
+        def home_parent(row):
+            parent_key = "azure_parent" if row["cloud"] == "azure" else "gcp_parent"
+            return TEAMS[row["true_team"]][parent_key]
+
+        reorg = make_estate("reorg")
+        expected_parent = reorg.apply(home_parent, axis=1)
+        clean_parent = INVENTORY_DF.apply(home_parent, axis=1)
+        reorg_mismatch = (reorg["parent"] != expected_parent).mean()
+        clean_mismatch = (INVENTORY_DF["parent"] != clean_parent).mean()
+        assert reorg_mismatch > clean_mismatch
+        assert list(reorg.columns) == list(INVENTORY_DF.columns)
 
     def test_estates_are_independent(self):
         # Building the harsh estate must not disturb the published one.

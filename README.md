@@ -148,8 +148,9 @@ The numbers above are from the **clean** estate, which is deliberately tidy — 
 owners map more neatly onto teams than a real estate's would. So `inventory.py` also builds a
 **harsh** estate (`uv run labeling.py --hardness both`) with the failure modes a real, ungoverned
 estate has: shared naming vocabulary, missing owners, reorg-shuffled parents, and fewer resources
-whose name carries an `env` token. Scored against the same ground truth, the drop is what to
-expect before measuring on your own data:
+whose name carries an `env` token. A separate **reorg** scenario (`uv run labeling.py --hardness reorg`)
+isolates stale parent groups while retaining useful names and owners. Scored against the same ground
+truth, the drop is what to expect before measuring on your own data:
 
 | team / model | clean | harsh | delta |
 |---|---|---|---|
@@ -281,9 +282,12 @@ streaming, conversation memory, the CLI, provider support and sample conversatio
 `uv run labeling.py` prints the strategy comparison table shown in [How it works](#how-it-works);
 add `--hardness both` to score the clean and harsh estates side by side with the degradation table.
 The inventory keeps true labels beside observed ones, so every strategy — rules, model, hybrid and
-the mislabel check — is scored honestly. `tests/test_labeling.py` pins accuracy and precision
-floors against that ground truth, so a regression in the model fails CI rather than quietly
-changing the README's numbers.
+the mislabel check — is scored honestly. Its report also includes expected calibration error (ECE):
+the gap between a confidence score and observed accuracy, where lower is better. The synthetic
+estate has an explicit calibration budget; a production calibrator should be fitted only from a
+reviewed sample of currently unlabelled resources, not from the biased already-tagged subset.
+`tests/test_labeling.py` pins accuracy, precision and calibration floors against that ground truth,
+so a regression in the model fails CI rather than quietly changing the README's numbers.
 
 ### Agent evals
 
