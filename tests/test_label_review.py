@@ -172,8 +172,10 @@ class TestDecisions:
 
         assert metrics["reviewed"] == 4 and metrics["scored"] == 3
         assert metrics["unresolved"] == 1
+        assert metrics["auto_apply_threshold"] == 0.9
         assert metrics["labels"]["team"]["precision"] == 0.333
         assert metrics["labels"]["team"]["recall"] == 0.333
+        assert metrics["labels"]["team"]["confidence_buckets"][0]["bucket"] == "below 90%"
         assert [p["period"] for p in metrics["labels"]["team"]["periods"]] == [
             "2026-01",
             "2026-02",

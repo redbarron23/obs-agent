@@ -30,6 +30,10 @@ value, grouped by label and month. An accept or override supplies that value; a 
 already-tagged resource uses its prior label. Rejecting an untagged suggestion is **unresolved**,
 not a false label, because no replacement truth was supplied.
 
+The Label review page shows the same report in its **Review quality** panel, including monthly
+trends and a below/at-or-above-90% confidence split. Watch whether high-confidence agreement
+falls relative to lower-confidence review: that is a practical signal to revisit the threshold.
+
 These are reviewer-agreement metrics, not an unbiased production benchmark: reviewers choose what
 to inspect, and repeated decisions are retained as historical events. Track the `reviewed`,
 `scored`, and `unresolved` counts with the scores; do not compare periods with too little reviewed
