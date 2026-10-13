@@ -16,6 +16,10 @@ Synthetic evaluation is necessary but insufficient. In production, validate the 
 reviewed sample of unlabelled resources, then use reviewer feedback to monitor calibration and
 retrain only when enough representative data exists.
 
+For a repeatable 50–100-resource production-validation process, including anonymisation and a
+threshold recommendation that defers when evidence is insufficient, use the
+[real-world evaluation pack](real-evaluation.md).
+
 ## Anonymized review fixture and post-review metrics
 
 [`fixtures/anonymized_review_feedback.json`](../fixtures/anonymized_review_feedback.json) is a
