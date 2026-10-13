@@ -36,6 +36,7 @@ from labeling import (
     get_inference,
     get_suspects,
     normalise,
+    suspect_labels,
 )
 
 STATUSES = ("ok", "untagged", "suspect")
@@ -106,8 +107,8 @@ def _label_report(inf: LabelInference, row, label: str, suspects: pd.DataFrame) 
     }
 
 
-def _report(inf: LabelInference, row) -> dict:
-    labels = {label: _label_report(inf, row, label, get_suspects(label)) for label in LABELS}
+def _report(inf: LabelInference, row, suspects: dict[str, pd.DataFrame]) -> dict:
+    labels = {label: _label_report(inf, row, label, suspects[label]) for label in LABELS}
     team = labels["team"]["suggested"] or labels["team"]["current"]
     return {
         "resource_id": row["resource_id"],
@@ -127,11 +128,21 @@ def _report(inf: LabelInference, row) -> dict:
 def all_reports() -> tuple[dict, ...]:
     """Reports for the whole synthetic inventory (computed once)."""
     inf = get_inference()
-    return tuple(_report(inf, row) for _, row in inf.df.iterrows())
+    suspects = {label: get_suspects(label) for label in LABELS}
+    return tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
 
 
-def resource_report(resource_id: str) -> dict | None:
-    for r in all_reports():
+def reports(inventory: pd.DataFrame | None = None) -> tuple[dict, ...]:
+    """Reports for the synthetic demo or a caller-provided inventory snapshot."""
+    if inventory is None:
+        return all_reports()
+    inf = LabelInference(inventory)
+    suspects = {label: suspect_labels(inventory, label) for label in LABELS}
+    return tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
+
+
+def resource_report(resource_id: str, inventory: pd.DataFrame | None = None) -> dict | None:
+    for r in reports(inventory):
         if r["resource_id"] == resource_id:
             return r
     return None
@@ -145,6 +156,7 @@ def review_queue(
     min_confidence: float = 0.0,
     max_confidence: float = 1.0,
     search: str | None = None,
+    inventory: pd.DataFrame | None = None,
 ) -> list[dict]:
     """Resources needing review, most confident suggestions first.
 
@@ -154,7 +166,7 @@ def review_queue(
     labels = [label] if label else list(LABELS)
     wanted = {status} if status else {"untagged", "suspect"}
     out = []
-    for r in all_reports():
+    for r in reports(inventory):
         if cloud and r["cloud"] != cloud:
             continue
         if search and search.lower() not in r["resource_id"].lower():
@@ -168,19 +180,19 @@ def review_queue(
     return sorted(out, key=lambda r: -max(r["labels"][lbl]["confidence"] or 0 for lbl in labels))
 
 
-def coverage() -> dict:
-    reports = all_reports()
+def coverage(inventory: pd.DataFrame | None = None) -> dict:
+    report_rows = reports(inventory)
     per_label = {}
     for label in LABELS:
-        st = [r["labels"][label] for r in reports]
+        st = [r["labels"][label] for r in report_rows]
         per_label[label] = {
             "untagged": sum(s["status"] == "untagged" for s in st),
             "suspect": sum(s["status"] == "suspect" for s in st),
             "auto_apply_ready": sum(s["action"] == "auto-apply" for s in st),
         }
     return {
-        "total": len(reports),
-        "needs_attention": sum(r["needs_attention"] for r in reports),
+        "total": len(report_rows),
+        "needs_attention": sum(r["needs_attention"] for r in report_rows),
         "auto_apply_threshold": AUTO_APPLY_THRESHOLD,
         "labels": per_label,
     }
@@ -275,8 +287,15 @@ class DecisionStore:
             rows = conn.execute("SELECT * FROM review_feedback ORDER BY id")
             return [dict(row) for row in rows]
 
-    def set(self, resource_id: str, label: str, decision: str, value: str | None = None) -> dict:
-        report = resource_report(resource_id)
+    def set(
+        self,
+        resource_id: str,
+        label: str,
+        decision: str,
+        value: str | None = None,
+        inventory: pd.DataFrame | None = None,
+    ) -> dict:
+        report = resource_report(resource_id, inventory)
         if report is None:
             raise KeyError(resource_id)
         if label not in LABELS:
@@ -473,12 +492,14 @@ def resolve(report: dict, decisions: dict[str, dict], include_auto: bool) -> dic
     return out
 
 
-def pending_changes(store: DecisionStore, include_auto: bool = True) -> list[dict]:
+def pending_changes(
+    store: DecisionStore, include_auto: bool = True, inventory: pd.DataFrame | None = None
+) -> list[dict]:
     """Resources whose resolved tags differ from what they carry today."""
-    inf = get_inference()
+    inf = get_inference() if inventory is None else LabelInference(inventory)
     decisions = {f"{d['resource_id']}|{d['label']}": d for d in store.all()}
     changes = []
-    for r in all_reports():
+    for r in reports(inventory):
         final = resolve(r, decisions, include_auto)
         tags = {}
         for label in LABELS:
@@ -506,11 +527,11 @@ def _gcp_value(value: str) -> str:
     return value.lower()
 
 
-def approved_change_plan(store: DecisionStore) -> dict:
+def approved_change_plan(store: DecisionStore, inventory: pd.DataFrame | None = None) -> dict:
     """An auditable, reviewed-only change set for approval before application."""
     decisions = {f"{d['resource_id']}|{d['label']}": d for d in store.all()}
     feedback = {f"{d['resource_id']}|{d['label']}": d for d in store.feedback()}
-    changes = pending_changes(store, include_auto=False)
+    changes = pending_changes(store, include_auto=False, inventory=inventory)
     approvals = []
     for change in changes:
         for label in change["tags"]:
@@ -537,12 +558,17 @@ def approved_change_plan(store: DecisionStore) -> dict:
     }
 
 
-def export(store: DecisionStore, fmt: str, include_auto: bool = True) -> str:
+def export(
+    store: DecisionStore,
+    fmt: str,
+    include_auto: bool = True,
+    inventory: pd.DataFrame | None = None,
+) -> str:
     if fmt not in EXPORT_FORMATS:
         raise ValueError(f"Unknown format '{fmt}'. Choose from {list(EXPORT_FORMATS)}.")
     if fmt == "plan":
-        return json.dumps(approved_change_plan(store), indent=2) + "\n"
-    changes = pending_changes(store, include_auto)
+        return json.dumps(approved_change_plan(store, inventory), indent=2) + "\n"
+    changes = pending_changes(store, include_auto, inventory)
     if fmt == "csv":
         buf = io.StringIO()
         w = csv.writer(buf)

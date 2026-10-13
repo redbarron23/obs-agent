@@ -93,6 +93,9 @@ else:
     st.sidebar.markdown("- Which projects are missing a team tag?")
     st.sidebar.markdown("- What team does svc-ingest belong to?")
     st.sidebar.caption("Review and export tag suggestions on the **Label review** page.")
+    st.sidebar.page_link(
+        "pages/2_Import_inventory.py", label="Import a sanitized inventory", icon="📥"
+    )
 
 st.sidebar.divider()
 with st.sidebar.expander("ℹ️ About"):

@@ -38,6 +38,7 @@ Open the dashboard, inspect an untagged resource, adjust its proposed labels if 
 | --- | --- |
 | Try the end-to-end synthetic workflow | [Five-minute demo](docs/five-minute-demo.md) |
 | How label inference and review work | [Label inference](docs/label-inference.md) |
+| Review a sanitized Azure/GCP CSV locally | [Import inventory](docs/importing.md) |
 | Ask questions over the cost estate | [Agent guide](docs/agent.md) |
 | REST endpoints and exports | [API reference](docs/api.md) |
 | Quality, calibration, and evaluation | [Evaluation](docs/evaluation.md) |

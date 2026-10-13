@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 import api
 import label_review as lr
+from inventory_import import load_inventory_csv
 from label_review import DecisionError, DecisionStore
 
 UNTAGGED = "svc-ingest"  # no team/env tag; team → data-platform
@@ -21,6 +22,7 @@ SUSPECT = "api-login-d-ew1"  # tagged security, really identity
 AUTO_ENV = "platform-backend-poc-uc1"  # env untagged, 'poc' → sandbox at 95%
 REVIEW_PAGE = Path(__file__).parent.parent / "pages" / "1_Label_review.py"
 FEEDBACK_FIXTURE = Path(__file__).parent.parent / "fixtures" / "anonymized_review_feedback.json"
+INVENTORY_SAMPLE = Path(__file__).parent.parent / "fixtures" / "sanitized_inventory_sample.csv"
 
 
 def _override_team(path: Path, resource_id: str) -> None:
@@ -74,6 +76,15 @@ class TestReports:
     def test_queue_sorted_most_confident_first(self):
         conf = [r["labels"]["team"]["confidence"] for r in lr.review_queue(label="team")]
         assert conf == sorted(conf, reverse=True)
+
+    def test_imported_inventory_uses_the_same_review_workflow(self, tmp_path):
+        inventory = load_inventory_csv(INVENTORY_SAMPLE)
+        report = lr.resource_report("gcp-demo-003", inventory)
+        assert report["labels"]["team"]["status"] == "untagged"
+        assert lr.coverage(inventory)["total"] == 5
+        store = DecisionStore(tmp_path / "imported.db")
+        store.set("gcp-demo-003", "team", "accept", inventory=inventory)
+        assert "gcp-demo-003" in lr.export(store, "csv", include_auto=False, inventory=inventory)
 
 
 class TestDecisions:

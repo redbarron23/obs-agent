@@ -28,7 +28,12 @@ from labeling import ALLOWED, AUTO_APPLY_THRESHOLD
 st.set_page_config(page_title="Label review — obs-agent", page_icon="🏷️", layout="wide")
 
 DEMO = demo_enabled()
-if DEMO:
+imported_inventory = st.session_state.get("imported_inventory")
+if imported_inventory is not None:
+    st.session_state.setdefault("import_id", uuid.uuid4().hex)
+    imported_store = f"obs-agent-import-{st.session_state.import_id}.db"
+    store = DecisionStore(Path(tempfile.gettempdir()) / imported_store)
+elif DEMO:
     # Public demo: each browser session gets its own throwaway decisions file,
     # so visitors never see or overwrite each other's choices.
     st.session_state.setdefault("demo_id", uuid.uuid4().hex)
@@ -55,14 +60,20 @@ st.caption(
     "human decision."
 )
 
-if DEMO:
+if imported_inventory is not None:
+    st.info(
+        "Reviewing your imported inventory in this browser session. Decisions are kept in a "
+        "temporary local file and exports are only generated for you to review.",
+        icon="📥",
+    )
+elif DEMO:
     st.info(
         "Demo on synthetic data: your decisions are private to this browser session "
         "and are discarded when it ends. Try accepting a few, then download the export.",
         icon="🧪",
     )
 
-cov = coverage()
+cov = coverage(imported_inventory)
 decided = {f"{d['resource_id']}|{d['label']}": d for d in store.all()}
 cols = st.columns(6)
 cols[0].metric("Need attention", cov["needs_attention"], help=f"of {cov['total']} resources")
@@ -134,6 +145,7 @@ rows = review_queue(
     min_confidence=lo,
     max_confidence=hi,
     search=search or None,
+    inventory=imported_inventory,
 )
 
 records = []
@@ -217,7 +229,7 @@ else:
         for rid, decision, override in editor_changes(df, edited):
             try:
                 if decision:
-                    store.set(rid, label, decision, override)
+                    store.set(rid, label, decision, override, imported_inventory)
                 else:
                     store.delete(rid, label)
                 saved += 1
@@ -236,7 +248,7 @@ else:
         disabled=auto.empty,
     ):
         for rid in auto["resource_id"]:
-            store.set(rid, label, "accept")
+            store.set(rid, label, "accept", inventory=imported_inventory)
         st.toast(f"Accepted {len(auto)} suggestion(s)")
         _refresh()
 
@@ -249,7 +261,7 @@ include_auto = st.checkbox(
     value=False,
     help="Off by default: export only what a reviewer accepted or overrode.",
 )
-changes = pending_changes(store, include_auto)
+changes = pending_changes(store, include_auto, imported_inventory)
 st.caption(
     f"{len(changes)} resource(s) would change. Overrides win over accepts, "
     "accepts over auto-apply; rejected suggestions are never exported."
@@ -258,16 +270,16 @@ st.caption(
 c1, c2, c3, c4 = st.columns(4)
 c1.download_button(
     "Reviewed change plan",
-    export(store, "plan"),
+    export(store, "plan", inventory=imported_inventory),
     "approved-label-change-plan.json",
     "application/json",
     help="Reviewed decisions only, with the before/after diff and approval evidence.",
     icon=":material/fact_check:",
-    disabled=not pending_changes(store, include_auto=False),
+    disabled=not pending_changes(store, include_auto=False, inventory=imported_inventory),
 )
 c2.download_button(
     "CSV",
-    export(store, "csv", include_auto),
+    export(store, "csv", include_auto, imported_inventory),
     "label-changes.csv",
     "text/csv",
     icon=":material/download:",
@@ -275,7 +287,7 @@ c2.download_button(
 )
 c3.download_button(
     "az / gcloud script",
-    export(store, "sh", include_auto),
+    export(store, "sh", include_auto, imported_inventory),
     "apply-labels.sh",
     "text/x-shellscript",
     icon=":material/download:",
@@ -283,7 +295,7 @@ c3.download_button(
 )
 c4.download_button(
     "Terraform tfvars",
-    export(store, "tfvars", include_auto),
+    export(store, "tfvars", include_auto, imported_inventory),
     "labels.auto.tfvars.json",
     "application/json",
     icon=":material/download:",
