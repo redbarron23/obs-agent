@@ -19,6 +19,8 @@ retrain only when enough representative data exists.
 For a repeatable 50–100-resource production-validation process, including anonymisation and a
 threshold recommendation that defers when evidence is insufficient, use the
 [real-world evaluation pack](real-evaluation.md).
+Changing the expedited-review threshold also requires the documented
+[approval process](deployment.md#confidence-threshold-changes).
 
 ## Anonymized review fixture and post-review metrics
 
