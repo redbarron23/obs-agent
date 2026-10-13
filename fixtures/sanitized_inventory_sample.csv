@@ -1,0 +1,6 @@
+cloud,resource_id,parent,owners,created_by,top_services,avg_daily_cost,weekend_ratio,cost_cv,team,env,cost_center
+azure,az-demo-001,mg-payments,alice|bob,alice,AKS|SQL,120.50,0.92,0.18,payments,prod,CC-1001
+azure,az-demo-002,mg-payments,alice|bob,bob,AKS|KeyVault,96.25,0.89,0.21,payments,prod,CC-1001
+gcp,gcp-demo-001,folders-data,"[""fatima"", ""gus""]",fatima,BigQuery|GCS,42.75,0.31,0.44,data-platform,dev,CC-2002
+gcp,gcp-demo-002,folders-data,fatima|gus,gus,Dataflow|GCS,38.10,0.28,0.40,data-platform,dev,CC-2002
+gcp,gcp-demo-003,folders-data,fatima|gus,fatima,BigQuery|GCS,36.20,0.30,0.42,,,
