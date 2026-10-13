@@ -42,6 +42,7 @@ Open the dashboard, inspect an untagged resource, adjust its proposed labels if 
 | Ask questions over the cost estate | [Agent guide](docs/agent.md) |
 | REST endpoints and exports | [API reference](docs/api.md) |
 | Quality, calibration, and evaluation | [Evaluation](docs/evaluation.md) |
+| Evaluate a 50–100-resource anonymized sample | [Real-world evaluation pack](docs/real-evaluation.md) |
 | Components and data flow | [Architecture](docs/architecture.md) |
 | Tests and local checks | [Testing](docs/testing.md) |
 | Reviewer workflow | [Reviewing labels](docs/reviewing.md) |
