@@ -19,6 +19,7 @@ from label_review import (
     demo_enabled,
     editor_changes,
     export,
+    feedback_metrics,
     pending_changes,
     review_queue,
 )
@@ -70,6 +71,51 @@ cols[2].metric("Untagged env", cov["labels"]["env"]["untagged"])
 cols[3].metric("Suspect tags", sum(c["suspect"] for c in cov["labels"].values()))
 cols[4].metric("Auto-apply ready", sum(c["auto_apply_ready"] for c in cov["labels"].values()))
 cols[5].metric("Reviewed", len(decided))
+
+quality = feedback_metrics(store.feedback())
+with st.expander("Review quality", expanded=bool(quality["reviewed"])):
+    st.caption(
+        "Reviewer-agreement metrics compare each suggestion with the reviewer-resolved value. "
+        "They are useful for monitoring, not an unbiased production benchmark."
+    )
+    qcols = st.columns(4)
+    qcols[0].metric("Review actions", quality["reviewed"])
+    qcols[1].metric("Scored", quality["scored"])
+    qcols[2].metric("Unresolved", quality["unresolved"])
+    qcols[3].metric("Expedited-review threshold", f"{quality['auto_apply_threshold']:.0%}")
+
+    if not quality["scored"]:
+        st.info(
+            "No reviewer-resolved labels yet. Accept, override, or reject an existing tag "
+            "to score it."
+        )
+    else:
+        for label_name, summary in quality["labels"].items():
+            mcols = st.columns(3)
+            mcols[0].metric(f"{label_name} precision", f"{summary['precision']:.1%}")
+            mcols[1].metric(f"{label_name} recall", f"{summary['recall']:.1%}")
+            mcols[2].metric(f"{label_name} macro-F1", f"{summary['macro_f1']:.2f}")
+
+        trend = [
+            {
+                "month": period["period"],
+                "label": label_name,
+                **{k: period[k] for k in ("scored", "precision", "recall", "macro_f1")},
+            }
+            for label_name, summary in quality["labels"].items()
+            for period in summary["periods"]
+        ]
+        if trend:
+            st.caption("Monthly reviewer-agreement trend")
+            st.dataframe(pd.DataFrame(trend), hide_index=True, width="stretch")
+
+        buckets = [
+            {"label": label_name, **bucket}
+            for label_name, summary in quality["labels"].items()
+            for bucket in summary["confidence_buckets"]
+        ]
+        st.caption("Confidence buckets (the threshold is the high-confidence drift check)")
+        st.dataframe(pd.DataFrame(buckets), hide_index=True, width="stretch")
 
 # ── Filters ────────────────────────────────────────────────────────────
 

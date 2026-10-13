@@ -408,7 +408,13 @@ def feedback_metrics(feedback: list[dict]) -> dict:
     suggestion can be scored only when the resource already had a usable label;
     rejecting an untagged suggestion supplies no replacement truth.
     """
-    result = {"reviewed": len(feedback), "scored": 0, "unresolved": 0, "labels": {}}
+    result = {
+        "reviewed": len(feedback),
+        "scored": 0,
+        "unresolved": 0,
+        "auto_apply_threshold": AUTO_APPLY_THRESHOLD,
+        "labels": {},
+    }
     for label in LABELS:
         entries = [entry for entry in feedback if entry["label"] == label]
         rows = [
@@ -416,6 +422,7 @@ def feedback_metrics(feedback: list[dict]) -> dict:
                 "suggested": entry["suggested"],
                 "resolved": _resolved_feedback_value(entry),
                 "period": entry["decided_at"][:7],
+                "confidence": entry.get("confidence"),
             }
             for entry in entries
             if entry["suggested"] and _resolved_feedback_value(entry)
@@ -428,6 +435,18 @@ def feedback_metrics(feedback: list[dict]) -> dict:
             period_rows = [row for row in rows if row["period"] == period]
             periods.append({"period": period} | _agreement_scores(period_rows))
         summary["periods"] = periods
+        buckets = []
+        for name, lower, upper in (
+            (f"below {AUTO_APPLY_THRESHOLD:.0%}", 0.0, AUTO_APPLY_THRESHOLD),
+            (f"at or above {AUTO_APPLY_THRESHOLD:.0%}", AUTO_APPLY_THRESHOLD, 1.01),
+        ):
+            bucket_rows = [
+                row
+                for row in rows
+                if row["confidence"] is not None and lower <= row["confidence"] < upper
+            ]
+            buckets.append({"bucket": name} | _agreement_scores(bucket_rows))
+        summary["confidence_buckets"] = buckets
         result["labels"][label] = summary
         result["scored"] += summary["scored"]
         result["unresolved"] += summary["unresolved"]
