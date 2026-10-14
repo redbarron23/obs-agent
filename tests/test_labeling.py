@@ -184,7 +184,8 @@ class TestQuality:
     """Floors on the seeded synthetic inventory — guards against regressions."""
 
     @pytest.fixture(scope="class")
-    def results(self):
+    @classmethod
+    def results(cls):
         return evaluate()
 
     def test_roughly_half_unlabelled(self, results):
@@ -327,7 +328,8 @@ class TestDegradation:
     """The harsh estate must actually be harder, and the report must say so."""
 
     @pytest.fixture(scope="class")
-    def both(self):
+    @classmethod
+    def both(cls):
         from inventory import INVENTORY_DF, make_estate
 
         return evaluate(INVENTORY_DF), evaluate(make_estate("harsh"))
