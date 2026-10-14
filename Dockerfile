@@ -14,7 +14,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY agent.py api.py app.py data.py inventory.py inventory_import.py labeling.py label_review.py observability.py providers.py real_evaluation.py tools.py ./
+COPY agent.py api.py app.py data.py drift.py inventory.py inventory_import.py labeling.py label_review.py observability.py providers.py real_evaluation.py tools.py ./
 COPY pages/ pages/
 
 # Review decisions live in /app/state; compose mounts a shared volume here.
