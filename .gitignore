@@ -30,3 +30,6 @@ TBD.md
 # MLflow (optional tracing / eval runs)
 mlflow.db
 mlruns/
+
+# Private imported inventories and approvals
+review-workspaces/

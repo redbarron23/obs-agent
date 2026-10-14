@@ -1,61 +1,124 @@
-# obs-agent — Tag Inference & Review for Multi-Cloud Cost Estates
+# obs-agent — Cloud Label Review
 
-[![CI](https://github.com/jhourihane/obs-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/jhourihane/obs-agent/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/jhourihane/obs-agent/branch/main/graph/badge.svg)](https://codecov.io/gh/jhourihane/obs-agent)
+[![CI](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/redbarron23/obs-agent/actions/workflows/ci.yml)
 
-**obs-agent finds untagged cloud resources, infers likely ownership, and produces auditable, human-reviewed change plans.** It supports synthetic AWS, Azure, and GCP billing inventories so the entire workflow is safe to explore locally.
+**Turn missing or suspect Azure/GCP labels into a reviewed change plan.** Import an inventory,
+inspect ownership evidence, accept or override suggestions, and export the before/after changes.
+Label review runs locally without an LLM or cloud credentials. Optional cost chat uses synthetic data.
+
+![Label review workflow](docs/label-review.gif)
+
+## Quick start
+
+Requirements: Python **3.10+** and [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/redbarron23/obs-agent.git
+cd obs-agent
+uv sync --locked
+uv run streamlit run app.py
+```
+
+Open the local URL printed by Streamlit. **Label review** is the landing page. Enter your reviewer
+name or ID, inspect a suggestion, save a decision, and download **Reviewed change plan**.
+Start with the bundled synthetic inventory; no API keys or Ollama setup are needed.
+
+For disposable demo decisions, run `OBS_AGENT_DEMO=1 uv run streamlit run app.py`.
+See the [five-minute walkthrough](docs/five-minute-demo.md).
+
+## Use your own inventory
+
+1. Open **Import / reopen inventory** and download the CSV and vocabulary examples.
+2. Adapt your sanitized Azure subscription/GCP project snapshot to the CSV schema. Supply your
+   own team/environment values and aliases in the optional vocabulary JSON.
+3. Select **Save and open review**, then review suggestions and export a plan.
+4. Return to **Import / reopen inventory** to resume a saved snapshot after a browser or app restart.
+
+Snapshots, vocabularies, and approvals persist locally in `review-workspaces/` (configurable with
+`OBS_AGENT_REVIEW_DIR`). Keep this private directory outside version control and back it up.
+Imports are available in the review UI; the REST API and optional chat use the synthetic estate.
+The public demo disables private imports. See [Import inventory](docs/importing.md).
+
+## What you get
+
+- Missing/suspect `team` and `env` suggestions with evidence, confidence, and alternatives.
+- A SQLite decision history with reviewer identity, timestamps, inventory fingerprint, and inference version.
+- Reviewed-only JSON change plans and CSV, shell, or Terraform exports. A cost center accompanies
+  a team change only when the inventory establishes the mapping.
+- Explicit opt-in to include unreviewed high-confidence suggestions in convenience exports.
+
+An [example exported plan](fixtures/reviewed_change_plan_example.json) shows the full schema.
+For example, an accepted suggestion produces this change:
+
+```json
+{
+  "resource_id": "gcp-demo-003",
+  "cloud": "gcp",
+  "tags": {
+    "team": {"previous": null, "new": "data-platform", "how": "accept"},
+    "cost_center": {"previous": null, "new": "CC-2002", "how": "accept"}
+  }
+}
+```
+
+The complete plan includes the approval evidence and snapshot/version identifiers. Changed inputs
+or inference versions require a fresh review. obs-agent exports plans; it never applies cloud changes.
+Reviewer identifiers are self-reported locally; authenticate reviewers at your deployment boundary.
+
+## Run with Docker
+
+```bash
+cp .env.example .env
+# Generate a key, then paste it into OBS_AGENT_API_KEY in .env:
+openssl rand -hex 32
+docker compose up --build
+```
+
+Open `http://localhost:8501` for review and `http://localhost:8000/docs` for the API.
+Both bind to loopback. The named volume retains decisions and imported reviews. Ollama is needed
+only for optional cost chat; Compose reaches the host automatically. See [Interfaces](docs/api.md).
+
+## Quality and limits
 
 | Synthetic hold-out result | Value |
 | --- | ---: |
 | Team-label accuracy | 98% |
 | Team-label macro-F1 | 0.98 |
-| Environment-label accuracy | 100% |
+| Environment-label accuracy (hybrid) | 81% |
 
-These figures are from the bundled synthetic inventory—not a promise of production accuracy. See [evaluation](docs/evaluation.md) for methodology and limits.
-
-## Quick start
-
-```bash
-git clone https://github.com/jhourihane/obs-agent.git
-cd obs-agent
-uv sync
-uv run streamlit run app.py
-```
-
-Open the dashboard, inspect an untagged resource, adjust its proposed labels if needed, record your decision, and export a reviewed-only plan.
-
-## What it does
-
-- Generates a deterministic multi-cloud cost inventory, including missing labels and a deliberate reorganisation scenario.
-- Infers `team` and `environment` labels from billing, resource, ownership, and parent-child signals.
-- Shows evidence, confidence, calibration, coverage, and drift signals before anyone acts.
-- Captures accept/reject/override feedback in a local SQLite audit trail.
-- Exports only reviewed accepted or overridden label changes—never applies provider changes directly.
+These results use the default team model and environment hybrid strategy on the bundled synthetic
+inventory. Environment rules alone score 100% on the 55% of examples they cover; the hybrid covers
+100% of examples at 81% accuracy. These are not production performance claims. Each imported
+label needs at least two recognized values with two labelled resources per value. Validate on a
+representative reviewed sample before relying on confidence thresholds. See [Evaluation](docs/evaluation.md).
 
 ## Documentation
 
 | Topic | Guide |
 | --- | --- |
-| Try the end-to-end synthetic workflow | [Five-minute demo](docs/five-minute-demo.md) |
-| How label inference and review work | [Label inference](docs/label-inference.md) |
-| Review a sanitized Azure/GCP CSV locally | [Import inventory](docs/importing.md) |
-| Ask questions over the cost estate | [Agent guide](docs/agent.md) |
-| REST endpoints and exports | [API reference](docs/api.md) |
-| Quality, calibration, and evaluation | [Evaluation](docs/evaluation.md) |
-| Evaluate a 50–100-resource anonymized sample | [Real-world evaluation pack](docs/real-evaluation.md) |
-| Deploy safely and operate the review service | [Deployment guardrails](docs/deployment.md) |
+| End-to-end synthetic workflow | [Five-minute demo](docs/five-minute-demo.md) |
+| CSV schema, vocabulary, saved reviews | [Import inventory](docs/importing.md) |
+| Inference, review, and drift | [Label inference](docs/label-inference.md) |
+| Optional cost Q&A | [Agent guide](docs/agent.md) |
+| REST API, Docker, hosted demo | [Interfaces](docs/api.md) |
+| Quality and calibration | [Evaluation](docs/evaluation.md) |
+| Evaluate a real reviewed sample | [Real-world evaluation pack](docs/real-evaluation.md) |
+| Deployment and operations | [Deployment guardrails](docs/deployment.md) |
 | Components and data flow | [Architecture](docs/architecture.md) |
 | Tests and local checks | [Testing](docs/testing.md) |
-| Reviewer workflow | [Reviewing labels](docs/reviewing.md) |
-| Where review decisions are stored | [Decision storage](docs/decision-storage.md) |
-| Reading and source material | [References](docs/references.md) |
+| Reviewer's guide | [Reviewing this project](docs/reviewing.md) |
+| Persistence and approval provenance | [Decision storage](docs/decision-storage.md) |
+| Source material | [References](docs/references.md) |
 
-## Requirements
+## Application and library
 
-- Python 3.11+
-- [`uv`](https://docs.astral.sh/uv/)
+This repository is the runnable Streamlit/FastAPI application. Clone it or run the Docker image;
+its flat modules are intentionally not an installable Python package.
+The separate [tag-inference library](https://github.com/obs-tools/tag-inference) is the library
+entry point for embedding inference in another Python project. This application currently uses its
+own local inference modules; it does not depend on that library.
 
-## Test
+## Development
 
 ```bash
 uv run ruff format --check .
@@ -66,8 +129,4 @@ uv run evals.py --dry-run
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
-
-## Related project
-
-The reusable tag-inference library is maintained at [obs-tools/tag-inference](https://github.com/obs-tools/tag-inference).
+MIT. See [LICENSE](LICENSE).

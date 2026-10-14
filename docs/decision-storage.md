@@ -21,15 +21,20 @@ resolve from the working directory, so use an absolute path anywhere but a local
 | --- | --- |
 | Local checkout (`uv run streamlit run app.py`, `uv run uvicorn api:app`) | `./label_decisions.db`, or `OBS_AGENT_DECISIONS` |
 | Docker image / `docker compose` | `/app/state/label_decisions.db` (set in the `Dockerfile`) |
-| Label review with an imported inventory | `<tmp>/obs-agent-import-<id>.db`, one per browser session |
+| Saved imported review | `review-workspaces/<snapshot-and-vocabulary-hash>.db`, or `OBS_AGENT_REVIEW_DIR` |
 | Public demo (`OBS_AGENT_DEMO=1`) | `<tmp>/obs-agent-<id>.db`, one per browser session |
 
-`<tmp>` is `tempfile.gettempdir()`. The Label review page chooses the store at the top of
-`pages/1_Label_review.py`: an imported inventory takes precedence over demo mode, and otherwise it
-uses `DecisionStore()`. The API always uses `DecisionStore()`, so it never sees decisions made
+`<tmp>` is `tempfile.gettempdir()`. Demo mode always uses a disposable store and synthetic data.
+Locally, a selected saved review uses its own database; otherwise the page uses `DecisionStore()`. The API always uses `DecisionStore()`, so it never sees decisions made
 against an imported inventory or in a demo session.
 
-The app does not delete the per-session temp files. A session that ends simply stops using its
+Saved imports persist across browser/app restarts and can be reopened on the import page.
+Their databases also contain a `workspace` table with the original CSV, vocabulary JSON, name, and
+creation time. Each snapshot/vocabulary gets a separate database. All users of this installation
+share the saved-review directory; use it only for one trusted team. Back up this directory along
+with the synthetic decision database.
+
+The app does not delete the public demo's per-session temp files. A session that ends simply stops using its
 file, and the operating system's temp cleanup removes it eventually. Don't rely on these files for
 anything you need to keep.
 
@@ -38,7 +43,7 @@ anything you need to keep.
 The image creates `/app/state`, owned by the non-root `appuser`, and sets
 `OBS_AGENT_DECISIONS=/app/state/label_decisions.db`. `docker-compose.yml` mounts the named volume
 `label-state` there for both the `api` and `ui` services, so they share one decision history and it
-survives container restarts and rebuilds.
+survives container restarts and rebuilds. Imported reviews use `/app/state/reviews` in the same volume.
 
 To use a different location, override `OBS_AGENT_DECISIONS` and mount a volume at that path. The
 directory must be writable by `appuser`.
@@ -55,8 +60,11 @@ table's primary key:
 | `decision` | `accept`, `reject` or `override` |
 | `value` | The resolved value: the suggestion for `accept`, the reviewer's value for `override`, `NULL` for `reject` |
 | `suggested` | The model's suggestion at decision time |
-| `previous` | The resource's tag value at decision time |
+| `previous` | The resource's normalized tag value at decision time; exported diffs use its raw value |
 | `decided_at` | UTC timestamp (ISO 8601, seconds) |
+| `reviewer` | Reviewer name or ID entered in the UI/request, or `OBS_AGENT_REVIEWER` |
+| `inventory_id` | SHA-256 fingerprint of the inventory snapshot |
+| `model_version` | Fingerprint of inference code, scikit-learn/NumPy/SciPy versions, vocabulary, strategy, and threshold |
 
 A new decision for the same pair replaces the old one (`INSERT ... ON CONFLICT DO UPDATE`).
 
@@ -65,8 +73,17 @@ plus the model snapshot the reviewer saw: `confidence`, `source` and `reason`. I
 reviewer-agreement metrics (`GET /labels/feedback/metrics` and the quality panel on Label review)
 and the approval evidence in the approved change plan export.
 
+Missing provenance columns are added automatically to existing databases. Historical rows retain
+null values; they are not backfilled with an invented reviewer/version. Only decisions whose
+inventory and model fingerprints match the current review are used for exports. Re-review after
+input, vocabulary, inference code, or model-version changes. A reviewed plan (schema version 2)
+contains these fingerprints at the top level and on its approval evidence.
+
+Reviewer names are self-reported; they do not prove an authenticated person approved the change.
+Put an authenticated reviewer boundary in front of a production service and retain its access logs.
+
 Before writing, `set()` checks that the resource exists, that the label and decision are known,
-that an override value is allowed for that label, and that `accept` / `reject` have a suggestion to
+that a reviewer identifier is present, that an override value is allowed for that label, and that `accept` / `reject` have a suggestion to
 act on. A rejected call writes nothing to either table.
 
 Undoing a decision (`DELETE /resources/{id}/labels/{label}/decision`, or clearing it on the review

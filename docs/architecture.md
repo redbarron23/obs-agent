@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-  inventory["Inventory snapshots"] --> inference["labeling.py\nclean · rules · model · mislabel check"]
+  inventory["Synthetic or saved imported snapshots"] --> inference["labeling.py\nclean · rules · model · mislabel check"]
   inference --> review["label_review.py\nqueue · decisions · change plan"]
   review --> ui["Streamlit label review"]
   review --> api["FastAPI"]
@@ -21,6 +21,8 @@ needs no LLM, while cost Q&A uses an LLM only to choose and summarise determinis
 
 | Module | Responsibility |
 |---|---|
+| `inventory_import.py` / `label_config.py` | CSV validation and per-inventory vocabularies |
+| `review_workspaces.py` / `review_context.py` | Saved snapshots and approval fingerprints |
 | `inventory.py` | Seeded synthetic inventory with true and observed labels |
 | `labeling.py` | Cleaning, rules, logistic regression, explanations, and scoring |
 | `label_review.py` | Review decisions, append-only feedback, change plans, and exports |

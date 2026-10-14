@@ -264,8 +264,9 @@ class TestExport:
         change = next(c for c in lr.pending_changes(store) if c["resource_id"] == AUTO_ENV)
         assert change["tags"]["env"] == ("dev", "override")
 
-    def test_auto_apply_included_by_default(self, store):
-        auto = lr.pending_changes(store)
+    def test_auto_apply_requires_opt_in(self, store):
+        assert lr.pending_changes(store) == []
+        auto = lr.pending_changes(store, include_auto=True)
         assert len(auto) > 50
         assert all(how == "auto-apply" for c in auto for _, how in c["tags"].values())
 
@@ -428,6 +429,7 @@ class TestReviewPage:
 
         monkeypatch.setenv("OBS_AGENT_DEMO", "1")
         at = AppTest.from_file(str(REVIEW_PAGE.parent.parent / "app.py"), default_timeout=60).run()
+        at.switch_page("pages/3_Cost_chat.py").run()
         assert not at.exception
         assert at.chat_input[0].disabled
         # No LLM controls or local-model warning to confuse demo visitors.
@@ -446,6 +448,7 @@ class TestReviewPage:
 
         monkeypatch.setenv("OBS_AGENT_DEMO", "1")
         at = AppTest.from_file(str(REVIEW_PAGE.parent.parent / "app.py"), default_timeout=60).run()
+        at.switch_page("pages/3_Cost_chat.py").run()
         widget = at.chat_input[0]
         # AppTest refuses to set a disabled widget, as a real browser would; a forged
         # websocket message is not a browser, so bypass that check to simulate one.

@@ -1,0 +1,11 @@
+{
+  "team": {
+    "values": ["data-platform", "payments"],
+    "aliases": {"dp": "data-platform", "payment": "payments"}
+  },
+  "env": {
+    "values": ["dev", "prod"],
+    "aliases": {"development": "dev", "production": "prod"},
+    "name_tokens": {"dev": ["dev", "d"], "prod": ["prod", "p"]}
+  }
+}

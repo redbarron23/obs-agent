@@ -5,6 +5,7 @@ Decisions are shared with the REST API through the same SQLite database
 (OBS_AGENT_DECISIONS, default label_decisions.db).
 """
 
+import os
 import tempfile
 import uuid
 from pathlib import Path
@@ -12,10 +13,12 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from label_config import inventory_config
 from label_review import (
     DecisionError,
     DecisionStore,
     coverage,
+    current_decisions,
     demo_enabled,
     editor_changes,
     export,
@@ -23,22 +26,26 @@ from label_review import (
     pending_changes,
     review_queue,
 )
-from labeling import ALLOWED, AUTO_APPLY_THRESHOLD
+from labeling import AUTO_APPLY_THRESHOLD
+from review_context import review_context
+from review_workspaces import load_review
 
 st.set_page_config(page_title="Label review — obs-agent", page_icon="🏷️", layout="wide")
 
 DEMO = demo_enabled()
-imported_inventory = st.session_state.get("imported_inventory")
-if imported_inventory is not None:
-    st.session_state.setdefault("import_id", uuid.uuid4().hex)
-    imported_store = f"obs-agent-import-{st.session_state.import_id}.db"
-    store = DecisionStore(Path(tempfile.gettempdir()) / imported_store)
-elif DEMO:
+imported_inventory = None if DEMO else st.session_state.get("imported_inventory")
+if DEMO:
     # Public demo: each browser session gets its own throwaway decisions file,
     # so visitors never see or overwrite each other's choices.
     st.session_state.setdefault("demo_id", uuid.uuid4().hex)
     demo_file = f"obs-agent-{st.session_state.demo_id}.db"
     store = DecisionStore(Path(tempfile.gettempdir()) / demo_file)
+elif st.session_state.get("review_id"):
+    imported_inventory, store = load_review(st.session_state.review_id)
+    st.session_state["imported_inventory"] = imported_inventory
+elif imported_inventory is not None:
+    st.error("Save or reopen this inventory on the Import page before reviewing.")
+    st.stop()
 else:
     store = DecisionStore()
 st.session_state.setdefault("editor_version", 0)
@@ -62,8 +69,8 @@ st.caption(
 
 if imported_inventory is not None:
     st.info(
-        "Reviewing your imported inventory in this browser session. Decisions are kept in a "
-        "temporary local file and exports are only generated for you to review.",
+        "Reviewing your imported inventory. Its snapshot, vocabulary, and decisions are kept in a "
+        "saved local review database. Reopen it from Import / reopen inventory after a restart.",
         icon="📥",
     )
 elif DEMO:
@@ -73,8 +80,25 @@ elif DEMO:
         icon="🧪",
     )
 
+reviewer = st.text_input(
+    "Reviewer name or ID",
+    key="reviewer",
+    value="demo-reviewer" if DEMO else os.environ.get("OBS_AGENT_REVIEWER", ""),
+    max_chars=128,
+    help="Recorded with each approval. This local identifier is self-reported.",
+).strip()
+if not reviewer:
+    st.info("Enter your reviewer name or ID before saving or bulk-accepting decisions.")
+context = review_context(imported_inventory)
+with st.expander("Review snapshot"):
+    st.code(f"Inventory: {context['inventory_id']}\nInference: {context['model_version']}")
+valid_decisions = current_decisions(store, imported_inventory)
+if len(valid_decisions) < len(store.all()):
+    st.warning(
+        "Earlier decisions lack matching snapshot/version evidence. Review them again to export."
+    )
 cov = coverage(imported_inventory)
-decided = {f"{d['resource_id']}|{d['label']}": d for d in store.all()}
+decided = {f"{d['resource_id']}|{d['label']}": d for d in valid_decisions}
 cols = st.columns(6)
 cols[0].metric("Need attention", cov["needs_attention"], help=f"of {cov['total']} resources")
 cols[1].metric("Untagged team", cov["labels"]["team"]["untagged"])
@@ -218,18 +242,19 @@ else:
                 "override = apply the value in the next column",
             ),
             "override": st.column_config.SelectboxColumn(
-                "Override value", options=sorted(ALLOWED[label])
+                "Override value",
+                options=sorted(inventory_config(imported_inventory)[label]["values"]),
             ),
         },
     )
 
     left, right = st.columns([1, 3])
-    if left.button("Save decisions", icon=":material/save:", type="primary"):
+    if left.button("Save decisions", icon=":material/save:", type="primary", disabled=not reviewer):
         errors, saved = [], 0
         for rid, decision, override in editor_changes(df, edited):
             try:
                 if decision:
-                    store.set(rid, label, decision, override, imported_inventory)
+                    store.set(rid, label, decision, override, imported_inventory, reviewer=reviewer)
                 else:
                     store.delete(rid, label)
                 saved += 1
@@ -245,10 +270,10 @@ else:
     if right.button(
         f"Accept all {len(auto)} auto-apply suggestions shown",
         icon=":material/done_all:",
-        disabled=auto.empty,
+        disabled=auto.empty or not reviewer,
     ):
         for rid in auto["resource_id"]:
-            store.set(rid, label, "accept", inventory=imported_inventory)
+            store.set(rid, label, "accept", inventory=imported_inventory, reviewer=reviewer)
         st.toast(f"Accepted {len(auto)} suggestion(s)")
         _refresh()
 

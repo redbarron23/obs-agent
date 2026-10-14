@@ -74,7 +74,9 @@ Before production use, validate the threshold on a representative reviewed sampl
 disable expedited review if its precision falls below the team’s accepted risk level.
 
 Every action is retained with the original suggestion, confidence, source, explanation, and
-timestamp. Download a **Reviewed change plan** before any application step: it contains only
+timestamp, reviewer ID, inventory fingerprint, and inference version. Imported vocabularies
+control cleaning, environment-name rules, and override choices; see [Import inventory](importing.md).
+A changed snapshot or inference version requires fresh approvals. Download a **Reviewed change plan** before any application step: it contains only
 accepted or overridden changes, their before/after diff, and the associated approval evidence.
 
 The plan is an approval artifact, not an apply command. After approval, export a CSV, Terraform

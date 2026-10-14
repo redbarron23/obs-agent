@@ -9,3 +9,6 @@ __pycache__ */
 tests
 *.md
 label_decisions.json
+
+label_decisions.db
+review-workspaces

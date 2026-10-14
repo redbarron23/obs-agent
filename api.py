@@ -24,7 +24,7 @@ GET  /labels/export?format=csv|sh|tfvars       resolved changes to apply
 Pass the same ``session_id`` on follow-up requests to keep conversation memory.
 
 Environment variables:
-    OBS_AGENT_API_KEY  — if set, requests must send it in the X-API-Key header
+    OBS_AGENT_API_KEY  — required; requests must send it in the X-API-Key header
     OBS_AGENT_DECISIONS — SQLite database for review decisions (default label_decisions.db)
     OBS_AGENT_PROVIDER / OBS_AGENT_MODEL — default provider and model for /ask
     plus the usual provider keys (DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, ...)
@@ -73,7 +73,7 @@ except ConfigError as exc:
 
 app = FastAPI(
     title="obs-agent API",
-    description="Chat-based cloud logging cost triage across Azure and GCP.",
+    description="Human-reviewed Azure/GCP label changes, with optional synthetic cost Q&A.",
     version="0.3.0",
 )
 
@@ -507,6 +507,12 @@ class DecisionRequest(BaseModel):
 
     decision: Literal["accept", "reject", "override"]
     value: str | None = Field(default=None, description="Required for override.")
+    reviewer: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Reviewer name or ID. Required unless OBS_AGENT_REVIEWER is configured.",
+    )
 
 
 class Decision(BaseModel):
@@ -517,6 +523,9 @@ class Decision(BaseModel):
     suggested: str | None
     previous: str | None
     decided_at: str
+    reviewer: str | None = None
+    inventory_id: str | None = None
+    model_version: str | None = None
 
 
 class ReviewFeedback(Decision):
@@ -608,7 +617,7 @@ def resource_labels(resource_id: str) -> dict:
 def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> dict:
     _report_or_404(resource_id)
     try:
-        return decisions.set(resource_id, label, req.decision, req.value)
+        return decisions.set(resource_id, label, req.decision, req.value, reviewer=req.reviewer)
     except DecisionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -698,7 +707,7 @@ EXPORT_FILENAME = {
 )
 def export_labels(
     format: Literal["csv", "sh", "tfvars", "plan"] = Query(default="csv"),
-    include_auto: bool = Query(default=True),
+    include_auto: bool = Query(default=False),
 ) -> PlainTextResponse:
     body = label_review.export(decisions, format, include_auto)
     return PlainTextResponse(
