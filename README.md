@@ -47,6 +47,7 @@ Open the dashboard, inspect an untagged resource, adjust its proposed labels if 
 | Components and data flow | [Architecture](docs/architecture.md) |
 | Tests and local checks | [Testing](docs/testing.md) |
 | Reviewer workflow | [Reviewing labels](docs/reviewing.md) |
+| Where review decisions are stored | [Decision storage](docs/decision-storage.md) |
 | Reading and source material | [References](docs/references.md) |
 
 ## Requirements
