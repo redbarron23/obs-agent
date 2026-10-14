@@ -12,8 +12,8 @@ uv sync
 OBS_AGENT_DEMO=1 uv run streamlit run app.py
 ```
 
-Open the local URL printed by Streamlit, then select **Label review** in the sidebar. Demo mode
-creates a disposable decision database for this browser session; closing the session discards it.
+Open the local URL printed by Streamlit, **Label review** opens by default. Demo mode
+creates a disposable decision database for this browser session; the session stops using it when it ends; the operating system eventually cleans up the file.
 
 ## 2. Inspect a suggestion (one minute)
 
@@ -30,7 +30,7 @@ high; check that its ownership, parent, and naming evidence make sense.
 
 ## 3. Make a review decision (one minute)
 
-Choose a row, set **Decision** to **accept**, then select **Save decisions**. To demonstrate the
+Keep the demo reviewer ID or enter your own. Choose a row, set **Decision** to **accept**, then select **Save decisions**. To demonstrate the
 other outcomes, choose **reject** to retain the current value, or **override** and select a
 permitted value. The decision is retained with the original recommendation, confidence, and
 reason.

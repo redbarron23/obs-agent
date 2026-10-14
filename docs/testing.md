@@ -8,11 +8,11 @@ written**, not that **the model answers well**.
 
 | Layer | Count | Question it answers | Runs in CI? | Needs an API key? |
 |---|---|---|---|---|
-| Unit + integration tests | 232 | Does the code do what it says? | Yes | No |
+| Unit + integration tests | See pytest collection | Does the code do what it says? | Yes | No |
 | Eval dry-run | 12 | Do the tool outputs still contain the facts the answers depend on? | Yes | No |
 | Live evals | 12 | Does the model actually use those facts to answer correctly? | **No** | Yes |
 
-The 232 unit tests run in CI on every push and need no provider. The 12 live evals do not run in CI,
+The offline unit and integration tests run in CI on every push and need no provider. The 12 live evals do not run in CI,
 and that gap is deliberate — see [What the mocks cannot catch](#what-the-mocks-cannot-catch).
 
 ## Layer 1 — unit and integration tests (offline)
@@ -136,26 +136,26 @@ behaviour: model accuracy and auto-apply precision have floors pinned against th
 ground truth. A change that quietly degrades inference fails CI rather than silently changing the
 numbers in the README.
 
-Since [the harsh estate](../README.md#how-it-works) landed, those floors are checked on the messy
+Since [the harsh estate](label-inference.md#ground-truth-evaluation) landed, those floors are checked on the messy
 estate too — including that auto-apply precision stays ≥95% when the data is adversarial, and that
 the clean estate stays byte-identical so the published metrics keep meaning the same thing.
 
 ## Test groups
 
-| Group | Tests | What's verified |
-|---|---|---|
-| Label inference (`test_labeling.py`) | 45 | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools, clean-estate stability and harsh-estate degradation |
-| Label review (`test_label_review.py`) | 45 | Reports, decision validation and persistence, table-edit diffing, export resolution and formats, label endpoints + auth, review page (headless) |
-| Tool logic (`test_tools.py`) | 34 | Top-N ranking, zero filtering, spike thresholds / platform filter / limit, cross-cloud totals, edge cases |
-| Agent loop (`test_agent.py`) | 16 | Simple answer, single/multi tool call, conversation memory, history pruning, empty/long questions, safety rails |
-| Provider abstraction | 10 | Stop reason mapping + content block parsing for Anthropic and OpenAI shapes |
-| Streaming | 7 | Streaming with/without tools, OpenAI-compatible streaming, stop-reason normalisation |
-| Message formatting | 3 | Canonical ↔ provider message conversion |
-| CLI parsing | 8 | All flags, defaults, combinations |
-| REST API (`test_api.py`) | 16 | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
-| Model config (`test_model_config.py`) | 32 | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
-| Evals (`test_evals.py`) | 17 | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
-| Observability (`test_observability.py`) | 6 | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent |
+| Group | What's verified |
+|---|---|
+| Label inference (`test_labeling.py`) | Tag normalisation, rules, model, accuracy/precision floors vs ground truth, label tools, clean-estate stability and harsh-estate degradation |
+| Label review (`test_label_review.py`) | Reports, decision validation and persistence, table-edit diffing, export resolution and formats, label endpoints + auth, review page (headless) |
+| Tool logic (`test_tools.py`) | Top-N ranking, zero filtering, spike thresholds / platform filter / limit, cross-cloud totals, edge cases |
+| Agent loop (`test_agent.py`) | Simple answer, single/multi tool call, conversation memory, history pruning, empty/long questions, safety rails |
+| Provider abstraction | Stop reason mapping + content block parsing for Anthropic and OpenAI shapes |
+| Streaming | Streaming with/without tools, OpenAI-compatible streaming, stop-reason normalisation |
+| Message formatting | Canonical ↔ provider message conversion |
+| CLI parsing | All flags, defaults, combinations |
+| REST API (`test_api.py`) | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
+| Model config (`test_model_config.py`) | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
+| Evals (`test_evals.py`) | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
+| Observability (`test_observability.py`) | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent |
 
 ## CI
 

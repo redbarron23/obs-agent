@@ -14,8 +14,9 @@ review flow needs no LLM in any of them — only the optional cost Q&A agent doe
 uv run streamlit run app.py
 ```
 
-The sidebar has two pages. **Label review** is the main one: the review queue, per-row decisions
-and the export buttons described in the README. The **chat** page drives the cost Q&A agent with
+**Label review** opens by default: the review queue, per-row decisions, and exports described in
+the README. **Import / reopen inventory** saves private CSV snapshots and vocabularies locally.
+The **Optional cost chat** page drives the cost Q&A agent with
 provider/model selection, conversation history and example prompts ([docs/agent.md](agent.md)).
 
 ## REST API (FastAPI)
@@ -30,7 +31,8 @@ uv run uvicorn api:app --reload          # http://localhost:8000/docs for intera
 
 ### Label endpoints
 
-The ones the review UI is built on, and the ones that need no LLM:
+These endpoints use the bundled synthetic estate and need no LLM. They share the review logic,
+but the UI calls Python functions directly; imported review workspaces are UI-only:
 
 | Endpoint | Purpose |
 |---|---|
@@ -42,6 +44,14 @@ The ones the review UI is built on, and the ones that need no LLM:
 | `GET /labels/feedback` | Append-only reviewer actions with their model context |
 | `GET /labels/feedback/metrics` | Reviewer-agreement precision, recall, F1, and monthly trend |
 | `GET /labels/export?format=csv\|sh\|tfvars\|plan` | Resolved changes as a download; `plan` is reviewed-only and includes approval evidence |
+
+Decisions need a `reviewer` name or ID (1–128 characters), or a configured
+`OBS_AGENT_REVIEWER` default. The identifier is caller-supplied, not authentication: use an
+authenticated gateway to establish reviewer identity for a production deployment. Decision and
+feedback responses include `reviewer`, `inventory_id`, and `model_version`; older records may
+have null provenance. Exports ignore approvals that do not match the current snapshot/version.
+`plan` exports use schema version 2 and are always reviewed-only. Other formats also default to
+reviewed-only; `include_auto=true` explicitly includes unreviewed high-confidence suggestions.
 
 ### Agent endpoints
 
@@ -58,7 +68,7 @@ See [docs/agent.md](agent.md) for request/response detail and the SSE streaming 
 ```bash
 curl -X PUT localhost:8000/resources/svc-ingest/labels/team/decision \
   -H "X-API-Key: $OBS_AGENT_API_KEY" \
-  -H 'content-type: application/json' -d '{"decision": "accept"}'
+  -H 'content-type: application/json' -d '{"decision": "accept", "reviewer": "finops-reviewer"}'
 
 curl -s localhost:8000/ask -H 'content-type: application/json' \
   -H "X-API-Key: $OBS_AGENT_API_KEY" \
@@ -99,17 +109,20 @@ All error bodies are `{"detail": "..."}`. Interactive docs with schemas and exam
 ## Docker
 
 ```bash
-cp .env.example .env              # add keys for hosted providers (optional)
-ollama serve                      # the cost agent's default provider runs on the host
+cp .env.example .env
+openssl rand -hex 32              # paste this value into OBS_AGENT_API_KEY in .env
 docker compose up --build         # API on :8000, Streamlit UI on :8501
 ```
 
+No LLM is needed for label review. For optional chat, start `ollama serve` on the host and
+pull the configured model, or configure a hosted provider. Leave `OLLAMA_HOST` unset in `.env`
+for the Compose default; `localhost` inside a container points to the container itself.
 Containers reach the host's Ollama through `host.docker.internal` (override with `OLLAMA_HOST`).
 The image installs dependencies with uv, runs as a non-root user, and the API has a health check.
 
 ## Hosted demo (Streamlit Community Cloud)
 
-Live at **https://obs-agent.streamlit.app** (Label review: [/Label_review](https://obs-agent.streamlit.app/Label_review)).
+Live at **https://obs-agent.streamlit.app** (Label review opens at the root URL).
 The Label review page needs no LLM, so it can be hosted for free:
 
 1. Open [share.streamlit.io](https://share.streamlit.io) → **Create app** → repository

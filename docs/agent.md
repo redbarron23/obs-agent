@@ -107,7 +107,7 @@ flowchart TD
 
 subgraph group_entry["User interfaces"]
   node_cli["CLI / REPL<br/>[agent.py]"]
-  node_web["Streamlit chat<br/>[app.py]"]
+  node_web["Streamlit chat<br/>[pages/3_Cost_chat.py]"]
   node_api["REST API<br/>[api.py]"]
 end
 
@@ -159,7 +159,7 @@ node_evals -->|"dry-run checks"| node_dispatch
 node_evals -->|"live checks"| node_loop
 
 click node_cli "https://github.com/redbarron23/obs-agent/blob/main/agent.py"
-click node_web "https://github.com/redbarron23/obs-agent/blob/main/app.py"
+click node_web "https://github.com/redbarron23/obs-agent/blob/main/pages/3_Cost_chat.py"
 click node_api "https://github.com/redbarron23/obs-agent/blob/main/api.py"
 click node_loop "https://github.com/redbarron23/obs-agent/blob/main/agent.py"
 click node_providers "https://github.com/redbarron23/obs-agent/blob/main/providers.py"
@@ -363,7 +363,7 @@ uv run agent.py --provider ollama --model qwen2.5:7b -q "Which Azure sub has the
 
 ## Web UI example prompts
 
-Launch `uv run streamlit run app.py`, select your provider, and try:
+Launch `uv run streamlit run app.py`, open **Optional cost chat**, select your provider, and try:
 
 - *"Which Azure sub costs the most?"*
 - *"Show me top 3 GCP projects"*

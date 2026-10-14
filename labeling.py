@@ -43,7 +43,7 @@ LABELS = ("team", "env")
 # tokens are near-perfect, so env uses whichever source is more confident.
 BEST_STRATEGY = {"team": "model", "env": "hybrid"}
 
-# Confidence above which a suggestion would be applied without review.
+# Confidence above which a suggestion is eligible for expedited human review.
 AUTO_APPLY_THRESHOLD = 0.9
 CALIBRATION_BINS = 10
 
@@ -78,14 +78,19 @@ ALLOWED = {"team": set(TEAM_NAMES), "env": set(ENVS)}
 ALIASES = {"team": TEAM_ALIASES, "env": ENV_ALIASES}
 
 
-def normalise(label: str, value) -> str | None:
+def normalise(label: str, value, config: dict | None = None) -> str | None:
     """Map a raw tag value onto the allowed vocabulary, or None."""
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return None
     key = re.sub(r"[\s_]+", "-", str(value).strip().lower())
-    key = re.sub(r"^team-|-team$", "", key)
-    key = ALIASES[label].get(key, key)
-    return key if key in ALLOWED[label] else None
+    if config is None or (
+        key not in config[label]["values"] and key not in config[label]["aliases"]
+    ):
+        key = re.sub(r"^team-|-team$", "", key)
+    aliases = ALIASES[label] if config is None else config[label]["aliases"]
+    allowed = ALLOWED[label] if config is None else config[label]["values"]
+    key = aliases.get(key, key)
+    return key if key in allowed else None
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
@@ -93,7 +98,9 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for label in LABELS:
         df[f"{label}_clean"] = pd.Series(
-            [normalise(label, v) for v in df[label]], index=df.index, dtype=object
+            [normalise(label, v, df.attrs.get("label_config")) for v in df[label]],
+            index=df.index,
+            dtype=object,
         )
     return df
 
@@ -150,8 +157,6 @@ def _new_model():
 
 # ── Rules baseline ─────────────────────────────────────────────────────
 
-_ENV_TOKEN_TO_ENV = {tok: env for env, toks in ENV_NAME_TOKENS.items() for tok in toks}
-
 
 @dataclass
 class Suggestion:
@@ -173,6 +178,9 @@ class Rules:
 
     def __init__(self, train: pd.DataFrame, label: str):
         self.label = label
+        config = train.attrs.get("label_config")
+        tokens = ENV_NAME_TOKENS if config is None else config["env"]["name_tokens"]
+        self.env_tokens = {tok: env for env, names in tokens.items() for tok in names}
         y = train[f"{label}_clean"]
         self.by_parent = self._votes(train["parent"], y)
         prefixes = [(name_tokens(r) or [""])[0] for r in train["resource_id"]]
@@ -203,8 +211,8 @@ class Rules:
         if self.label == "env":
             # Name tokens are a direct, high-precision env signal.
             for tok in name_tokens(row["resource_id"]):
-                if tok in _ENV_TOKEN_TO_ENV:
-                    env = _ENV_TOKEN_TO_ENV[tok]
+                if tok in self.env_tokens:
+                    env = self.env_tokens[tok]
                     return Suggestion(env, 0.95, "rule:name", f"name token '{tok}' means env={env}")
             return NO_SUGGESTION
         prefix = (name_tokens(row["resource_id"]) or [""])[0]

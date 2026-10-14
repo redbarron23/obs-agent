@@ -24,6 +24,10 @@ How and where decisions are stored is described in [Decision storage](decision-s
 
 - [ ] Set `OBS_AGENT_DECISIONS` to a file on a persistent, access-controlled volume.
   The default local `label_decisions.db` is suitable only for local development.
+- [ ] Set `OBS_AGENT_REVIEW_DIR` to a private persistent directory and back up the imported review
+  databases too. They contain the uploaded inventories as well as approvals.
+- [ ] Authenticate reviewers at the gateway or application boundary and bind the recorded reviewer
+  ID to the authenticated subject; identifiers are self-reported locally and a shared API key does not identify a person. Retain authentication logs.
 - [ ] Back up the SQLite decision database before deployments and on a scheduled cadence that meets
   the team's recovery-point objective. Encrypt backups and restrict restore access to the service
   owner and designated operators.
@@ -41,8 +45,8 @@ How and where decisions are stored is described in [Decision storage](decision-s
   that period expires.
 - [ ] Keep immutable metadata alongside each export: generation time, environment, commit/tag,
   decision-database backup identifier, approver, and a checksum of the artifact.
-- [ ] Do not place cloud credentials, raw billing exports, personal data, or reviewer free text in
-  an audit export.
+- [ ] Do not place cloud credentials, raw billing exports, unnecessary personal data, or reviewer free text in
+  an audit export. Use stable reviewer IDs rather than email addresses when possible.
 
 ## Confidence-threshold changes
 

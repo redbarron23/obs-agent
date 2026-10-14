@@ -355,7 +355,8 @@ class TestUI:
     def _app(self):
         from streamlit.testing.v1 import AppTest
 
-        return AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
+        at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60).run()
+        return at.switch_page("pages/3_Cost_chat.py")
 
     def test_dropdown_follows_env(self, monkeypatch):
         monkeypatch.setenv("OBS_AGENT_PROVIDER", "openai")

@@ -38,6 +38,7 @@ from labeling import (
     normalise,
     suspect_labels,
 )
+from review_context import review_context
 
 STATUSES = ("ok", "untagged", "suspect")
 DECISIONS = ("accept", "reject", "override")
@@ -224,6 +225,7 @@ class DecisionStore:
         is_new = not self.path.exists()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS decisions (
@@ -255,6 +257,11 @@ class DecisionStore:
                 )
                 """
             )
+            for table in ("decisions", "review_feedback"):
+                columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+                for name in ("reviewer", "inventory_id", "model_version"):
+                    if name not in columns:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} TEXT")
             if is_new and self._legacy_path.exists():
                 for entry in json.loads(self._legacy_path.read_text()):
                     conn.execute(
@@ -294,7 +301,14 @@ class DecisionStore:
         decision: str,
         value: str | None = None,
         inventory: pd.DataFrame | None = None,
+        *,
+        reviewer: str | None = None,
     ) -> dict:
+        reviewer = (
+            reviewer if reviewer is not None else os.environ.get("OBS_AGENT_REVIEWER", "")
+        ).strip()
+        if not reviewer or len(reviewer) > 128:
+            raise DecisionError("Provide a reviewer name or ID (1–128 characters).")
         report = resource_report(resource_id, inventory)
         if report is None:
             raise KeyError(resource_id)
@@ -304,7 +318,9 @@ class DecisionStore:
             raise DecisionError(f"Unknown decision '{decision}'. Choose from {list(DECISIONS)}.")
         lr = report["labels"][label]
         if decision == "override":
-            clean = normalise(label, value)
+            clean = normalise(
+                label, value, inventory.attrs.get("label_config") if inventory is not None else None
+            )
             if clean is None:
                 raise DecisionError(f"'{value}' is not a valid {label}.")
             value = clean
@@ -320,6 +336,8 @@ class DecisionStore:
             "suggested": lr["suggested"],
             "previous": lr["current"],
             "decided_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "reviewer": reviewer,
+            **review_context(inventory),
         }
         feedback = entry | {
             "confidence": lr["confidence"],
@@ -330,14 +348,19 @@ class DecisionStore:
             conn.execute(
                 """
                 INSERT INTO decisions
-                (resource_id, label, decision, value, suggested, previous, decided_at)
-                VALUES (:resource_id, :label, :decision, :value, :suggested, :previous, :decided_at)
+                (resource_id, label, decision, value, suggested, previous, decided_at,
+                 reviewer, inventory_id, model_version)
+                VALUES (:resource_id, :label, :decision, :value, :suggested, :previous, :decided_at,
+                        :reviewer, :inventory_id, :model_version)
                 ON CONFLICT(resource_id, label) DO UPDATE SET
                     decision = excluded.decision,
                     value = excluded.value,
                     suggested = excluded.suggested,
                     previous = excluded.previous,
-                    decided_at = excluded.decided_at
+                    decided_at = excluded.decided_at,
+                    reviewer = excluded.reviewer,
+                    inventory_id = excluded.inventory_id,
+                    model_version = excluded.model_version
                 """,
                 entry,
             )
@@ -345,9 +368,10 @@ class DecisionStore:
                 """
                 INSERT INTO review_feedback
                 (resource_id, label, decision, value, suggested, previous,
-                 confidence, source, reason, decided_at)
+                 confidence, source, reason, decided_at, reviewer, inventory_id, model_version)
                 VALUES (:resource_id, :label, :decision, :value, :suggested, :previous,
-                        :confidence, :source, :reason, :decided_at)
+                        :confidence, :source, :reason, :decided_at,
+                        :reviewer, :inventory_id, :model_version)
                 """,
                 feedback,
             )
@@ -492,12 +516,18 @@ def resolve(report: dict, decisions: dict[str, dict], include_auto: bool) -> dic
     return out
 
 
+def current_decisions(store: DecisionStore, inventory: pd.DataFrame | None = None) -> list[dict]:
+    """Only approvals bound to the snapshot and inference currently being reviewed."""
+    context = review_context(inventory)
+    return [d for d in store.all() if all(d.get(k) == v for k, v in context.items())]
+
+
 def pending_changes(
-    store: DecisionStore, include_auto: bool = True, inventory: pd.DataFrame | None = None
+    store: DecisionStore, include_auto: bool = False, inventory: pd.DataFrame | None = None
 ) -> list[dict]:
     """Resources whose resolved tags differ from what they carry today."""
     inf = get_inference() if inventory is None else LabelInference(inventory)
-    decisions = {f"{d['resource_id']}|{d['label']}": d for d in store.all()}
+    decisions = {f"{d['resource_id']}|{d['label']}": d for d in current_decisions(store, inventory)}
     changes = []
     for r in reports(inventory):
         final = resolve(r, decisions, include_auto)
@@ -506,8 +536,8 @@ def pending_changes(
             value, how = final[label]
             if value is not None and value != r["labels"][label]["current"]:
                 tags[label] = (value, how)
-        if "team" in tags:
-            # cost_center travels with team.
+        if "team" in tags and tags["team"][0] in inf.cost_center_of:
+            # Only export a cost center when this inventory establishes a mapping.
             tags["cost_center"] = (inf.cost_center_of[tags["team"][0]], tags["team"][1])
         if tags:
             changes.append(
@@ -515,7 +545,7 @@ def pending_changes(
                     "resource_id": r["resource_id"],
                     "cloud": r["cloud"],
                     "tags": tags,
-                    "previous": {lbl: r["labels"][lbl]["current"] for lbl in LABELS}
+                    "previous": {lbl: r["labels"][lbl]["raw"] for lbl in LABELS}
                     | {"cost_center": r["cost_center"]["current"]},
                 }
             )
@@ -529,7 +559,7 @@ def _gcp_value(value: str) -> str:
 
 def approved_change_plan(store: DecisionStore, inventory: pd.DataFrame | None = None) -> dict:
     """An auditable, reviewed-only change set for approval before application."""
-    decisions = {f"{d['resource_id']}|{d['label']}": d for d in store.all()}
+    decisions = {f"{d['resource_id']}|{d['label']}": d for d in current_decisions(store, inventory)}
     feedback = {f"{d['resource_id']}|{d['label']}": d for d in store.feedback()}
     changes = pending_changes(store, include_auto=False, inventory=inventory)
     approvals = []
@@ -540,7 +570,8 @@ def approved_change_plan(store: DecisionStore, inventory: pd.DataFrame | None = 
             if key in decisions and key in feedback and feedback[key] not in approvals:
                 approvals.append(feedback[key])
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        **review_context(inventory),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "reviewed_only": True,
         "changes": [
@@ -561,7 +592,7 @@ def approved_change_plan(store: DecisionStore, inventory: pd.DataFrame | None = 
 def export(
     store: DecisionStore,
     fmt: str,
-    include_auto: bool = True,
+    include_auto: bool = False,
     inventory: pd.DataFrame | None = None,
 ) -> str:
     if fmt not in EXPORT_FORMATS:
