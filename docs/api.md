@@ -117,6 +117,7 @@ The Label review page needs no LLM, so it can be hosted for free:
 2. **Advanced settings**: Python **3.12**, and under Secrets add `OBS_AGENT_DEMO = "1"`.
 3. Deploy. Dependencies install from `uv.lock`.
 
-With `OBS_AGENT_DEMO=1` each visitor's decisions are private to their browser session and
-discarded when it ends, and the chat page is switched off with a pointer to Label review (there
-is no LLM in the demo).
+With `OBS_AGENT_DEMO=1` each visitor's decisions go to a private temporary file for their browser
+session. The session stops using it when it ends, and the file is left for the operating system's
+temp cleanup (see [Decision storage](decision-storage.md)). The chat page is switched off with a
+pointer to Label review (there is no LLM in the demo).
