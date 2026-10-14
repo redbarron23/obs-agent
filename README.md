@@ -78,6 +78,20 @@ Open `http://localhost:8501` for review and `http://localhost:8000/docs` for the
 Both bind to loopback. The named volume retains decisions and imported reviews. Ollama is needed
 only for optional cost chat; Compose reaches the host automatically. See [Interfaces](docs/api.md).
 
+## How it works
+
+```mermaid
+flowchart LR
+    I[Inventory + vocabulary] --> M[Rules and label inference]
+    M --> R[Human review with evidence]
+    R --> D[(SQLite approvals + snapshot/version)]
+    D --> P[Reviewed change plan]
+```
+
+Label inference uses observed labels and ownership signals; reviewers resolve uncertain suggestions.
+Plans bind approvals to their inventory and inference version. Optional cost chat is a separate
+synthetic-data workflow. See [Architecture](docs/architecture.md).
+
 ## Quality and limits
 
 | Synthetic hold-out result | Value |
@@ -126,6 +140,8 @@ uv run ruff check .
 uv run pytest -q -m "not integration"
 uv run evals.py --dry-run
 ```
+
+Follow the [open-source roadmap](https://github.com/users/redbarron23/projects/2).
 
 ## License
 
