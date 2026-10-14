@@ -20,7 +20,9 @@ Azure or GCP.
 
 ### Persistent decisions and backups
 
-- [ ] Set `OBS_AGENT_DECISIONS` to a persistent, access-controlled volume or managed database.
+How and where decisions are stored is described in [Decision storage](decision-storage.md).
+
+- [ ] Set `OBS_AGENT_DECISIONS` to a file on a persistent, access-controlled volume.
   The default local `label_decisions.db` is suitable only for local development.
 - [ ] Back up the SQLite decision database before deployments and on a scheduled cadence that meets
   the team's recovery-point objective. Encrypt backups and restrict restore access to the service
