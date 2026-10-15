@@ -73,6 +73,26 @@ and keep it outside git. All users of one local app installation can reopen its 
 this is a single trusted-team workspace, not tenant-isolated storage. Delete a review's database
 through your normal local file management when its retention period ends.
 
+## Compare with an earlier snapshot
+
+For a recurring review, save each new export as its own snapshot, then open **Compare snapshots**.
+It defaults to the newest saved review against the one before it and lists:
+
+- **New** and **Removed** resources, with their parent, owners, and current tags.
+- **Changed** resources, one row per change with before/after values and a reason for renewed
+  review: parent, owners, or service footprint changes, material spend or cost-shape changes
+  (the `drift.detect_drift` thresholds), tag edits made outside the review, and changed
+  `team`/`env` suggestions. Resources that did not change are counted, not listed.
+
+**Review new or changed resources** opens the current snapshot in **Label review** with a sidebar
+filter limited to them. A changed resource whose tags still look correct has no suggestion to
+decide, so it does not appear in the queue; the comparison table is its record.
+
+Earlier decisions are shown next to changed and removed resources for context only. They stay in
+the earlier snapshot's database and are never copied into the current review: approve again
+against the current snapshot. If the two snapshots use different vocabularies, the page says so,
+because tag and suggestion changes may then reflect the vocabulary rather than the estate.
+
 The API and agent still use synthetic data. Saving/importing does not give either surface access to
 private inventories or cloud accounts. See [Decision storage](decision-storage.md) for approval
 provenance and [the example plan](../fixtures/reviewed_change_plan_example.json) for the export.

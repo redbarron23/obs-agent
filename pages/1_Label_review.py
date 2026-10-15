@@ -161,6 +161,11 @@ cloud = st.sidebar.selectbox("Cloud", ["both", "azure", "gcp"])
 lo, hi = st.sidebar.slider("Confidence", 0.0, 1.0, (0.0, 1.0), step=0.05)
 search = st.sidebar.text_input("Resource contains")
 hide_reviewed = st.sidebar.checkbox("Hide reviewed", value=False)
+drift_filter = st.session_state.get("drift_filter")
+drifted = None
+if drift_filter and drift_filter["review_id"] == st.session_state.get("review_id"):
+    if st.sidebar.checkbox(f"Only new or changed since {drift_filter['since']}", value=True):
+        drifted = set(drift_filter["resource_ids"])
 
 rows = review_queue(
     label=label,
@@ -177,6 +182,8 @@ for r in rows:
     lr = r["labels"][label]
     d = decided.get(f"{r['resource_id']}|{label}")
     if hide_reviewed and d:
+        continue
+    if drifted is not None and r["resource_id"] not in drifted:
         continue
     records.append(
         {

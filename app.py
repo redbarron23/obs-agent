@@ -9,6 +9,7 @@ page = st.navigation(
     [
         st.Page("pages/1_Label_review.py", title="Label review", icon="🏷️", default=True),
         st.Page("pages/2_Import_inventory.py", title="Import / reopen inventory", icon="📥"),
+        st.Page("pages/4_Compare_snapshots.py", title="Compare snapshots", icon="🔀"),
         st.Page("pages/3_Cost_chat.py", title="Optional cost chat", icon="💬"),
     ]
 )

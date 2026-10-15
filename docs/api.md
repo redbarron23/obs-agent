@@ -16,6 +16,7 @@ uv run streamlit run app.py
 
 **Label review** opens by default: the review queue, per-row decisions, and exports described in
 the README. **Import / reopen inventory** saves private CSV snapshots and vocabularies locally.
+**Compare snapshots** shows what changed between two saved snapshots and filters the review queue to it.
 The **Optional cost chat** page drives the cost Q&A agent with
 provider/model selection, conversation history and example prompts ([docs/agent.md](agent.md)).
 
