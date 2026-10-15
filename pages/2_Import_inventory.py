@@ -1,10 +1,19 @@
 """Validate an inventory and save or reopen a local review workspace."""
 
+import hashlib
 from pathlib import Path
 
 import streamlit as st
 
-from inventory_import import REQUIRED_COLUMNS, InventoryImportError, load_inventory_csv
+from inventory_import import (
+    OPTIONAL_COLUMNS,
+    REQUIRED_COLUMNS,
+    InventoryImportError,
+    apply_column_mapping,
+    csv_columns,
+    load_inventory_csv,
+    suggest_mapping,
+)
 from label_config import LabelConfigError, load_label_config
 from label_review import demo_enabled
 from labeling import LABELS, normalise
@@ -64,15 +73,51 @@ with st.expander("Required CSV columns"):
     st.code(", ".join(sorted(REQUIRED_COLUMNS)), language=None)
     st.caption(
         "Use JSON string lists or | separators for owners and top_services. "
-        "Each label needs two recognized values with at least two examples each."
+        "Each label needs two recognized values with at least two examples each. "
+        "Other column names can be mapped to these fields after upload."
     )
 
 vocabulary = st.file_uploader("Vocabulary JSON (optional; otherwise use demo values)", type="json")
 uploaded = st.file_uploader("Sanitized Azure/GCP inventory CSV", type="csv")
+UNMAPPED = "— not mapped —"
+
+
+def map_columns(source: bytes) -> bytes | None:
+    """Return the CSV in the import schema, asking for a column mapping when it differs."""
+    columns = csv_columns(source)
+    if REQUIRED_COLUMNS <= set(columns):
+        return source
+    st.subheader("Map your columns")
+    st.caption(
+        "This CSV's headers differ from the import schema. Choose the source column for each "
+        "field. Suggestions are guesses: check each one. Unmapped optional fields stay blank; "
+        "required fields must come from your data."
+    )
+    guess = suggest_mapping(columns)
+    digest = hashlib.sha256(source).hexdigest()[:12]
+    mapping = {}
+    grid = st.columns(3)
+    fields = sorted(REQUIRED_COLUMNS) + sorted(OPTIONAL_COLUMNS)
+    for i, field in enumerate(fields):
+        options = [UNMAPPED, *columns]
+        choice = grid[i % 3].selectbox(
+            field + ("" if field in REQUIRED_COLUMNS else " (optional)"),
+            options,
+            index=options.index(guess[field]) if field in guess else 0,
+            key=f"map-{digest}-{field}",
+        )
+        mapping[field] = None if choice == UNMAPPED else choice
+    ignored = sorted(set(columns) - {c for c in mapping.values() if c})
+    if ignored:
+        st.caption("Not imported: " + ", ".join(ignored))
+    return apply_column_mapping(source, mapping)
+
+
 if uploaded:
     try:
         config = load_label_config(vocabulary.getvalue()) if vocabulary else None
-        inventory = load_inventory_csv(uploaded.getvalue(), config)
+        normalized = map_columns(uploaded.getvalue())
+        inventory = load_inventory_csv(normalized, config)
     except (InventoryImportError, LabelConfigError) as exc:
         st.error(str(exc))
     else:
@@ -100,7 +145,8 @@ if uploaded:
             "Save explicitly to retain this inventory and its reviews after closing the browser."
         )
         if st.button("Save and open review", type="primary"):
-            review_id = save_review(uploaded.getvalue(), uploaded.name, config)
+            # Store the mapped CSV so the saved review reopens without the mapping.
+            review_id = save_review(normalized, uploaded.name, config)
             open_review(review_id)
             st.success("Saved locally. Suggestions are ready for human review.")
             st.page_link("pages/1_Label_review.py", label="Open Label review", icon="🏷️")

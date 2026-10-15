@@ -8,7 +8,8 @@ uv run streamlit run app.py
 ```
 
 1. Open **Import / reopen inventory**. Download the CSV example/template and vocabulary example.
-2. Upload your CSV and, optionally, a vocabulary JSON matching your own organisation.
+2. Upload your CSV and, optionally, a vocabulary JSON matching your own organisation. If the
+   headers differ from the schema below, [map your columns](#map-your-own-column-names) on the page.
 3. Inspect the validation summary and data preview, then select **Save and open review**.
 4. Open **Label review**, enter your reviewer name or ID, and accept, reject, or override suggestions.
 5. Download **Reviewed change plan** and inspect it before handing changes to your delivery system.
@@ -29,10 +30,38 @@ Each row is an Azure subscription or GCP project. These columns are required:
 
 `billing_account`, `created_at`, and `region` are optional context columns.
 The importer rejects missing columns/clouds/IDs, duplicate IDs, invalid lists, and invalid numbers.
+Each error names the spreadsheet rows to correct (the header is row 1).
 
 For **both** team and env, provide at least two recognized values with at least two labelled
 resources per value. The model trains on these observed examples; review their quality first.
 The [CSV example](../fixtures/sanitized_inventory_sample.csv) has five resources and one missing-label row.
+
+## Map your own column names
+
+You do not need to rename columns before importing. When a CSV lacks any required column name, the
+page shows **Map your columns**: one selector per field, pre-filled where a header matches the
+field name or a common synonym (for example `Subscription ID`, `Environment`, `Cost Centre`).
+Ambiguous headers are left unmapped. Check every selector before saving.
+
+For example, this export:
+
+```csv
+Provider,Subscription ID,Management Group,Owner,Creator,Services,Daily Cost,Weekend Ratio,Cost CV,Team,Environment,Cost Centre,Notes
+azure,az-001,mg-platform,alice|bob,alice,AKS|SQL,120,0.9,0.2,identity,prod,CC-4001,keep out
+```
+
+maps `Provider` → `cloud`, `Subscription ID` → `resource_id`, `Management Group` → `parent`,
+`Owner` → `owners`, `Creator` → `created_by`, `Services` → `top_services`, `Daily Cost` →
+`avg_daily_cost`, `Weekend Ratio` → `weekend_ratio`, `Cost CV` → `cost_cv`, `Team` → `team`,
+`Environment` → `env` and `Cost Centre` → `cost_center`. `Notes` is listed under **Not imported**
+and is dropped.
+
+Mapping only renames and selects columns; values pass through unchanged and get the same validation
+as a direct import. Every required field must come from a real column, and each source column can
+fill one field. Blank owners, services, or cost-shape values are not filled in: a blank cost value
+fails validation with its row number. Unrecognized tag values stay visible as needing review.
+Saving stores the mapped CSV, so the review reopens without remapping. A CSV that already uses the
+schema's column names skips this step.
 
 ## Your own vocabulary
 

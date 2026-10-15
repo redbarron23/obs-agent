@@ -29,8 +29,9 @@ See the [five-minute walkthrough](docs/five-minute-demo.md).
 ## Use your own inventory
 
 1. Open **Import / reopen inventory** and download the CSV and vocabulary examples.
-2. Adapt your sanitized Azure subscription/GCP project snapshot to the CSV schema. Supply your
-   own team/environment values and aliases in the optional vocabulary JSON.
+2. Upload your sanitized Azure subscription/GCP project snapshot. If its headers differ from the
+   CSV schema, map them on the page. Supply your own team/environment values and aliases in the
+   optional vocabulary JSON.
 3. Select **Save and open review**, then review suggestions and export a plan.
 4. Return to **Import / reopen inventory** to resume a saved snapshot after a browser or app restart.
 5. Next cycle, save the new snapshot and open **Compare snapshots** to review only what changed.
