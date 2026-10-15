@@ -97,3 +97,9 @@ review_queue = detect_drift(last_month_inventory, current_inventory)
 
 Snapshot collection belongs to the caller. The helper does not read cloud accounts, alter tags, or
 decide that a drifted tag is wrong; it only makes review work visible.
+
+`drift.compare_snapshots(previous, current)` builds on it for whole snapshots: it also returns new
+and removed resources, tag edits, changed label suggestions, and a vocabulary-mismatch flag.
+`review_workspaces.compare_reviews(previous_id, current_id)` runs it on two saved reviews and attaches
+the earlier review's decisions for context without copying them. The **Compare snapshots** page uses
+it; see [Importing](importing.md#compare-with-an-earlier-snapshot).

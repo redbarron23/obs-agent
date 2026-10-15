@@ -33,6 +33,7 @@ See the [five-minute walkthrough](docs/five-minute-demo.md).
    own team/environment values and aliases in the optional vocabulary JSON.
 3. Select **Save and open review**, then review suggestions and export a plan.
 4. Return to **Import / reopen inventory** to resume a saved snapshot after a browser or app restart.
+5. Next cycle, save the new snapshot and open **Compare snapshots** to review only what changed.
 
 Snapshots, vocabularies, and approvals persist locally in `review-workspaces/` (configurable with
 `OBS_AGENT_REVIEW_DIR`). Keep this private directory outside version control and back it up.

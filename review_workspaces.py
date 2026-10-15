@@ -8,6 +8,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from drift import compare_snapshots
 from inventory_import import load_inventory_csv
 from label_config import inventory_config
 from label_review import DecisionStore
@@ -66,3 +67,12 @@ def saved_reviews() -> list[dict]:
         if row:
             reviews.append({"id": path.stem, "name": row[0], "created_at": row[1]})
     return sorted(reviews, key=lambda r: r["created_at"], reverse=True)
+
+
+def compare_reviews(previous_id: str, current_id: str) -> dict:
+    """Compare two saved reviews; read-only for both decision databases."""
+    if previous_id == current_id:
+        raise ValueError("Choose two different saved reviews to compare.")
+    previous, previous_store = load_review(previous_id)
+    current, _ = load_review(current_id)
+    return compare_snapshots(previous, current, previous_decisions=previous_store.all())
