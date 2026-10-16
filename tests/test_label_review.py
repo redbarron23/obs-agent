@@ -317,6 +317,16 @@ class TestLabelAPI:
     def test_coverage(self, client):
         assert client.get("/labels/coverage").json()["labels"]["team"]["untagged"] == 170
 
+    @pytest.mark.parametrize("fmt", lr.EXPORT_FORMATS)
+    def test_invalid_export_returns_actionable_error(self, client, store, monkeypatch, fmt):
+        resource = next(r for r in lr.review_queue(cloud="gcp", label="team", status="untagged"))
+        store.set(resource["resource_id"], "team", "override", "payments")
+        inference = lr.get_inference()
+        monkeypatch.setattr(inference, "cost_center_of", {"payments": "CC-1,env=prod"})
+        response = client.get("/labels/export", params={"format": fmt})
+        assert response.status_code == 422
+        assert "invalid cost_center" in response.json()["detail"]
+
     def test_queue_and_pagination(self, client):
         page = client.get("/resources", params={"label": "team", "limit": 5}).json()
         assert len(page["items"]) == 5 and page["total"] >= 170

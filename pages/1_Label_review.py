@@ -200,6 +200,11 @@ for r in rows:
             "alternatives": ", ".join(
                 f"{a['value']} {a['confidence']:.0%}" for a in lr["alternatives"]
             ),
+            "cost_center": (
+                "Conflicting: " + ", ".join(r["cost_center"]["conflicting"])
+                if r["cost_center"]["conflicting"]
+                else r["cost_center"]["implied"] or "No mapping"
+            ),
             "decision": d["decision"] if d else "",
             "override": d["value"] if d and d["decision"] == "override" else None,
         }
@@ -234,6 +239,7 @@ else:
             "parent",
             "owners",
             "alternatives",
+            "cost_center",
             "why",
         ],
         column_config={
@@ -293,7 +299,11 @@ include_auto = st.checkbox(
     value=False,
     help="Off by default: export only what a reviewer accepted or overrode.",
 )
-changes = pending_changes(store, include_auto, imported_inventory)
+try:
+    changes = pending_changes(store, include_auto, imported_inventory)
+except DecisionError as exc:
+    st.error(str(exc))
+    st.stop()
 st.caption(
     f"{len(changes)} resource(s) would change. Overrides win over accepts, "
     "accepts over auto-apply; rejected suggestions are never exported."

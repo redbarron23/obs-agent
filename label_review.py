@@ -20,6 +20,7 @@ import csv
 import io
 import json
 import os
+import re
 import shlex
 import sqlite3
 from datetime import datetime, timezone
@@ -120,6 +121,7 @@ def _report(inf: LabelInference, row, suspects: dict[str, pd.DataFrame]) -> dict
         "cost_center": {
             "current": _raw(row["cost_center"]),
             "implied": inf.cost_center_of.get(team),
+            "conflicting": inf.cost_center_conflicts.get(team, []),
         },
         "needs_attention": any(lbl["status"] != "ok" for lbl in labels.values()),
     }
@@ -540,6 +542,10 @@ def pending_changes(
             # Only export a cost center when this inventory establishes a mapping.
             tags["cost_center"] = (inf.cost_center_of[tags["team"][0]], tags["team"][1])
         if tags:
+            tags = {
+                label: (_export_value(r["cloud"], r["resource_id"], label, value), how)
+                for label, (value, how) in tags.items()
+            }
             changes.append(
                 {
                     "resource_id": r["resource_id"],
@@ -552,9 +558,21 @@ def pending_changes(
     return changes
 
 
-def _gcp_value(value: str) -> str:
-    # GCP label values: lowercase letters, digits, '-' and '_'.
-    return value.lower()
+def _export_value(cloud: str, resource_id: str, label: str, value: str) -> str:
+    value = str(value)
+    if cloud == "gcp":
+        value = value.lower()
+        valid = re.fullmatch(r"[\w-]{0,63}", value) is not None
+        requirement = "GCP values must be at most 63 letters, numbers, underscores or hyphens"
+    else:
+        valid = len(value) <= 256 and "\0" not in value
+        requirement = "Azure values must be at most 256 characters and contain no NUL characters"
+    if not valid:
+        raise DecisionError(
+            f"{resource_id}: invalid {label}; {requirement}. "
+            "Correct the inventory and import again."
+        )
+    return value
 
 
 def approved_change_plan(store: DecisionStore, inventory: pd.DataFrame | None = None) -> dict:
@@ -613,14 +631,8 @@ def export(
     if fmt == "tfvars":
         doc = {"subscription_tags": {}, "project_labels": {}}
         for c in changes:
-            if c["cloud"] == "azure":
-                doc["subscription_tags"][c["resource_id"]] = {
-                    k: v for k, (v, _) in c["tags"].items()
-                }
-            else:
-                doc["project_labels"][c["resource_id"]] = {
-                    k: _gcp_value(v) for k, (v, _) in c["tags"].items()
-                }
+            group = "subscription_tags" if c["cloud"] == "azure" else "project_labels"
+            doc[group][c["resource_id"]] = {k: v for k, (v, _) in c["tags"].items()}
         return json.dumps(doc, indent=2) + "\n"
     lines = [
         "#!/usr/bin/env bash",
@@ -639,7 +651,7 @@ def export(
                 f"--operation Merge --tags {tags}"
             )
         else:
-            labels = ",".join(f"{k}={_gcp_value(v)}" for k, (v, _) in c["tags"].items())
+            labels = ",".join(f"{k}={v}" for k, (v, _) in c["tags"].items())
             lines.append(
                 f"gcloud projects update {shlex.quote(rid)} --update-labels={shlex.quote(labels)}"
             )

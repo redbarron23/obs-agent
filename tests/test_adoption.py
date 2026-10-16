@@ -57,6 +57,83 @@ def test_custom_vocabulary_survives_inference_override_and_export(imported, tmp_
     assert plan["approvals"][0]["model_version"] == plan["model_version"]
 
 
+@pytest.mark.parametrize("fmt", lr.EXPORT_FORMATS)
+@pytest.mark.parametrize("value", ["CC-2,env=prod", "CC=2", "CC 2", "x" * 64])
+def test_invalid_gcp_cost_center_cannot_be_exported(tmp_path, fmt, value):
+    source = CUSTOM_CSV.replace(b"CC-2002", f'"{value}"'.encode())
+    imported = load_inventory_csv(source, CUSTOM_CONFIG)
+    store = lr.DecisionStore(tmp_path / "review.db")
+    store.set("gcp-demo-003", "team", "accept", inventory=imported)
+    with pytest.raises(lr.DecisionError, match="gcp-demo-003.*cost_center"):
+        lr.export(store, fmt, inventory=imported)
+
+
+def test_gcp_export_formats_share_destination_values(imported, tmp_path):
+    store = lr.DecisionStore(tmp_path / "review.db")
+    store.set("gcp-demo-003", "team", "accept", inventory=imported)
+    plan = json.loads(lr.export(store, "plan", inventory=imported))
+    assert plan["changes"][0]["tags"]["cost_center"]["new"] == "cc-2002"
+    assert ",cost_center,,cc-2002,accept" in lr.export(store, "csv", inventory=imported)
+    assert "cost_center=cc-2002" in lr.export(store, "sh", inventory=imported)
+    assert (
+        json.loads(lr.export(store, "tfvars", inventory=imported))["project_labels"][
+            "gcp-demo-003"
+        ]["cost_center"]
+        == "cc-2002"
+    )
+
+
+@pytest.mark.parametrize("values", [["CC-1", "CC-2"], ["CC-1", "CC-1", "CC-2"]])
+def test_conflicting_cost_centers_remain_visible_without_export(imported, tmp_path, values):
+    # Repeat one labelled row to exercise both a tie and a majority mapping.
+    if len(values) == 3:
+        extra = imported.iloc[[2]].copy()
+        extra["resource_id"] = "gcp-extra"
+        imported = pd.concat([imported, extra], ignore_index=True)
+    imported.loc[imported.team == "customer-success", "cost_center"] = values
+    report = lr.resource_report("gcp-demo-003", imported)
+    assert report["cost_center"]["implied"] is None
+    assert report["cost_center"]["conflicting"] == ["CC-1", "CC-2"]
+    store = lr.DecisionStore(tmp_path / "review.db")
+    store.set("gcp-demo-003", "team", "accept", inventory=imported)
+    assert set(lr.approved_change_plan(store, imported)["changes"][0]["tags"]) == {"team"}
+
+
+@pytest.mark.parametrize(
+    "cloud,value", [("gcp", "Équipe_2"), ("gcp", "x" * 63), ("azure", "X" * 256)]
+)
+def test_valid_destination_values_are_preserved(imported, tmp_path, cloud, value):
+    imported.loc[imported.team == "customer-success", "cost_center"] = value
+    imported.loc[imported.resource_id == "gcp-demo-003", "cloud"] = cloud
+    store = lr.DecisionStore(tmp_path / "review.db")
+    store.set("gcp-demo-003", "team", "accept", inventory=imported)
+    tags = lr.approved_change_plan(store, imported)["changes"][0]["tags"]
+    assert tags["cost_center"]["new"] == (value.lower() if cloud == "gcp" else value)
+
+
+def test_oversized_azure_tag_is_rejected(imported, tmp_path):
+    imported.loc[imported.team == "customer-success", "cost_center"] = "X" * 257
+    imported.loc[imported.resource_id == "gcp-demo-003", "cloud"] = "azure"
+    store = lr.DecisionStore(tmp_path / "review.db")
+    store.set("gcp-demo-003", "team", "accept", inventory=imported)
+    with pytest.raises(lr.DecisionError, match="Azure values must be at most 256"):
+        lr.export(store, "sh", inventory=imported)
+
+
+def test_review_page_reports_invalid_export_values(monkeypatch, tmp_path):
+    monkeypatch.setenv("OBS_AGENT_REVIEW_DIR", str(tmp_path))
+    source = CUSTOM_CSV.replace(b"CC-2002", b'"CC-2002,env=prod"')
+    review_id = save_review(source, "invalid-cost-center.csv", CUSTOM_CONFIG)
+    inventory, store = load_review(review_id)
+    store.set("gcp-demo-003", "team", "accept", inventory=inventory)
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
+    at.session_state["review_id"] = review_id
+    at.run()
+    assert not at.exception
+    assert "gcp-demo-003: invalid cost_center" in at.error[0].value
+    assert not at.get("download_button")
+
+
 def test_custom_environment_rules_do_not_emit_demo_values(imported):
     rules = Rules(clean(imported), "env")
     assert rules.suggest({"resource_id": "svc-prod"}).label == "production"

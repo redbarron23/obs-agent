@@ -261,6 +261,8 @@ def suggest_labels(resource_id: str) -> str:
             lines.append(f"    alternatives: {alts}")
         if label == "team" and r["cost_center"]["implied"]:
             lines.append(f"    → implies cost_center={r['cost_center']['implied']}")
+        elif label == "team" and r["cost_center"]["conflicting"]:
+            lines.append("    → conflicting cost centers; no cost center will be inferred")
     return "\n".join(lines)
 
 
