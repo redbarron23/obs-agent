@@ -118,6 +118,7 @@ representative reviewed sample before relying on confidence thresholds. See [Eva
 | Optional cost Q&A | [Agent guide](docs/agent.md) |
 | REST API, Docker, hosted demo | [Interfaces](docs/api.md) |
 | Quality and calibration | [Evaluation](docs/evaluation.md) |
+| Agent tracing and evaluation walkthrough | [MLflow guide](docs/mlflow.md) |
 | Evaluate a real reviewed sample | [Real-world evaluation pack](docs/real-evaluation.md) |
 | Deployment and operations | [Deployment guardrails](docs/deployment.md) |
 | Components and data flow | [Architecture](docs/architecture.md) |

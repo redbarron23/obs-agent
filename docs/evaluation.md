@@ -70,17 +70,21 @@ agent answers can be phrased differently.
 
 ## MLflow
 
-MLflow is an optional dependency group for traces and comparable live-evaluation runs. It is not
-installed in CI, the Docker image, or the hosted demo.
+MLflow is an optional dependency group for traces and comparable live-evaluation runs. The
+dedicated `mlops` CI job installs it; ordinary test jobs, the default Docker image, and the hosted
+demo do not. Start with the [MLflow walkthrough](mlflow.md) for the vocabulary, an offline trace
+exercise, UI inspection, evaluation limits, and troubleshooting.
 
 ```bash
-uv sync --group mlops
-OBS_AGENT_MLFLOW=1 uv run agent.py -q "Which team does svc-ingest belong to?"
-uv run evals_mlflow.py --provider deepseek
-uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
+uv sync --locked --group mlops
+OBS_AGENT_MLFLOW=1 uv run --group mlops agent.py -q "Which team does svc-ingest belong to?"
+uv run --group mlops evals_mlflow.py --provider deepseek
+uv run --group mlops mlflow ui --backend-store-uri sqlite:///mlflow.db --host 127.0.0.1
 ```
 
 Traces record agent, model, and tool spans. `evals_mlflow.py` scores both facts-present and
-tools-called, so a model cannot pass merely by guessing the right answer.
+tools-called, so the fact-presence check alone cannot hide a skipped required tool. These checks
+do not establish complete semantic correctness. Agent and evaluation commands above call a real
+provider; hosted providers can incur charges.
 
 For test commands, limitations, and the CI matrix, see [Testing](testing.md).
