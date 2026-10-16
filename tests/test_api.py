@@ -1,6 +1,7 @@
 """Tests for the FastAPI service (LLM mocked)."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -80,6 +81,29 @@ class TestAsk:
 
 
 class TestStream:
+    def test_real_stream_adapter_reports_truncation(self, client):
+        chunks = iter(
+            [
+                SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="Partial answer", tool_calls=None),
+                            finish_reason="length",
+                        )
+                    ]
+                )
+            ]
+        )
+        with (
+            patch("agent.Provider.__init__", return_value=None),
+            patch("agent.Provider.create", return_value=chunks),
+        ):
+            response = client.post("/ask/stream", json={"question": "q", "provider": "openai"})
+        assert response.status_code == 200
+        assert "Partial answer" in response.text
+        assert "Response truncated" in response.text
+        assert "event: done" in response.text
+
     def test_stream_events(self, client):
         def fake_stream(question, **kw):
             kw["result_holder"].update(answer="ab", messages=_history("ab"))

@@ -63,6 +63,33 @@ def test_requires_snapshot_columns():
         detect_drift(pd.DataFrame([{"resource_id": "sub-a"}]), _snapshot())
 
 
+@pytest.mark.parametrize(
+    "old,new,expected",
+    [
+        (0, 1000, True),
+        (0, 0.01, True),
+        (0, 0, False),
+        (100, 0, True),
+        (100, 149, False),
+        (100, 150, True),
+        (100, 51, False),
+        (100, 50, True),
+    ],
+)
+def test_spend_drift_handles_zero_baselines_and_relative_thresholds(old, new, expected):
+    findings = detect_drift(_snapshot(avg_daily_cost=old), _snapshot(avg_daily_cost=new))
+    assert findings == (
+        [
+            {
+                "resource_id": "sub-a",
+                "changes": [{"field": "avg_daily_cost", "previous": old, "current": new}],
+            }
+        ]
+        if expected
+        else []
+    )
+
+
 # ── Saved-snapshot comparison ──────────────────────────────────────────
 
 ROOT = Path(__file__).parent.parent
@@ -115,6 +142,24 @@ def test_compare_reports_no_drift_for_an_identical_snapshot():
     result = compare_snapshots(inventory, inventory.copy())
     assert (result["added"], result["removed"], result["changed"]) == ([], [], [])
     assert result["unchanged"] == len(inventory)
+
+
+def test_saved_review_comparison_reports_new_spend_with_unchanged_suggestions(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("OBS_AGENT_REVIEW_DIR", str(tmp_path))
+    previous = save_review(SAMPLE.replace(b"120.50", b"0.00"), "before.csv")
+    current = save_review(SAMPLE.replace(b"120.50", b"1000.00"), "after.csv")
+    result = compare_reviews(previous, current)
+    resource = next(r for r in result["changed"] if r["resource_id"] == "az-demo-001")
+    assert resource["changes"] == [
+        {
+            "field": "avg_daily_cost",
+            "previous": 0.0,
+            "current": 1000.0,
+            "reason": "Spend changed materially; usage or ownership may have changed.",
+        }
+    ]
 
 
 def test_compare_reports_changed_suggestions_and_tags():

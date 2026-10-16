@@ -724,3 +724,20 @@ class TestOpenAIStreamNormalisation:
         )
         assert Provider.stop_reason(resp) == "end_turn"
         assert tokens == ["Hi"] and text == ["Hi"] and tools == []
+
+    @pytest.mark.parametrize("provider", ["openai", "deepseek", "ollama"])
+    @pytest.mark.parametrize("finish", ["length", "stop"])
+    def test_agent_stream_surfaces_length_limit(self, provider, finish):
+        from agent import run
+
+        stream = [self._chunk(content="Partial answer"), self._chunk(finish=finish)]
+        tokens = []
+        with (
+            patch("agent.Provider.__init__", return_value=None),
+            patch("agent.Provider.create", return_value=iter(stream)),
+        ):
+            answer, messages = run("q", provider=provider, stream=True, on_token=tokens.append)
+
+        assert answer.startswith("Partial answer")
+        assert "".join(tokens) == answer == messages[-1]["content"]
+        assert ("Response truncated" in answer) == (finish == "length")
