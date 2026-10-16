@@ -27,6 +27,11 @@ The tool intentionally consumes reviewer feedback only: surrogate resource ID, l
 suggested value, resolved value, confidence, and timestamp. It does not need cloud credentials,
 an inventory export, or a mapping table.
 
+Use one inventory snapshot and inference version per evaluation. Preserve `inventory_id` and
+`model_version` together when they are available. Mixed contexts, partial provenance, or a mix of
+known and missing provenance are rejected. A curated sample may omit both fields on every row;
+in that case the sample owner must verify that all rows belong to one evaluation context.
+
 ## 2. Run the pack
 
 Save the approved feedback JSON outside git, then run:
@@ -39,12 +44,24 @@ The command rejects samples outside 50–100 unique resources. It reports overal
 macro precision/recall/F1, the synthetic baseline for context, and high-confidence observed
 precision at 90%, 95%, and 98% confidence.
 
+Evidence counts **one outcome per resource and label**, not button clicks. Repeated rows with
+identical decision, resolved value, suggestion, previous value, and confidence count once, even
+when their reviewer or timestamp differs. If those evaluation fields disagree, resolve the
+conflict and supply one outcome explicitly; the evaluator does not pick the latest or best result.
+The report lists `feedback_events`, `unique_resource_labels`, `duplicate_events`, and the
+`evaluation_context`. Its reviewer-agreement scores use the unique outcomes too. The UI/API
+historical dashboard continues counting review actions and is not independent evaluation evidence.
+
 ## 3. Set the production policy from evidence
 
-By default, a candidate threshold needs at least 20 resolved examples **for both labels** and at
+By default, a candidate threshold needs at least 20 distinct resolved resources **for each label** and at
 least 98% observed agreement. The first candidate meeting both conditions is recommended for a
 monitored pilot. If none qualifies, the result explicitly says to defer auto-apply; keep the
 review-only workflow instead.
+
+For example, accepting the same resource 20 times supplies just one high-confidence team example
+and one environment example, if both labels were reviewed. It cannot satisfy the minimum of 20
+distinct resources per label, even if the full sample contains 50 resources.
 
 These defaults are a conservative starting policy, not a claim about this repository's accuracy.
 Set `--min-support` and `--min-precision` only with the owning team's documented risk tolerance.
