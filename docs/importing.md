@@ -91,6 +91,13 @@ See the [downloadable example](../fixtures/label_config_example.json), which mat
 
 ## Save and resume
 
+Cost centers are inferred only when all non-missing observations for a team agree. Conflicting
+values are shown in the review table; a team change still exports, without an inferred cost center.
+All export formats use the same destination values: GCP values are lowercased and limited to 63
+letters, numbers, underscores or hyphens; Azure values retain their case and are limited to 256
+characters. Invalid outgoing values block the export with the affected resource and label so you
+can correct the inventory and import it again. Raw before-values remain unchanged in the plan.
+
 Saving stores the original CSV, its vocabulary, and its decisions in a local SQLite review database.
 The same snapshot and vocabulary reopen the same review; changed data or vocabulary create a separate
 review so approvals cannot transfer accidentally. Closing the browser or restarting the app does

@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "inventory_id": "2cb5281c92f9fd4d41fff61840b6030ea3612545b238a4d6103e18178aaa46cd",
-  "model_version": "sha256:04ba5a3a7b25d796e1f0126cb03344f836ceb900ef36b4666630a4e5df0ca4af",
-  "generated_at": "2026-10-14T19:26:38+00:00",
+  "model_version": "sha256:dbb3b955eeb640099eb45528eef15004329b1b43c17f033c6e7cc3ce0fae8315",
+  "generated_at": "2026-10-16T19:35:04+00:00",
   "reviewed_only": true,
   "changes": [
     {
@@ -16,7 +16,7 @@
         },
         "cost_center": {
           "previous": null,
-          "new": "CC-2002",
+          "new": "cc-2002",
           "how": "accept"
         }
       }
@@ -34,10 +34,10 @@
       "confidence": 0.929,
       "source": "model",
       "reason": "strongest signals: tok=gcp (+0.29), prefix=gcp (+0.29), parent=folders-data (+0.29)",
-      "decided_at": "2026-10-14T19:26:38+00:00",
+      "decided_at": "2026-10-16T19:35:04+00:00",
       "reviewer": "demo-reviewer",
       "inventory_id": "2cb5281c92f9fd4d41fff61840b6030ea3612545b238a4d6103e18178aaa46cd",
-      "model_version": "sha256:04ba5a3a7b25d796e1f0126cb03344f836ceb900ef36b4666630a4e5df0ca4af"
+      "model_version": "sha256:dbb3b955eeb640099eb45528eef15004329b1b43c17f033c6e7cc3ce0fae8315"
     }
   ]
 }

@@ -46,7 +46,7 @@ The public demo disables private imports. See [Import inventory](docs/importing.
 - Missing/suspect `team` and `env` suggestions with evidence, confidence, and alternatives.
 - A SQLite decision history with reviewer identity, timestamps, inventory fingerprint, and inference version.
 - Reviewed-only JSON change plans and CSV, shell, or Terraform exports. A cost center accompanies
-  a team change only when the inventory establishes the mapping.
+  a team change only when the inventory establishes an unambiguous mapping.
 - Explicit opt-in to include unreviewed high-confidence suggestions in convenience exports.
 
 An [example exported plan](fixtures/reviewed_change_plan_example.json) shows the full schema.
@@ -58,7 +58,7 @@ For example, an accepted suggestion produces this change:
   "cloud": "gcp",
   "tags": {
     "team": {"previous": null, "new": "data-platform", "how": "accept"},
-    "cost_center": {"previous": null, "new": "CC-2002", "how": "accept"}
+    "cost_center": {"previous": null, "new": "cc-2002", "how": "accept"}
   }
 }
 ```

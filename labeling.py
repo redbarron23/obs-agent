@@ -275,11 +275,17 @@ class LabelInference:
             train = self.df[self.df[f"{label}_clean"].notna()]
             self.rules[label] = Rules(train, label)
             self.models[label] = Model(train, label)
-        # cost_center follows team: learn the mapping from labelled rows.
+        # Conflicting financial attribution is not resolved by a majority vote.
         tagged = self.df.dropna(subset=["team_clean", "cost_center"])
-        self.cost_center_of = (
-            tagged.groupby("team_clean")["cost_center"].agg(lambda s: s.mode().iat[0]).to_dict()
+        centers = tagged.groupby("team_clean")["cost_center"].agg(
+            lambda s: sorted(set(s.astype(str)))
         )
+        self.cost_center_of = {
+            team: values[0] for team, values in centers.items() if len(values) == 1
+        }
+        self.cost_center_conflicts = {
+            team: values for team, values in centers.items() if len(values) > 1
+        }
 
     def suggest(self, row, label: str, strategy: str = "hybrid") -> Suggestion:
         if strategy == "rules":

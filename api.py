@@ -437,6 +437,7 @@ class LabelState(BaseModel):
 class CostCenter(BaseModel):
     current: str | None
     implied: str | None = Field(description="Cost center of the suggested (or current) team.")
+    conflicting: list[str] = Field(default_factory=list)
 
 
 class ResourceLabels(BaseModel):
@@ -703,13 +704,20 @@ EXPORT_FILENAME = {
     "the approval evidence; `sh` emits `az tag update` / `gcloud projects update` "
     "commands; `tfvars` a map for Terraform.",
     tags=["labels"],
-    responses={200: {"content": {m: {} for m in EXPORT_MEDIA.values()}}, 401: ERROR_RESPONSES[401]},
+    responses={
+        200: {"content": {m: {} for m in EXPORT_MEDIA.values()}},
+        401: ERROR_RESPONSES[401],
+        422: {"model": ErrorResponse, "description": "Invalid destination tag or label value."},
+    },
 )
 def export_labels(
     format: Literal["csv", "sh", "tfvars", "plan"] = Query(default="csv"),
     include_auto: bool = Query(default=False),
 ) -> PlainTextResponse:
-    body = label_review.export(decisions, format, include_auto)
+    try:
+        body = label_review.export(decisions, format, include_auto)
+    except DecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return PlainTextResponse(
         body,
         media_type=EXPORT_MEDIA[format],
