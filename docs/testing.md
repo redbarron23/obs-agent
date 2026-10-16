@@ -163,6 +163,10 @@ the clean estate stays byte-identical so the published metrics keep meaning the 
 across Python 3.10, 3.11 and 3.12, alongside a Docker job that builds the image and smoke-tests
 `/health`. Live evals are never run in CI.
 
+A separate `mlops` job installs the optional MLflow dependency group and runs the mocked tracing
+and scorer integration tests in `tests/test_observability.py`. For an offline exercise that leaves
+a trace you can inspect in the UI, see the [MLflow guide](mlflow.md).
+
 ## Running things
 
 ```bash
