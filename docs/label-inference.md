@@ -89,6 +89,9 @@ credentials and never mutates Azure or GCP directly.
 existing resources whose parent, owners, service footprint, average daily cost, weekend ratio, or
 cost volatility changed enough to require a renewed label review.
 
+Any increase from zero to positive average daily cost requires review. For a positive baseline,
+the default spend threshold remains a relative change of at least 50%; zero-to-zero is unchanged.
+
 ```python
 from drift import detect_drift
 

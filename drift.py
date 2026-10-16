@@ -39,6 +39,7 @@ def detect_drift(
 
     The caller owns snapshot collection. New and deleted resources are ignored:
     this helper only detects changes to resources that exist in both snapshots.
+    Any zero-to-positive spend change warrants review; positive baselines use spend_change.
     """
     missing = (REQUIRED_COLUMNS - set(previous.columns)) | (REQUIRED_COLUMNS - set(current.columns))
     if missing:
@@ -57,7 +58,9 @@ def detect_drift(
                 changes.append({"field": column, "previous": old_value, "current": new_value})
 
         old_spend, new_spend = float(old["avg_daily_cost"]), float(new["avg_daily_cost"])
-        if old_spend and abs(new_spend - old_spend) / old_spend >= spend_change:
+        if (old_spend == 0 and new_spend > 0) or (
+            old_spend != 0 and abs(new_spend - old_spend) / old_spend >= spend_change
+        ):
             changes.append({"field": "avg_daily_cost", "previous": old_spend, "current": new_spend})
         for column in ("weekend_ratio", "cost_cv"):
             old_value, new_value = float(old[column]), float(new[column])

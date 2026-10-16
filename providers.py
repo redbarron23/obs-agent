@@ -384,14 +384,15 @@ class Provider:
         ]
 
         text_blocks = ["".join(collected_text)] if collected_text else []
-        raw_reason = chunk.choices[0].finish_reason if chunk and chunk.choices else "stop"
         # Normalise to the same vocabulary as Provider.stop_reason(). Some
         # backends (Ollama) end a tool-call stream with "stop", so the presence
         # of tool calls is the reliable signal.
         if tool_use_blocks:
             final_reason = "tool_use"
         else:
-            final_reason = {"stop": "end_turn"}.get(raw_reason or "", raw_reason or "end_turn")
+            final_reason = (
+                Provider.stop_reason(chunk) if chunk and chunk.choices else ""
+            ) or "end_turn"
 
         class _DummyResponse:
             def __init__(self, reason, blocks):
