@@ -44,6 +44,15 @@ claiming that the result transfers automatically to a real estate.
 Inference is a recommendation, not a mutation. The reviewed change plan creates a clear trust
 boundary between model output and a team's Terraform, CI, or shell-based delivery process.
 
+### Reuse within a snapshot
+
+Imported inference and reports are kept in a process-local cache of the four most recently used
+snapshots. The inventory and inference-version fingerprints include data, vocabulary, and inference
+settings, so changed contexts refit. Report callers receive independent copies; decisions and
+approval history are read from SQLite on each call. The cache is shared by this trusted-team
+installation, retains private snapshot data in memory until eviction or process exit, and is not
+tenant-isolated storage. Restarting or evicting an entry only requires recomputing its inference.
+
 ### Provider abstraction for the agent
 
 The cost agent keeps message formats and tool-loop logic separate from provider SDK details. It can

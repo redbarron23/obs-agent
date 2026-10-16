@@ -23,6 +23,9 @@ import os
 import re
 import shlex
 import sqlite3
+import threading
+from collections import OrderedDict
+from copy import deepcopy
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -135,13 +138,31 @@ def all_reports() -> tuple[dict, ...]:
     return tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
 
 
+_review_cache: OrderedDict[tuple[str, str], tuple[LabelInference, tuple[dict, ...]]] = OrderedDict()
+_review_cache_lock = threading.Lock()
+
+
+def _review_data(inventory: pd.DataFrame) -> tuple[LabelInference, tuple[dict, ...]]:
+    context = review_context(inventory)
+    key = (context["inventory_id"], context["model_version"])
+    # Fit under the lock so concurrent requests for one snapshot do not duplicate training.
+    with _review_cache_lock:
+        if key not in _review_cache:
+            inf = LabelInference(inventory)
+            suspects = {label: suspect_labels(inventory, label) for label in LABELS}
+            rows = tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
+            _review_cache[key] = (inf, rows)
+            if len(_review_cache) > 4:
+                _review_cache.popitem(last=False)
+        _review_cache.move_to_end(key)
+        return _review_cache[key]
+
+
 def reports(inventory: pd.DataFrame | None = None) -> tuple[dict, ...]:
     """Reports for the synthetic demo or a caller-provided inventory snapshot."""
     if inventory is None:
         return all_reports()
-    inf = LabelInference(inventory)
-    suspects = {label: suspect_labels(inventory, label) for label in LABELS}
-    return tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
+    return deepcopy(_review_data(inventory)[1])
 
 
 def resource_report(resource_id: str, inventory: pd.DataFrame | None = None) -> dict | None:
@@ -528,7 +549,7 @@ def pending_changes(
     store: DecisionStore, include_auto: bool = False, inventory: pd.DataFrame | None = None
 ) -> list[dict]:
     """Resources whose resolved tags differ from what they carry today."""
-    inf = get_inference() if inventory is None else LabelInference(inventory)
+    inf = get_inference() if inventory is None else _review_data(inventory)[0]
     decisions = {f"{d['resource_id']}|{d['label']}": d for d in current_decisions(store, inventory)}
     changes = []
     for r in reports(inventory):
