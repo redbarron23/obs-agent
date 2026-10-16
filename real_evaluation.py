@@ -67,6 +67,26 @@ def evaluate_feedback(
         raise ValueError(
             f"Feedback entries missing required fields at indexes: {', '.join(missing)}."
         )
+    contexts = set()
+    unique = {}
+    fields = ("decision", "value", "suggested", "previous", "confidence")
+    for entry in entries:
+        context = (entry.get("inventory_id"), entry.get("model_version"))
+        if context != (None, None) and not all(
+            isinstance(value, str) and value.strip() for value in context
+        ):
+            raise ValueError("Provide both inventory_id and model_version, or omit both.")
+        contexts.add(context)
+        key = (entry["resource_id"], entry["label"])
+        if key in unique and any(unique[key].get(field) != entry.get(field) for field in fields):
+            raise ValueError(
+                f"Conflicting feedback for resource '{key[0]}', label '{key[1]}'; "
+                "supply one resolved outcome per resource and label."
+            )
+        unique.setdefault(key, entry)
+    if len(contexts) > 1:
+        raise ValueError("Use one inventory and inference version per evaluation.")
+    outcomes = list(unique.values())
     resource_count = len({entry["resource_id"] for entry in entries})
     if not MIN_RESOURCES <= resource_count <= MAX_RESOURCES:
         raise ValueError(
@@ -74,7 +94,7 @@ def evaluate_feedback(
             f"received {resource_count}."
         )
 
-    evidence = {label: _scored(entries, label) for label in LABELS}
+    evidence = {label: _scored(outcomes, label) for label in LABELS}
     thresholds = {
         label: {
             f"{candidate:.0%}": _threshold_result(rows, candidate, min_support, min_precision)
@@ -94,10 +114,16 @@ def evaluate_feedback(
         "sample": {
             "resources": resource_count,
             "feedback_events": len(entries),
+            "unique_resource_labels": len(outcomes),
+            "duplicate_events": len(entries) - len(outcomes),
+            "evaluation_context": {
+                "inventory_id": outcomes[0].get("inventory_id"),
+                "model_version": outcomes[0].get("model_version"),
+            },
             "min_support": min_support,
             "min_precision": min_precision,
         },
-        "reviewer_agreement": feedback_metrics(entries),
+        "reviewer_agreement": feedback_metrics(outcomes),
         "threshold_evidence": thresholds,
         "recommended_auto_apply_threshold": recommendation,
         "recommendation": (
