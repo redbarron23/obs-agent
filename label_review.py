@@ -5,6 +5,7 @@ Human-in-the-loop label review on top of labeling.py.
                      reasons, suspected-wrong flags (shared by the agent
                      tool, the REST API and the Streamlit review page)
   review_queue()     every resource with an untagged or suspect label
+                     (including ones withheld for insufficient evidence)
   DecisionStore      reviewer decisions (accept / reject / override), with an
                      append-only feedback trail shared by the API and UI
   export_*()         resolved label changes as CSV, a shell script of
@@ -35,7 +36,9 @@ import pandas as pd
 from labeling import (
     AUTO_APPLY_THRESHOLD,
     BEST_STRATEGY,
+    EVIDENCE_STATUSES,
     LABELS,
+    Evidence,
     LabelInference,
     get_inference,
     get_suspects,
@@ -45,6 +48,9 @@ from labeling import (
 from review_context import review_context
 
 STATUSES = ("ok", "untagged", "suspect")
+# Action for an untagged label whose evidence is insufficient: no suggestion,
+# so it can only be resolved by an explicit override.
+INSUFFICIENT_EVIDENCE = "insufficient evidence"
 DECISIONS = ("accept", "reject", "override")
 EXPORT_FORMATS = ("csv", "sh", "tfvars", "plan")
 
@@ -71,6 +77,21 @@ def _raw(value) -> str | None:
     return None if pd.isna(value) else str(value)
 
 
+def _evidence_report(evidence: Evidence) -> dict:
+    return {
+        "status": evidence.status,
+        "reason": evidence.reason,
+        "supporting": list(evidence.supporting),
+        "conflicting": [
+            {"feature": f, "points_to": v, "count": c, "support": n}
+            for f, v, c, n in evidence.conflicting
+        ],
+        "withheld": None
+        if evidence.withheld is None
+        else {"value": evidence.withheld[0], "model_score": evidence.withheld[1]},
+    }
+
+
 def _label_report(inf: LabelInference, row, label: str, suspects: pd.DataFrame) -> dict:
     current = row[f"{label}_clean"]
     out = {
@@ -83,6 +104,7 @@ def _label_report(inf: LabelInference, row, label: str, suspects: pd.DataFrame) 
         "source": None,
         "reason": None,
         "alternatives": [],
+        "evidence": None,
     }
     if current is not None:
         hit = suspects[suspects["resource_id"] == row["resource_id"]]
@@ -100,7 +122,16 @@ def _label_report(inf: LabelInference, row, label: str, suspects: pd.DataFrame) 
             "reason": f"tagged {label}={current}, but a model that never saw this "
             f"resource predicts {label}={h['predicted']}",
         }
-    s = inf.suggest(row, label, BEST_STRATEGY[label])
+    s, evidence = inf.decide(row, label, BEST_STRATEGY[label])
+    if s.label is None:
+        # Abstained (or nothing fired): no value to accept, never auto-apply.
+        return out | {
+            "status": "untagged",
+            "action": INSUFFICIENT_EVIDENCE,
+            "source": s.source,
+            "reason": s.reason,
+            "evidence": _evidence_report(evidence),
+        }
     return out | {
         "status": "untagged",
         "suggested": s.label,
@@ -109,6 +140,7 @@ def _label_report(inf: LabelInference, row, label: str, suspects: pd.DataFrame) 
         "source": s.source,
         "reason": s.reason,
         "alternatives": [{"value": c, "confidence": p} for c, p in s.alternatives[1:]],
+        "evidence": _evidence_report(evidence),
     }
 
 
@@ -181,11 +213,15 @@ def review_queue(
     max_confidence: float = 1.0,
     search: str | None = None,
     inventory: pd.DataFrame | None = None,
+    evidence: str | None = None,
 ) -> list[dict]:
-    """Resources needing review, most confident suggestions first.
+    """Resources needing review, highest model score first.
 
     *status* is 'untagged' or 'suspect' (default: either); *label* limits
-    the status check to one label.
+    the status check to one label. *evidence* keeps only labels with that
+    evidence status (e.g. 'conflicting'); 'insufficient' matches every
+    abstained status. Abstained labels have no score; the confidence range
+    treats them as 0, so they are listed last and kept by the default range.
     """
     labels = [label] if label else list(LABELS)
     wanted = {status} if status else {"untagged", "suspect"}
@@ -196,12 +232,21 @@ def review_queue(
         if search and search.lower() not in r["resource_id"].lower():
             continue
         hits = [r["labels"][lbl] for lbl in labels if r["labels"][lbl]["status"] in wanted]
+        if evidence:
+            hits = [h for h in hits if _evidence_matches(h, evidence)]
         if not hits:
             continue
-        if not any(min_confidence <= h["confidence"] <= max_confidence for h in hits):
+        if not any(min_confidence <= (h["confidence"] or 0.0) <= max_confidence for h in hits):
             continue
         out.append(r)
     return sorted(out, key=lambda r: -max(r["labels"][lbl]["confidence"] or 0 for lbl in labels))
+
+
+def _evidence_matches(label_report: dict, wanted: str) -> bool:
+    status = (label_report["evidence"] or {}).get("status")
+    if wanted == "insufficient":
+        return label_report["action"] == INSUFFICIENT_EVIDENCE
+    return status == wanted
 
 
 def coverage(inventory: pd.DataFrame | None = None) -> dict:
@@ -209,10 +254,16 @@ def coverage(inventory: pd.DataFrame | None = None) -> dict:
     per_label = {}
     for label in LABELS:
         st = [r["labels"][label] for r in report_rows]
+        abstained = [s for s in st if s["action"] == INSUFFICIENT_EVIDENCE]
         per_label[label] = {
             "untagged": sum(s["status"] == "untagged" for s in st),
             "suspect": sum(s["status"] == "suspect" for s in st),
             "auto_apply_ready": sum(s["action"] == "auto-apply" for s in st),
+            "insufficient_evidence": len(abstained),
+            "insufficient_evidence_reasons": {
+                status: sum((s["evidence"] or {}).get("status") == status for s in abstained)
+                for status in EVIDENCE_STATUSES[1:]
+            },
         }
     return {
         "total": len(report_rows),
@@ -478,6 +529,7 @@ def feedback_metrics(feedback: list[dict]) -> dict:
         "reviewed": len(feedback),
         "scored": 0,
         "unresolved": 0,
+        "abstained": 0,
         "auto_apply_threshold": AUTO_APPLY_THRESHOLD,
         "labels": {},
     }
@@ -494,8 +546,13 @@ def feedback_metrics(feedback: list[dict]) -> dict:
             if entry["suggested"] and _resolved_feedback_value(entry)
         ]
         summary = _agreement_scores(rows)
+        # Overrides of a withheld suggestion resolve the label but score nothing.
+        abstained = sum(
+            1 for entry in entries if not entry["suggested"] and entry.get("source") == "abstain"
+        )
         summary["reviewed"] = len(entries)
-        summary["unresolved"] = len(entries) - len(rows)
+        summary["abstained"] = abstained
+        summary["unresolved"] = len(entries) - len(rows) - abstained
         periods = []
         for period in sorted({row["period"] for row in rows}):
             period_rows = [row for row in rows if row["period"] == period]
@@ -516,6 +573,7 @@ def feedback_metrics(feedback: list[dict]) -> dict:
         result["labels"][label] = summary
         result["scored"] += summary["scored"]
         result["unresolved"] += summary["unresolved"]
+        result["abstained"] += summary["abstained"]
     return result
 
 

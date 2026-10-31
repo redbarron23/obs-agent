@@ -261,6 +261,57 @@ class Model:
         return "strongest signals: " + (", ".join(top) if top else "none")
 
 
+# ── Ownership evidence (abstention) ────────────────────────────────────
+# A model score can be high while the resource itself carries little or
+# contradictory ownership evidence. For ownership labels the review flow
+# withholds the suggestion in those cases instead of proposing a value.
+# env is not checked: name tokens and cost shape are its evidence, and the
+# rule/model hybrid already reports both.
+
+EVIDENCE_LABELS = ("team",)
+EVIDENCE_STATUSES = ("supported", "missing_signals", "insufficient_support", "conflicting")
+# Support: the fewest labelled resources an imported value may have (see
+# inventory_import), i.e. a signal must have been seen on at least that many
+# resources with a value before it counts for or against it. Agreement: the
+# share the inheritance rules require.
+EVIDENCE_MIN_SUPPORT = 2
+EVIDENCE_MIN_SHARE = Rules.MIN_SHARE
+# Signals about who owns a resource. Parent counts towards a conflict but not
+# as support on its own, because hierarchy goes stale after reorganisations.
+IDENTITY_FEATURES = ("owner=", "creator=", "tok=", "prefix=")
+OWNERSHIP_FEATURES = (*IDENTITY_FEATURES, "parent=")
+
+
+def _present(value) -> bool:
+    return not (value is None or (isinstance(value, float) and np.isnan(value)) or value == "")
+
+
+def _ownership_features(row) -> list[str]:
+    """Ownership features of a resource, ignoring absent owner/creator values."""
+    keys = []
+    tokens = name_tokens(str(row["resource_id"]))
+    if tokens:
+        keys.append(f"prefix={tokens[0]}")
+    keys += [f"tok={t}" for t in dict.fromkeys(tokens)]
+    if _present(row.get("created_by")):
+        keys.append(f"creator={row['created_by']}")
+    keys += [f"owner={o}" for o in row["owners"] if _present(o)]
+    if _present(row.get("parent")):
+        keys.append(f"parent={row['parent']}")
+    return keys
+
+
+@dataclass
+class Evidence:
+    status: str  # one of EVIDENCE_STATUSES
+    reason: str
+    supporting: list[str] = field(default_factory=list)
+    # (feature, value it points to, labelled resources with that value, with the feature)
+    conflicting: list[tuple[str, str, int, int]] = field(default_factory=list)
+    # The (value, model score) that was not suggested, kept for reviewer context.
+    withheld: tuple[str, float] | None = None
+
+
 # ── Fitted bundle ──────────────────────────────────────────────────────
 
 
@@ -287,6 +338,15 @@ class LabelInference:
             team: values for team, values in centers.items() if len(values) > 1
         }
 
+        # Training support for the ownership-evidence check (see assess()).
+        self.evidence_support: dict[str, dict[str, Counter]] = {}
+        for label in EVIDENCE_LABELS:
+            support: dict[str, Counter] = {}
+            for _, r in self.df[self.df[f"{label}_clean"].notna()].iterrows():
+                for key in _ownership_features(r):
+                    support.setdefault(key, Counter())[r[f"{label}_clean"]] += 1
+            self.evidence_support[label] = support
+
     def suggest(self, row, label: str, strategy: str = "hybrid") -> Suggestion:
         if strategy == "rules":
             return self.rules[label].suggest(row)
@@ -295,6 +355,92 @@ class LabelInference:
             return model
         rule = self.rules[label].suggest(row)
         return rule if rule.confidence > model.confidence else model
+
+    def assess(self, row, label: str, suggestion: Suggestion) -> Evidence:
+        """Whether the resource's own evidence supports *suggestion* (see EVIDENCE_LABELS).
+
+        Checked in order; the first that holds is the outcome:
+
+        missing_signals       no owner, creator, or meaningful name token: only
+                              hierarchy, services and spend are left
+        insufficient_support  no owner, creator or name token of this resource
+                              appears on >= EVIDENCE_MIN_SUPPORT labelled
+                              resources carrying the suggested value
+        conflicting           the resource has decisive evidence (a feature on
+                              >= EVIDENCE_MIN_SUPPORT labelled resources, >=
+                              EVIDENCE_MIN_SHARE of them one value) and none of
+                              it points at the suggested value
+
+        The checks use features and training counts only, never the model score.
+        """
+        if suggestion.label is None:
+            return Evidence(
+                "insufficient_support",
+                f"insufficient evidence: no rule or model produced a {label} value. Set "
+                f"{label} with an explicit override.",
+            )
+        if label not in EVIDENCE_LABELS:
+            return Evidence("supported", "")
+        support = self.evidence_support[label]
+        keys = _ownership_features(row)
+        identity = [k for k in keys if k.startswith(IDENTITY_FEATURES)]
+        value = suggestion.label
+        withheld = (value, suggestion.confidence)
+        if not identity:
+            return Evidence(
+                "missing_signals",
+                "insufficient evidence: no owner, creator or meaningful name token, so only "
+                f"hierarchy, services and spend remain. Record an owner, or set {label} "
+                "with an explicit override.",
+                withheld=withheld,
+            )
+        supporting = [
+            k for k in identity if support.get(k, Counter())[value] >= EVIDENCE_MIN_SUPPORT
+        ]
+        if not supporting:
+            return Evidence(
+                "insufficient_support",
+                "insufficient evidence: none of this resource's owners, creator or name "
+                f"tokens appears on {EVIDENCE_MIN_SUPPORT}+ labelled resources with "
+                f"{label}={value}. Confirm ownership, then set {label} with an explicit "
+                "override.",
+                withheld=withheld,
+            )
+        decisive = []
+        for k in keys:
+            counts = support.get(k)
+            if not counts:
+                continue
+            n = sum(counts.values())
+            top, count = counts.most_common(1)[0]
+            if n >= EVIDENCE_MIN_SUPPORT and count / n >= EVIDENCE_MIN_SHARE:
+                decisive.append((k, top, count, n))
+        if decisive and all(top != value for _, top, _, _ in decisive):
+            shown = ", ".join(f"{k} → {top} ({c}/{n})" for k, top, c, n in decisive[:3])
+            return Evidence(
+                "conflicting",
+                f"insufficient evidence: conflicting ownership evidence ({shown}); none of it "
+                f"supports {label}={value}. Resolve with the owners, then set {label} "
+                "with an explicit override.",
+                supporting=supporting,
+                conflicting=decisive,
+                withheld=withheld,
+            )
+        return Evidence(
+            "supported",
+            f"{len(supporting)} owner/name signal(s) seen on {EVIDENCE_MIN_SUPPORT}+ labelled "
+            f"resources with {label}={value}",
+            supporting=supporting,
+            conflicting=[d for d in decisive if d[1] != value],
+        )
+
+    def decide(self, row, label: str, strategy: str = "hybrid") -> tuple[Suggestion, Evidence]:
+        """suggest(), then abstain when assess() finds the evidence insufficient."""
+        suggestion = self.suggest(row, label, strategy)
+        evidence = self.assess(row, label, suggestion)
+        if evidence.status != "supported":
+            suggestion = Suggestion(None, 0.0, "abstain", evidence.reason)
+        return suggestion, evidence
 
     def row(self, resource_id: str):
         match = self.df[self.df["resource_id"] == resource_id]
@@ -361,6 +507,11 @@ def expected_calibration_error(
     return float(ece)
 
 
+def _strategies(label: str) -> tuple[str, ...]:
+    base = ("rules", "model", "hybrid")
+    return (*base, "abstain") if label in EVIDENCE_LABELS else base
+
+
 def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
     """Score every strategy on the unlabelled resources.
 
@@ -372,6 +523,12 @@ def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
     auto_precision  accuracy on that auto-applied slice
     ece             expected calibration error (lower is better)
     top3            true label among the model's top 3 (model only)
+
+    For EVIDENCE_LABELS an extra "abstain" strategy scores what the review
+    flow shows: BEST_STRATEGY with insufficient-evidence cases withheld. Its
+    coverage drops by the abstained share; it also reports how often the
+    withheld value would have been right (abstained_accuracy) and how many
+    cases each evidence condition withheld.
     """
     inf = LabelInference(inventory)
     results: dict = {}
@@ -379,8 +536,14 @@ def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
         test = inf.unlabelled(label)
         truth = test[f"true_{label}"]
         results[label] = {"n_unlabelled": len(test)}
-        for strategy in ("rules", "model", "hybrid"):
-            sugg = [inf.suggest(r, label, strategy) for _, r in test.iterrows()]
+        for strategy in _strategies(label):
+            abstain = strategy == "abstain"
+            if abstain:
+                decided = [inf.decide(r, label, BEST_STRATEGY[label]) for _, r in test.iterrows()]
+                sugg = [s for s, _ in decided]
+                evidence = [e for _, e in decided]
+            else:
+                sugg = [inf.suggest(r, label, strategy) for _, r in test.iterrows()]
             pred = pd.Series([s.label for s in sugg], index=test.index)
             conf = pd.Series([s.confidence for s in sugg], index=test.index)
             covered = pred.notna()
@@ -404,7 +567,18 @@ def evaluate(inventory: pd.DataFrame = INVENTORY_DF) -> dict:
                         ]
                     )
                 )
+            if abstain:
+                held = [
+                    (e.withheld[0], t) for e, t in zip(evidence, truth, strict=True) if e.withheld
+                ]
+                m["abstained"] = 1 - covered.mean()
+                m["abstained_accuracy"] = float(np.mean([v == t for v, t in held])) if held else 0.0
             results[label][strategy] = {k: round(float(v), 3) for k, v in m.items()}
+            if abstain:
+                results[label][strategy]["reasons"] = {
+                    status: sum(e.status == status for e in evidence)
+                    for status in EVIDENCE_STATUSES[1:]
+                }
 
         # Mislabel detection: how many flagged tags are genuinely wrong?
         sus = suspect_labels(inventory, label)
@@ -429,13 +603,21 @@ def format_report(results: dict) -> str:
             f"  {'strategy':8} {'coverage':>9} {'accuracy':>9} {'macroF1':>8} "
             f"{'auto≥' + str(AUTO_APPLY_THRESHOLD):>8} {'auto-prec':>10} {'ECE':>6} {'top3':>6}",
         ]
-        for strategy in ("rules", "model", "hybrid"):
+        for strategy in _strategies(label):
             m = r[strategy]
             top3 = f"{m['top3']:.0%}" if "top3" in m else "-"
             lines.append(
                 f"  {strategy:8} {m['coverage']:>9.0%} {m['accuracy']:>9.0%} "
                 f"{m['macro_f1']:>8.2f} {m['auto_coverage']:>8.0%} "
                 f"{m['auto_precision']:>10.0%} {m['ece']:>6.1%} {top3:>6}"
+            )
+        if "abstain" in r:
+            m = r["abstain"]
+            reasons = ", ".join(f"{k} {v}" for k, v in m["reasons"].items())
+            lines.append(
+                f"  abstain = {BEST_STRATEGY[label]} with insufficient-evidence cases withheld: "
+                f"{m['abstained']:.0%} abstained ({reasons}); the withheld value "
+                f"would have been right {m['abstained_accuracy']:.0%} of the time"
             )
         ml = r["mislabels"]
         lines.append(
@@ -455,8 +637,9 @@ def format_degradation(clean: dict, harsh: dict) -> str:
     """
     lines = ["", "Degradation: clean → harsh estate", "=".rjust(58, "=")]
     lines.append(f"  {'label/strategy':20} {'metric':16} {'clean':>8} {'harsh':>8} {'delta':>8}")
-    for label in LABELS:
-        strategy = BEST_STRATEGY[label]
+    rows = [(label, BEST_STRATEGY[label]) for label in LABELS]
+    rows += [(label, "abstain") for label in EVIDENCE_LABELS]
+    for label, strategy in sorted(rows, key=lambda r: LABELS.index(r[0])):
         c, h = clean[label][strategy], harsh[label][strategy]
         for key in ("coverage", "accuracy", "macro_f1", "auto_coverage", "auto_precision", "ece"):
             delta = h[key] - c[key]

@@ -376,3 +376,92 @@ class TestSuspectOnHarsh:
         harsh_caught = harsh["team"]["mislabels"]["flagged_and_wrong"]
         assert clean_caught >= 4
         assert harsh_caught <= clean_caught
+
+
+class TestEvidence:
+    """Insufficient-evidence conditions (issue #62): features and support, not the score."""
+
+    CONFLICTING = "lake-warehouse-d"  # name says data-platform; the model says observability
+    SUPPORTED = "svc-ingest"
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def inf(cls):
+        from labeling import get_inference
+
+        return get_inference()
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def small(cls):
+        from pathlib import Path
+
+        from inventory_import import load_inventory_csv
+        from labeling import LabelInference
+
+        sample = Path(__file__).parent.parent / "fixtures" / "sanitized_inventory_sample.csv"
+        source = sample.read_bytes()
+        # No owner, no creator, opaque name: only hierarchy, services and spend.
+        source += b"azure,sub-0a1b2c3d,mg-payments,,,AKS|SQL,110.00,0.90,0.20,,,\n"
+        # An owner nobody labelled has ever been seen with.
+        source += b"gcp,proj-482913,folders-data,zoe,zoe,BigQuery|GCS,40.00,0.30,0.40,,,\n"
+        return LabelInference(load_inventory_csv(source))
+
+    def test_supported(self, inf):
+        from labeling import Suggestion
+
+        row = inf.row(self.SUPPORTED)
+        s, e = inf.decide(row, "team", "model")
+        assert s.label == "data-platform" and e.status == "supported"
+        assert e.supporting and e.withheld is None
+        # A low score alone never triggers abstention.
+        assert inf.assess(row, "team", Suggestion("data-platform", 0.05, "model", "")).status == (
+            "supported"
+        )
+
+    def test_conflicting(self, inf):
+        row = inf.row(self.CONFLICTING)
+        s, e = inf.decide(row, "team", "model")
+        assert e.status == "conflicting"
+        assert ("prefix=lake", "data-platform", 5, 5) in e.conflicting
+        assert e.withheld[0] == "observability"
+        assert s.label is None and s.source == "abstain" and s.confidence == 0.0
+        assert "conflicting ownership evidence" in s.reason and "override" in s.reason
+
+    def test_missing_signals(self, small):
+        s, e = small.decide(small.row("sub-0a1b2c3d"), "team", "model")
+        assert e.status == "missing_signals" and s.label is None
+        assert "no owner, creator or meaningful name token" in s.reason
+
+    def test_insufficient_support(self, small):
+        from labeling import Suggestion
+
+        row = small.row("proj-482913")
+        s, e = small.decide(row, "team", "model")
+        assert e.status == "insufficient_support" and s.label is None
+        # A high score does not rescue a prediction nothing in training supports.
+        sure = Suggestion("data-platform", 0.99, "model", "")
+        assert small.assess(row, "team", sure).status == "insufficient_support"
+
+    def test_supported_in_small_inventory(self, small):
+        s, e = small.decide(small.row("gcp-demo-003"), "team", "model")
+        assert s.label == "data-platform" and e.status == "supported"
+
+    def test_env_is_not_checked(self, inf):
+        row = inf.row(self.CONFLICTING)
+        s, e = inf.decide(row, "env", "hybrid")
+        assert s.label is not None and e.status == "supported"
+
+    def test_evaluation_reports_coverage_against_accuracy(self):
+        from inventory import make_estate
+
+        for estate in ("clean", "harsh"):
+            r = evaluate(make_estate(estate))["team"]
+            a, m = r["abstain"], r["model"]
+            assert 0 < a["abstained"] < 0.5
+            assert a["coverage"] == pytest.approx(1 - a["abstained"], abs=0.002)
+            assert sum(a["reasons"].values()) == round(a["abstained"] * r["n_unlabelled"])
+            # Withheld cases are the ones the model gets wrong more often.
+            assert a["abstained_accuracy"] < m["accuracy"] <= a["accuracy"]
+            assert a["auto_precision"] >= m["auto_precision"]
+        assert "abstain" not in evaluate()["env"]

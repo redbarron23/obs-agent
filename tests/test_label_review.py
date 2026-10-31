@@ -74,7 +74,7 @@ class TestReports:
         assert all(r["labels"]["env"]["confidence"] >= 0.9 for r in confident)
 
     def test_queue_sorted_most_confident_first(self):
-        conf = [r["labels"]["team"]["confidence"] for r in lr.review_queue(label="team")]
+        conf = [r["labels"]["team"]["confidence"] or 0 for r in lr.review_queue(label="team")]
         assert conf == sorted(conf, reverse=True)
 
     def test_imported_inventory_uses_the_same_review_workflow(self, tmp_path):
@@ -478,3 +478,125 @@ class TestReviewPage:
         at.run()
         assert not at.exception
         assert at.info and "Demo" in at.info[0].value
+
+
+ABSTAINED = "lake-warehouse-d"  # team withheld: conflicting ownership evidence
+
+
+class TestAbstention:
+    """Insufficient evidence: no suggestion, never auto-applied, overrides still work."""
+
+    @pytest.fixture
+    def client(self, store, monkeypatch):
+        monkeypatch.setenv("OBS_AGENT_API_KEY", "test-api-key")
+        monkeypatch.setattr(api, "decisions", store)
+        return TestClient(api.app, headers={"X-API-Key": "test-api-key"})
+
+    @pytest.fixture
+    def small(self):
+        source = INVENTORY_SAMPLE.read_bytes()
+        source += b"azure,sub-0a1b2c3d,mg-payments,,,AKS|SQL,110.00,0.90,0.20,,,\n"
+        source += b"gcp,proj-482913,folders-data,zoe,zoe,BigQuery|GCS,40.00,0.30,0.40,,,\n"
+        return load_inventory_csv(source)
+
+    def test_report_withholds_the_suggestion(self):
+        r = lr.resource_report(ABSTAINED)
+        team = r["labels"]["team"]
+        assert team["status"] == "untagged"
+        assert team["suggested"] is None and team["confidence"] is None
+        assert team["action"] == lr.INSUFFICIENT_EVIDENCE and team["source"] == "abstain"
+        assert team["evidence"]["status"] == "conflicting"
+        assert team["evidence"]["withheld"]["value"] == "observability"
+        assert "override" in team["reason"]
+        assert r["cost_center"]["implied"] is None
+        # Supported suggestions say why too.
+        assert lr.resource_report(UNTAGGED)["labels"]["team"]["evidence"]["status"] == "supported"
+
+    def test_visible_in_queue_and_coverage(self):
+        queue = lr.review_queue(label="team", evidence="insufficient")
+        assert ABSTAINED in {r["resource_id"] for r in queue}
+        assert all(r["labels"]["team"]["suggested"] is None for r in queue)
+        assert ABSTAINED in {r["resource_id"] for r in lr.review_queue(label="team")}
+        assert ABSTAINED not in {
+            r["resource_id"] for r in lr.review_queue(label="team", min_confidence=0.05)
+        }
+        cov = lr.coverage()["labels"]["team"]
+        assert cov["insufficient_evidence"] == len(queue) == 5
+        assert cov["insufficient_evidence_reasons"]["conflicting"] == 5
+        assert cov["untagged"] == 170
+
+    def test_reasons_are_distinguished(self, small):
+        reports = {r["resource_id"]: r["labels"]["team"] for r in lr.reports(small)}
+        assert reports["sub-0a1b2c3d"]["evidence"]["status"] == "missing_signals"
+        assert reports["proj-482913"]["evidence"]["status"] == "insufficient_support"
+        assert reports["gcp-demo-003"]["evidence"]["status"] == "supported"
+        reasons = lr.coverage(small)["labels"]["team"]["insufficient_evidence_reasons"]
+        assert reasons == {"missing_signals": 1, "insufficient_support": 1, "conflicting": 0}
+
+    def test_cannot_be_accepted_or_rejected(self, store):
+        for decision in ("accept", "reject"):
+            with pytest.raises(DecisionError, match="no team suggestion"):
+                store.set(ABSTAINED, "team", decision)
+        assert store.all() == []
+
+    def test_never_exported_unreviewed(self, store):
+        # The resource's env is auto-apply eligible; its withheld team must not ride along.
+        change = next(c for c in lr.pending_changes(store, True) if c["resource_id"] == ABSTAINED)
+        assert set(change["tags"]) == {"env"}
+        assert f"{ABSTAINED},gcp,team" not in lr.export(store, "csv", include_auto=True)
+        tfvars = json.loads(lr.export(store, "tfvars", include_auto=True))
+        assert set(tfvars["project_labels"][ABSTAINED]) == {"env"}
+        assert "team=" not in next(
+            line
+            for line in lr.export(store, "sh", include_auto=True).splitlines()
+            if ABSTAINED in line
+        )
+        assert json.loads(lr.export(store, "plan", include_auto=True))["changes"] == []
+
+    def test_unreviewed_small_inventory_exports_nothing_abstained(self, store, small):
+        changed = {c["resource_id"] for c in lr.pending_changes(store, True, small)}
+        assert changed == {"gcp-demo-003"}
+
+    def test_explicit_override_is_exported_with_evidence(self, store):
+        store.set(ABSTAINED, "team", "override", "data-platform")
+        changes = lr.pending_changes(store)
+        assert [c["resource_id"] for c in changes] == [ABSTAINED]
+        assert changes[0]["tags"]["team"] == ("data-platform", "override")
+        assert changes[0]["tags"]["cost_center"] == ("cc-2002", "override")
+        plan = lr.approved_change_plan(store)
+        assert plan["approvals"][0]["source"] == "abstain"
+        assert plan["approvals"][0]["suggested"] is None
+        metrics = lr.feedback_metrics(store.feedback())
+        assert metrics["abstained"] == 1 and metrics["unresolved"] == 0
+
+    def test_api(self, client):
+        items = client.get("/resources", params={"label": "team", "evidence": "conflicting"})
+        assert ABSTAINED in {r["resource_id"] for r in items.json()["items"]}
+        team = client.get(f"/resources/{ABSTAINED}/labels").json()["labels"]["team"]
+        assert team["action"] == "insufficient evidence"
+        assert team["evidence"]["status"] == "conflicting"
+        cov = client.get("/labels/coverage").json()["labels"]["team"]
+        assert cov["insufficient_evidence"] == 5
+        assert (
+            client.put(
+                f"/resources/{ABSTAINED}/labels/team/decision", json={"decision": "accept"}
+            ).status_code
+            == 422
+        )
+
+    def test_agent_tool_says_why(self):
+        from tools import suggest_labels
+
+        out = suggest_labels(ABSTAINED)
+        assert "→ no suggestion (insufficient evidence: conflicting" in out
+
+    def test_review_page_shows_insufficient_evidence(self, store, monkeypatch):
+        from streamlit.testing.v1 import AppTest
+
+        monkeypatch.setenv("OBS_AGENT_DECISIONS", str(store.path))
+        at = AppTest.from_file(str(REVIEW_PAGE), default_timeout=60).run()
+        assert not at.exception
+        assert {m.label: m.value for m in at.metric}["Insufficient evidence"] == "5"
+        at.sidebar.checkbox[0].check().run()
+        assert not at.exception
+        assert at.subheader[0].value.startswith("5 resources")

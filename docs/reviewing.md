@@ -55,7 +55,8 @@ The README is deliberately explicit about this, but it bears repeating:
 
 - **The 98% team accuracy is a synthetic benchmark.** Synthetic owners map more neatly onto teams than
   real ones would. The harsh estate exists to measure that gap: team accuracy falls **98% → 85%**
-  while auto-apply precision holds at 100%.
+  while auto-apply precision holds at 100%. With insufficient-evidence abstention, the review flow
+  suggests a team for 77% of harsh untagged resources at 94% accuracy; read accuracy with coverage.
 - **The synthetic-data ceiling is unresolved.** Whether the approach transfers to a real estate is
   still open. The honest next step would be a small hand-labelled real sample (even ~50 resources)
   — that is a known gap, not an oversight.

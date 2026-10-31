@@ -252,6 +252,9 @@ def suggest_labels(resource_id: str) -> str:
             continue
         raw = "none" if lr["raw"] is None else f"'{lr['raw']}' (unrecognised)"
         lines.append(f"  {label} untagged (raw value: {raw})")
+        if lr["suggested"] is None:
+            lines.append(f"    → no suggestion ({lr['reason']})")
+            continue
         lines.append(
             f"    → suggest {label}={lr['suggested']} ({lr['confidence']:.0%} confidence, "
             f"{lr['action']}; via {lr['source']}: {lr['reason']})"
