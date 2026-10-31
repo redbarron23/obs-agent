@@ -44,6 +44,8 @@ The backup, verify and restore procedure, with its operator checklist, is in
 
 - [ ] Save each approved change plan with its approval evidence before applying an exported CSV,
   Terraform file, or shell script through the normal delivery system.
+- [ ] Immediately before delivery, check the plan against a freshly exported inventory (see
+  [Pre-delivery plan validation](#pre-delivery-plan-validation)). Deliver only on `pass`.
 - [ ] Store exports in an access-controlled audit location. Retain them for the period required by
   the organisation's finance, security, and records policies; assign an owner for deletion when
   that period expires.
@@ -51,6 +53,36 @@ The backup, verify and restore procedure, with its operator checklist, is in
   decision-database backup identifier, approver, and a checksum of the artifact.
 - [ ] Do not place cloud credentials, raw billing exports, unnecessary personal data, or reviewer free text in
   an audit export. Use stable reviewer IDs rather than email addresses when possible.
+
+## Pre-delivery plan validation
+
+Resources can change between review and delivery. Before the delivery system applies an export
+derived from a reviewed plan, export the inventory again and run the read-only check:
+
+```bash
+uv run python plan_validation.py plan.json fresh.csv --review-id <saved-review-id> --output report.json
+# or: --source reviewed.csv [--vocabulary vocab.json] when the snapshot is not a saved review
+# in the image: docker compose exec api python plan_validation.py ...
+```
+
+The JSON report (`report_version` 1) lists every planned resource with its recorded before-value,
+planned value, observed value, and findings with reasons. Exit status is 0 for `pass`, 1 for `fail`
+(renewed review needed), and 2 for an invalid plan or unreadable input.
+
+| Outcome | Detected when |
+| --- | --- |
+| `invalid` plan | Wrong schema version, not reviewed-only, malformed changes, or a tag without a matching approval (reviewer, decision time, value, and the plan's `inventory_id`/`model_version`) |
+| `previous_value_changed` | A planned tag is neither its recorded before-value nor the planned value |
+| `already_applied` | A planned tag already has the planned value (GCP compared lowercased, as exports write it) |
+| `resource_missing` | A planned resource is absent from the fresh inventory |
+| `cloud_changed` / `evidence_changed` | The resource moved cloud, or (with the source snapshot) its parent, owners, services or cost shape drifted since review |
+| `inference_version_changed` | The fresh inventory's vocabulary or the inference implementation no longer yields the plan's `model_version` |
+| `source_snapshot_mismatch` / `plan_inconsistent_with_source` | The supplied source is not the reviewed snapshot, or the plan's before-values do not match it |
+
+Unrelated changes elsewhere in the estate do not fail the check. Without `--review-id`/`--source`
+only tag before-values are compared, and the report warns about it. The check never changes tags,
+decisions, snapshots or plans, and never moves an approval to the fresh inventory: on `fail`, import
+the fresh inventory, review the flagged resources again, and export a new plan.
 
 ## Confidence-threshold changes
 
