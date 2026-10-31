@@ -14,7 +14,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY agent.py api.py app.py data.py drift.py inventory.py inventory_import.py labeling.py label_review.py label_config.py review_context.py review_workspaces.py observability.py providers.py real_evaluation.py tools.py ./
+COPY agent.py api.py app.py data.py drift.py inventory.py inventory_import.py labeling.py label_review.py label_config.py review_context.py review_workspaces.py observability.py plan_validation.py providers.py real_evaluation.py tools.py ./
 COPY pages/ pages/
 COPY fixtures/ fixtures/
 
