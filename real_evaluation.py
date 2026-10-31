@@ -10,7 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
-from label_review import feedback_metrics
+from label_review import REVOKE, feedback_metrics
 from labeling import AUTO_APPLY_THRESHOLD, BEST_STRATEGY, LABELS, evaluate
 
 MIN_RESOURCES = 50
@@ -67,6 +67,8 @@ def evaluate_feedback(
         raise ValueError(
             f"Feedback entries missing required fields at indexes: {', '.join(missing)}."
         )
+    # Revocation events withdraw an approval; they are not resolved outcomes.
+    entries = [entry for entry in entries if entry["decision"] != REVOKE]
     contexts = set()
     unique = {}
     fields = ("decision", "value", "suggested", "previous", "confidence")

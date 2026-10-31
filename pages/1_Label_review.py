@@ -16,6 +16,7 @@ import streamlit as st
 import workflow_metrics
 from label_config import inventory_config
 from label_review import (
+    MAX_REVOCATION_REASON,
     DecisionError,
     DecisionStore,
     coverage,
@@ -286,6 +287,13 @@ else:
         },
     )
 
+    revoke_reason = st.text_input(
+        "Reason for clearing a decision (optional)",
+        key="revoke_reason",
+        max_chars=MAX_REVOCATION_REASON,
+        help="Clearing a decision revokes it: the reviewer, time and this reason are kept in "
+        "the review history. The reason is never written to logs or metrics.",
+    ).strip()
     left, right = st.columns([1, 3])
     if left.button("Save decisions", icon=":material/save:", type="primary", disabled=not reviewer):
         errors, saved = [], 0
@@ -297,8 +305,11 @@ else:
                         store.set(
                             rid, label, decision, override, imported_inventory, reviewer=reviewer
                         )
-                    else:
-                        store.delete(rid, label)
+                    elif not store.revoke(
+                        rid, label, reviewer=reviewer, reason=revoke_reason or None
+                    ):
+                        errors.append(f"{rid}: no decision to clear; it was already removed.")
+                        continue
                 saved += 1
             except DecisionError as exc:
                 errors.append(f"{rid}: {exc}")

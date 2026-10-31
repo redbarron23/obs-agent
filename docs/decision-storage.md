@@ -69,12 +69,15 @@ table's primary key:
 A new decision for the same pair replaces the old one (`INSERT ... ON CONFLICT DO UPDATE`).
 
 **`review_feedback`** is append-only. Every successful `set()` call adds a row with the same fields
-plus the model snapshot the reviewer saw: `confidence`, `source` and `reason`. It feeds the
+plus the model snapshot the reviewer saw: `confidence`, `source` and `reason`. Every successful
+revocation adds a `revoke` row (see [Revoking a decision](#revoking-a-decision)). It feeds the
 reviewer-agreement metrics (`GET /labels/feedback/metrics` and the quality panel on Label review)
 and the approval evidence in the approved change plan export.
 
-Missing provenance columns are added automatically to existing databases. Historical rows retain
-null values; they are not backfilled with an invented reviewer/version. Only decisions whose
+Missing provenance and revocation columns are added automatically to existing databases (an
+additive `ALTER TABLE ... ADD COLUMN` inside the same transaction that opens the store; nothing is
+rewritten or dropped). Historical rows retain null values; they are not backfilled with an invented
+reviewer/version, and decisions undone before this change gain no invented revocation. Only decisions whose
 inventory and model fingerprints match the current review are used for exports. Re-review after
 input, vocabulary, inference code, or model-version changes. A reviewed plan (schema version 2)
 contains these fingerprints at the top level and on its approval evidence.
@@ -86,9 +89,36 @@ Before writing, `set()` checks that the resource exists, that the label and deci
 that a reviewer identifier is present, that an override value is allowed for that label, and that `accept` / `reject` have a suggestion to
 act on. A rejected call writes nothing to either table.
 
+## Revoking a decision
+
 Undoing a decision (`DELETE /resources/{id}/labels/{label}/decision`, or clearing it on the review
-page) removes the row from `decisions` only. The `review_feedback` rows stay, and the undo itself
-is not recorded there.
+page) is a revocation. `DecisionStore.revoke()` removes the row from `decisions` and appends a
+`revoke` event to `review_feedback` in one transaction: if either write fails, neither happens.
+
+| Column on a `revoke` row | Meaning |
+| --- | --- |
+| `reviewer`, `decided_at` | Who revoked it (self-reported, as for decisions) and when (UTC) |
+| `revocation_reason` | Optional free-text reason (at most 500 characters) |
+| `revoked_decision`, `revoked_reviewer`, `revoked_decided_at` | The decision being withdrawn and who made it when |
+| `value`, `suggested`, `previous`, `inventory_id`, `model_version` | That decision's approval context |
+| `revoked_feedback_id` | The `review_feedback` row that recorded it (null for legacy JSON imports) |
+
+`confidence`, `source` and `reason` are null on `revoke` rows; the linked row has the model context.
+The API takes `{"reviewer": ..., "reason": ...}` as an optional JSON body on `DELETE` (the reviewer
+falls back to `OBS_AGENT_REVIEWER`) and returns the event. The review page uses the reviewer field
+and an optional reason box.
+
+- A missing reviewer, unknown label, or overlong reason is rejected before anything is written.
+- Revoking a decision that does not exist (including a second revoke) writes nothing: the store
+  returns `None` and the API returns 404.
+- A revoked decision is not in `decisions`, so it never reaches exports, the approved change plan
+  or plan validation. A plan's approval evidence is the latest non-`revoke` row for each label.
+- Recording a new decision after a revocation works like any other decision and appends a new row.
+- Reviewer-agreement metrics never score `revoke` rows: they are reported as `revoked`, not as
+  `reviewed`, and `real_evaluation.py` ignores them.
+- The reason is review history only. It is returned by `GET /labels/feedback` and kept in backups,
+  but never written to logs or workflow metrics, and the approved change plan omits revocation
+  columns. Treat it like reviewer IDs when sharing exports of the feedback history.
 
 ## Legacy JSON files
 

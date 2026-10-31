@@ -7,7 +7,8 @@ Human-in-the-loop label review on top of labeling.py.
   review_queue()     every resource with an untagged or suspect label
                      (including ones withheld for insufficient evidence)
   DecisionStore      reviewer decisions (accept / reject / override), with an
-                     append-only feedback trail shared by the API and UI
+                     append-only feedback trail shared by the API and UI;
+                     revoking a decision appends an attributable 'revoke' event
   export_*()         resolved label changes as CSV, a shell script of
                      az / gcloud commands, or a Terraform tfvars map
 
@@ -53,6 +54,18 @@ STATUSES = ("ok", "untagged", "suspect")
 # so it can only be resolved by an explicit override.
 INSUFFICIENT_EVIDENCE = "insufficient evidence"
 DECISIONS = ("accept", "reject", "override")
+# review_feedback.decision for a revocation event; never a decision in its own right.
+REVOKE = "revoke"
+# Columns that describe a revocation; null on decision rows and on rows written before revocations
+# were recorded. Not part of plan approval evidence.
+REVOCATION_COLUMNS = {
+    "revoked_decision": "TEXT",
+    "revoked_reviewer": "TEXT",
+    "revoked_decided_at": "TEXT",
+    "revoked_feedback_id": "INTEGER",
+    "revocation_reason": "TEXT",
+}
+MAX_REVOCATION_REASON = 500
 EXPORT_FORMATS = ("csv", "sh", "tfvars", "plan")
 
 DEFAULT_DECISIONS_PATH = "label_decisions.db"
@@ -334,11 +347,16 @@ class DecisionStore:
                 )
                 """
             )
+            # Additive migration for databases from earlier versions: existing rows get NULLs,
+            # so no reviewer, version or revocation is invented for historical actions.
             for table in ("decisions", "review_feedback"):
                 columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-                for name in ("reviewer", "inventory_id", "model_version"):
+                wanted = dict.fromkeys(("reviewer", "inventory_id", "model_version"), "TEXT")
+                if table == "review_feedback":
+                    wanted |= REVOCATION_COLUMNS
+                for name, kind in wanted.items():
                     if name not in columns:
-                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} TEXT")
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
             if is_new and self._legacy_path.exists():
                 for entry in json.loads(self._legacy_path.read_text()):
                     conn.execute(
@@ -381,11 +399,7 @@ class DecisionStore:
         *,
         reviewer: str | None = None,
     ) -> dict:
-        reviewer = (
-            reviewer if reviewer is not None else os.environ.get("OBS_AGENT_REVIEWER", "")
-        ).strip()
-        if not reviewer or len(reviewer) > 128:
-            raise DecisionError("Provide a reviewer name or ID (1–128 characters).")
+        reviewer = _reviewer(reviewer)
         report = resource_report(resource_id, inventory)
         if report is None:
             raise KeyError(resource_id)
@@ -454,12 +468,114 @@ class DecisionStore:
             )
         return entry
 
-    def delete(self, resource_id: str, label: str) -> bool:
+    def revoke(
+        self,
+        resource_id: str,
+        label: str,
+        *,
+        reviewer: str | None = None,
+        reason: str | None = None,
+    ) -> dict | None:
+        """Withdraw the current decision and record who did it, when, and what was withdrawn.
+
+        Removing the decision and appending the 'revoke' event to review_feedback happen in one
+        transaction. Returns the event, or None (writing nothing) when there is no decision to
+        revoke. Invalid input raises DecisionError before anything is read or written.
+        """
+        reviewer = _reviewer(reviewer)
+        if label not in LABELS:
+            raise DecisionError(f"Unknown label '{label}'. Choose from {list(LABELS)}.")
+        reason = (reason or "").strip() or None
+        if reason is not None and len(reason) > MAX_REVOCATION_REASON:
+            raise DecisionError(
+                f"Keep the revocation reason to {MAX_REVOCATION_REASON} characters or fewer."
+            )
         with self._connect() as conn:
-            cursor = conn.execute(
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT * FROM decisions WHERE resource_id = ? AND label = ?", (resource_id, label)
+            ).fetchone()
+            if current is None:
+                return None
+            # The feedback row that recorded the decision being revoked (absent for decisions
+            # imported from legacy JSON files).
+            origin = conn.execute(
+                """
+                SELECT id FROM review_feedback
+                WHERE resource_id = ? AND label = ? AND decision = ? AND decided_at = ?
+                  AND reviewer IS ? AND inventory_id IS ? AND model_version IS ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (
+                    resource_id,
+                    label,
+                    current["decision"],
+                    current["decided_at"],
+                    current["reviewer"],
+                    current["inventory_id"],
+                    current["model_version"],
+                ),
+            ).fetchone()
+            event = {
+                "resource_id": resource_id,
+                "label": label,
+                "decision": REVOKE,
+                # The approval context being withdrawn.
+                "value": current["value"],
+                "suggested": current["suggested"],
+                "previous": current["previous"],
+                "inventory_id": current["inventory_id"],
+                "model_version": current["model_version"],
+                "revoked_decision": current["decision"],
+                "revoked_reviewer": current["reviewer"],
+                "revoked_decided_at": current["decided_at"],
+                "revoked_feedback_id": origin["id"] if origin else None,
+                # Who revoked it, when and (optionally) why.
+                "reviewer": reviewer,
+                "decided_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "revocation_reason": reason,
+            }
+            conn.execute(
                 "DELETE FROM decisions WHERE resource_id = ? AND label = ?", (resource_id, label)
             )
-            return cursor.rowcount == 1
+            cursor = conn.execute(
+                """
+                INSERT INTO review_feedback
+                (resource_id, label, decision, value, suggested, previous, decided_at, reviewer,
+                 inventory_id, model_version, revoked_decision, revoked_reviewer,
+                 revoked_decided_at, revoked_feedback_id, revocation_reason)
+                VALUES (:resource_id, :label, :decision, :value, :suggested, :previous,
+                        :decided_at, :reviewer, :inventory_id, :model_version, :revoked_decision,
+                        :revoked_reviewer, :revoked_decided_at, :revoked_feedback_id,
+                        :revocation_reason)
+                """,
+                event,
+            )
+            row = conn.execute(
+                "SELECT * FROM review_feedback WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+            return dict(row)
+
+    def delete(
+        self,
+        resource_id: str,
+        label: str,
+        *,
+        reviewer: str | None = None,
+        reason: str | None = None,
+    ) -> bool:
+        """Revoke the decision (see revoke()); True if there was one."""
+        return self.revoke(resource_id, label, reviewer=reviewer, reason=reason) is not None
+
+
+def _reviewer(reviewer: str | None) -> str:
+    """The self-reported reviewer ID for a write, falling back to OBS_AGENT_REVIEWER."""
+    reviewer = (
+        reviewer if reviewer is not None else os.environ.get("OBS_AGENT_REVIEWER", "")
+    ).strip()
+    if not reviewer or len(reviewer) > 128:
+        raise DecisionError("Provide a reviewer name or ID (1–128 characters).")
+    return reviewer
 
 
 def _blank(value):
@@ -526,10 +642,15 @@ def feedback_metrics(feedback: list[dict]) -> dict:
 
     An accepted or overridden value is the reviewer's resolved label. A rejected
     suggestion can be scored only when the resource already had a usable label;
-    rejecting an untagged suggestion supplies no replacement truth.
+    rejecting an untagged suggestion supplies no replacement truth. Revocation events are
+    counted ('revoked') but never scored or counted as reviewed.
     """
+    # A revocation withdraws an approval; it is not a reviewer-resolved label.
+    revocations = [entry for entry in feedback if entry["decision"] == REVOKE]
+    feedback = [entry for entry in feedback if entry["decision"] != REVOKE]
     result = {
         "reviewed": len(feedback),
+        "revoked": len(revocations),
         "scored": 0,
         "unresolved": 0,
         "abstained": 0,
@@ -554,6 +675,7 @@ def feedback_metrics(feedback: list[dict]) -> dict:
             1 for entry in entries if not entry["suggested"] and entry.get("source") == "abstain"
         )
         summary["reviewed"] = len(entries)
+        summary["revoked"] = sum(entry["label"] == label for entry in revocations)
         summary["abstained"] = abstained
         summary["unresolved"] = len(entries) - len(rows) - abstained
         periods = []
@@ -660,7 +782,15 @@ def _export_value(cloud: str, resource_id: str, label: str, value: str) -> str:
 def approved_change_plan(store: DecisionStore, inventory: pd.DataFrame | None = None) -> dict:
     """An auditable, reviewed-only change set for approval before application."""
     decisions = {f"{d['resource_id']}|{d['label']}": d for d in current_decisions(store, inventory)}
-    feedback = {f"{d['resource_id']}|{d['label']}": d for d in store.feedback()}
+    # Approval evidence is the latest decision event per label; revocation events never count
+    # (a revoked decision is also absent from `decisions`, so it cannot reach the plan).
+    feedback = {
+        f"{d['resource_id']}|{d['label']}": {
+            k: v for k, v in d.items() if k not in REVOCATION_COLUMNS
+        }
+        for d in store.feedback()
+        if d["decision"] != REVOKE
+    }
     changes = pending_changes(store, include_auto=False, inventory=inventory)
     approvals = []
     for change in changes:

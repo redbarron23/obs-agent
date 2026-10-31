@@ -48,7 +48,7 @@ def live(tmp_path, monkeypatch):
     store.set("gcp-demo-003", "team", "accept", inventory=inventory, reviewer="alice")
     store.set("gcp-demo-003", "team", "override", "Platform", inventory, reviewer="bob")
     store.set("gcp-demo-003", "env", "accept", inventory=inventory, reviewer="bob")
-    store.delete("gcp-demo-003", "env")  # undone: history stays, decision goes
+    store.revoke("gcp-demo-003", "env", reviewer="bob", reason="wrong env")  # recorded event
     return decisions, review_dir, review_id
 
 
@@ -75,7 +75,7 @@ def test_round_trip_restores_review_vocabulary_decisions_and_plan(live, tmp_path
     assert set(manifest["files"]) == {"label_decisions.db", f"reviews/{review_id}.db"}
     assert manifest["files"][f"reviews/{review_id}.db"]["rows"] == {
         "decisions": 1,
-        "review_feedback": 3,
+        "review_feedback": 4,
         "workspace": 1,
     }
     assert review_backup.verify(backup) == []
@@ -92,6 +92,9 @@ def test_round_trip_restores_review_vocabulary_decisions_and_plan(live, tmp_path
     pd.testing.assert_frame_equal(after["inventory"], before["inventory"])
     for key in ("decisions", "feedback", "main_decisions", "main_feedback"):
         assert after[key] == before[key]
+    revocation = after["feedback"][-1]  # the revocation event survives the round trip
+    assert (revocation["decision"], revocation["reviewer"]) == ("revoke", "bob")
+    assert revocation["revocation_reason"] == "wrong env"
     # Same code and dependencies: same effective changes and approval evidence.
     assert after["plans"] == before["plans"]
     plan = after["plans"][f"reviews/{review_id}.db"]
@@ -113,7 +116,7 @@ def test_changed_inference_context_needs_renewed_approval(live, tmp_path, monkey
     monkeypatch.setattr(lr, "review_context", lambda inv=None: original | {"model_version": "new"})
     plan = lr.approved_change_plan(store, inventory)
     assert plan["changes"] == [] and plan["approvals"] == []
-    assert len(store.all()) == 1 and len(store.feedback()) == 3  # history kept, not transferred
+    assert len(store.all()) == 1 and len(store.feedback()) == 4  # history kept, not transferred
 
 
 def test_backup_of_running_store_has_only_committed_rows(live, tmp_path):

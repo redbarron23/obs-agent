@@ -42,7 +42,7 @@ separately on purpose.
 | `pending_auto_apply_ready` / `pending_insufficient_evidence` | Subsets of `pending_items` by suggested action |
 | `reviewed_items` | Decisions bound to the current snapshot and inference version |
 | `stale_decisions` | Decisions made against an earlier snapshot or inference version. They are not exported and must be reviewed again. |
-| `feedback_actions` | All rows in the append-only `review_feedback` history, including superseded, undone and earlier-snapshot actions. Not backlog. |
+| `feedback_actions` | All rows in the append-only `review_feedback` history, including superseded and earlier-snapshot actions and `revoke` events. Not backlog. |
 | `review_started_at` | When the saved review workspace was created. For the default (synthetic) store, the first feedback action for the current snapshot. Null if neither exists. |
 | `oldest_pending_age_seconds` | Now minus `review_started_at` while `pending_items > 0`. `0` when nothing is pending; null when the start is unknown. |
 | `last_action_age_seconds` | Time since the most recent feedback action for the current snapshot. A large value with pending work means review has stalled. |
