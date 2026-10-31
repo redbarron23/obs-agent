@@ -160,7 +160,7 @@ the clean estate stays byte-identical so the published metrics keep meaning the 
 ## CI
 
 `uv run pytest -q -m "not integration"` and `uv run evals.py --dry-run` run on every push and PR
-across Python 3.10, 3.11 and 3.12, alongside a Docker job that builds the image and smoke-tests
+across Python 3.11 and 3.12, alongside a Docker job that builds the image and smoke-tests
 `/health`. Live evals are never run in CI.
 
 A separate `mlops` job installs the optional MLflow dependency group and runs the mocked tracing

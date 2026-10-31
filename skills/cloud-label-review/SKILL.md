@@ -26,7 +26,7 @@ from the team.
 
 1. **Get obs-agent.** If not already in a checkout:
    `git clone https://github.com/redbarron23/obs-agent.git && cd obs-agent && uv sync --locked`
-   (needs Python 3.10+ and [uv](https://docs.astral.sh/uv/)). No API keys or cloud credentials needed.
+   (needs Python 3.11+ and [uv](https://docs.astral.sh/uv/)). No API keys or cloud credentials needed.
 
 2. **Build the inventory CSV.** One row per Azure subscription or GCP project. Required columns:
    `cloud` (`azure`/`gcp`), `resource_id`, `parent` (management group / folder), `owners`,

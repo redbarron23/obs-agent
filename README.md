@@ -10,7 +10,7 @@ Label review runs locally without an LLM or cloud credentials. Optional cost cha
 
 ## Quick start
 
-Requirements: Python **3.10+** and [uv](https://docs.astral.sh/uv/).
+Requirements: Python **3.11+** and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/redbarron23/obs-agent.git
