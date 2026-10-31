@@ -17,7 +17,7 @@ GET  /labels/coverage                          untagged / suspect counts
 GET  /resources                                review queue (filterable)
 GET  /resources/{id}/labels                    suggestions for one resource
 PUT  /resources/{id}/labels/{label}/decision   accept / reject / override
-DELETE /resources/{id}/labels/{label}/decision undo a decision
+DELETE /resources/{id}/labels/{label}/decision revoke a decision (recorded in feedback)
 GET  /labels/decisions                         all recorded decisions
 GET  /labels/export?format=csv|sh|tfvars       resolved changes to apply
 GET  /labels/backlog                           pending review work and its age
@@ -600,11 +600,43 @@ class Decision(BaseModel):
     model_version: str | None = None
 
 
+class RevocationRequest(BaseModel):
+    model_config = {"json_schema_extra": {"examples": [{"reviewer": "alice", "reason": "wrong"}]}}
+
+    reviewer: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Reviewer name or ID. Required unless OBS_AGENT_REVIEWER is configured. "
+        "Self-reported, like the reviewer on a decision.",
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=label_review.MAX_REVOCATION_REASON,
+        description="Optional reason, kept in the review history only (never logs or metrics).",
+    )
+
+
 class ReviewFeedback(Decision):
     id: int
+    decision: Literal["accept", "reject", "override", "revoke"]
     confidence: float | None
     source: str | None
-    reason: str | None
+    reason: str | None = Field(description="The model's explanation shown to the reviewer.")
+    revoked_decision: Literal["accept", "reject", "override"] | None = Field(
+        default=None, description="On a `revoke` event: the decision that was withdrawn."
+    )
+    revoked_reviewer: str | None = None
+    revoked_decided_at: str | None = None
+    revoked_feedback_id: int | None = Field(
+        default=None, description="Feedback row that recorded the revoked decision, if any."
+    )
+    revocation_reason: str | None = None
+
+
+class Revocation(BaseModel):
+    deleted: str = Field(description="`resource_id/label` of the revoked decision.")
+    revocation: ReviewFeedback
 
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Unknown resource."}}
@@ -706,20 +738,32 @@ def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> di
 
 @app.delete(
     "/resources/{resource_id}/labels/{label}/decision",
+    response_model=Revocation,
     dependencies=[Depends(require_api_key)],
-    summary="Undo a review decision",
+    summary="Revoke a review decision",
+    description="Removes the active decision and appends a `revoke` event (reviewer, time, "
+    "optional reason, and the withdrawn decision) to `/labels/feedback` in one transaction. The "
+    "optional JSON body supplies `reviewer` and `reason`. Revoking a missing decision returns 404 "
+    "and records nothing.",
     tags=["labels"],
     responses={
         401: ERROR_RESPONSES[401],
-        404: {"model": ErrorResponse, "description": "No such decision."},
+        404: {"model": ErrorResponse, "description": "No such decision; nothing recorded."},
+        422: {"model": ErrorResponse, "description": "Missing reviewer or invalid reason."},
     },
 )
-def delete_decision(resource_id: str, label: LabelName) -> dict:
-    with workflow_metrics.operation("decision_write"):
-        deleted = decisions.delete(resource_id, label)
-    if not deleted:
+def delete_decision(
+    resource_id: str, label: LabelName, req: RevocationRequest | None = None
+) -> dict:
+    req = req or RevocationRequest()
+    try:
+        with workflow_metrics.operation("decision_write", invalid=(DecisionError,)):
+            event = decisions.revoke(resource_id, label, reviewer=req.reviewer, reason=req.reason)
+    except DecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if event is None:
         raise HTTPException(status_code=404, detail="Decision not found")
-    return {"deleted": f"{resource_id}/{label}"}
+    return {"deleted": f"{resource_id}/{label}", "revocation": event}
 
 
 @app.get(
@@ -740,7 +784,8 @@ def list_decisions() -> list[dict]:
     dependencies=[Depends(require_api_key)],
     summary="Reviewer feedback with model context",
     description="Append-only review actions, including the suggestion, confidence and explanation "
-    "shown when each decision was made.",
+    "shown when each decision was made. `revoke` events record a withdrawn decision; they are "
+    "history, not active approvals.",
     tags=["labels"],
     responses={401: ERROR_RESPONSES[401]},
 )

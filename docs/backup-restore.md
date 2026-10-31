@@ -15,8 +15,8 @@ Where the files live and what their tables hold is described in [Decision storag
 | One database per saved review | `OBS_AGENT_REVIEW_DIR/<64 hex>.db` (default `./review-workspaces/`; Docker `/app/state/reviews/`) | `workspace` (uploaded inventory CSV, vocabulary JSON, name, creation time), `decisions`, `review_feedback` |
 
 Back up every file together so that inventories, vocabularies, active decisions and the append-only
-feedback history come from the same point in time. Undone decisions are absent from `decisions`
-but still present in `review_feedback`; both tables are restored as they were.
+feedback history come from the same point in time. Revoked decisions are absent from `decisions`
+and recorded as `revoke` events in `review_feedback`; both tables are restored as they were.
 
 Not included, by design: the public demo's per-session temp databases, exported files (CSV, shell,
 tfvars, plans), `.env` secrets and API keys, MLflow data, and the in-memory review cache, which is

@@ -264,10 +264,11 @@ class TestBacklog:
         after = wm.backlog(store)
         assert after["pending_items"] == before["pending_items"] - 1
         assert after["reviewed_items"] == 1 and after["feedback_actions"] == 1
-        store.delete(rid, "team")  # undo: pending again, history kept
+        store.revoke(rid, "team")  # revoke: pending again, revocation appended to history
         undone = wm.backlog(store)
         assert undone["pending_items"] == before["pending_items"]
-        assert undone["reviewed_items"] == 0 and undone["feedback_actions"] == 1
+        assert undone["reviewed_items"] == 0 and undone["feedback_actions"] == 2
+        assert undone["stale_decisions"] == 0
 
     def test_abstained_labels_are_pending(self, store):
         b = wm.backlog(store)
