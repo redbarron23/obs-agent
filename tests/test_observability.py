@@ -5,8 +5,10 @@ mlops dependency group and are skipped without it (CI's mlops job runs them).
 No live LLM calls: Provider.create is patched.
 """
 
+import contextlib
+import sys
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -48,6 +50,153 @@ class TestOff:
         monkeypatch.setattr(builtins, "__import__", fake_import)
         assert observability.setup() is False
         assert "uv sync --group mlops" in caplog.text
+
+
+# ── Degraded tracing (fake mlflow module; runs with or without mlops) ──
+
+
+def _answer(text="sub-a is top"):
+    block = SimpleNamespace(type="text", text=text)
+    return SimpleNamespace(
+        stop_reason="end_turn", content=[block], model="m", usage=None, stop_details=None
+    )
+
+
+def _ask(question="Which is top?", **create):
+    import agent
+
+    create = create or {"return_value": _answer()}
+    with (
+        patch("agent.Provider.__init__", return_value=None),
+        patch("agent.Provider.create", **create),
+    ):
+        return agent.run(question, provider="anthropic", model="m")
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    c = _Clock()
+    monkeypatch.setattr(observability, "time", c)
+    return c
+
+
+@pytest.fixture
+def fake_mlflow(monkeypatch):
+    """A stand-in mlflow whose tracking store is down until `.recover()`."""
+    fake = MagicMock(name="mlflow")
+    fake.set_experiment.side_effect = ConnectionError(
+        "tracking store unavailable at https://alice:s3cret@mlflow.example.com/api?token=t0k"
+    )
+    fake.openai.autolog.return_value = None
+    fake.anthropic.autolog.return_value = None
+    spans = []
+
+    @contextlib.contextmanager
+    def start_span(name, span_type):
+        s = MagicMock(name=f"span:{name}")
+        spans.append((name, s))
+        yield s
+
+    fake.start_span.side_effect = start_span
+    fake.spans = spans
+    fake.recover = lambda: setattr(fake.set_experiment, "side_effect", None)
+    monkeypatch.setitem(sys.modules, "mlflow", fake)
+    monkeypatch.setenv(
+        "MLFLOW_TRACKING_URI", "https://alice:s3cret@mlflow.example.com/api?token=t0k"
+    )
+    return fake
+
+
+class TestDegraded:
+    def test_unavailable_store_does_not_fail_request(self, fake_mlflow, clock, caplog):
+        answer, _ = _ask()
+        assert answer == "sub-a is top"
+        assert not observability.active()
+        st = observability.status()
+        assert st["attempts"] == 1 and st["disabled_reason"] is None
+        assert "ConnectionError" in caplog.text
+        assert "https://mlflow.example.com" in caplog.text
+        assert "retrying in 60s" in caplog.text
+
+    def test_warning_omits_credentials_and_request_content(self, fake_mlflow, clock, caplog):
+        _ask("secret question about acme-prod")
+        for leaked in ("s3cret", "alice", "t0k", "/api", "acme-prod"):
+            assert leaked not in caplog.text
+
+    def test_subsequent_requests_retry_after_interval_then_recover(
+        self, fake_mlflow, clock, caplog
+    ):
+        _ask()
+        _ask()  # within the retry interval: no new attempt, no new warning
+        assert fake_mlflow.set_experiment.call_count == 1
+        assert caplog.text.count("MLflow tracing degraded") == 1
+
+        clock.now += observability.RETRY_INTERVAL_S
+        fake_mlflow.recover()
+        answer, _ = _ask()
+        assert answer == "sub-a is top"
+        assert fake_mlflow.set_experiment.call_count == 2
+        assert observability.active()
+        assert observability.status()["attempts"] == 2
+        assert "agent" in [name for name, _ in fake_mlflow.spans]
+
+    def test_bounded_retries_then_documented_disabled_state(self, fake_mlflow, clock, caplog):
+        for _ in range(observability.MAX_SETUP_ATTEMPTS + 2):
+            assert _ask()[0] == "sub-a is top"
+            clock.now += observability.RETRY_INTERVAL_S
+        assert fake_mlflow.set_experiment.call_count == observability.MAX_SETUP_ATTEMPTS
+        st = observability.status()
+        assert st["active"] is False
+        assert st["disabled_reason"] == "tracking store unavailable (ConnectionError)"
+        assert "disabled for this process" in caplog.text
+        fake_mlflow.recover()
+        assert observability.setup() is False  # stays disabled until restart
+
+    def test_tracing_disabled_never_touches_mlflow(self, fake_mlflow, monkeypatch):
+        monkeypatch.delenv("MLFLOW_TRACKING_URI")
+        assert _ask()[0] == "sub-a is top"
+        assert observability.status()["disabled_reason"] == "not requested"
+        fake_mlflow.set_experiment.assert_not_called()
+        fake_mlflow.start_span.assert_not_called()
+
+    def test_missing_mlflow_request_completes(self, monkeypatch, caplog):
+        monkeypatch.setitem(sys.modules, "mlflow", None)  # import raises ImportError
+        monkeypatch.setenv("OBS_AGENT_MLFLOW", "1")
+        assert _ask()[0] == "sub-a is top"
+        assert observability.status()["disabled_reason"] == "mlflow not installed"
+        assert "uv sync --group mlops" in caplog.text
+
+    def test_span_recording_failure_does_not_fail_request(self, fake_mlflow, clock, caplog):
+        fake_mlflow.recover()
+        fake_mlflow.start_span.side_effect = ConnectionError("store went away")
+        assert observability.setup() is True
+        assert _ask()[0] == "sub-a is top"
+        assert caplog.text.count("start_span failed") == 1
+
+
+class TestAgentErrorsStillRaised:
+    def test_with_failed_tracing_init(self, fake_mlflow, clock):
+        with pytest.raises(RuntimeError, match="provider exploded"):
+            _ask(side_effect=RuntimeError("provider exploded"))
+        assert fake_mlflow.set_experiment.call_count == 1
+
+    def test_with_active_tracing(self, fake_mlflow, clock):
+        fake_mlflow.recover()
+        with pytest.raises(RuntimeError, match="provider exploded"):
+            _ask(side_effect=RuntimeError("provider exploded"))
+        assert observability.active()
+
+    def test_with_tracing_off(self):
+        with pytest.raises(RuntimeError, match="provider exploded"):
+            _ask(side_effect=RuntimeError("provider exploded"))
 
 
 # ── With MLflow installed ──────────────────────────────────────────────
