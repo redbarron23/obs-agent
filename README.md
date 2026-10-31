@@ -38,7 +38,8 @@ See the [five-minute walkthrough](docs/five-minute-demo.md).
 
 Snapshots, vocabularies, and approvals persist locally in `review-workspaces/` (configurable with
 `OBS_AGENT_REVIEW_DIR`). Keep this private directory outside version control and back it up.
-Imports are available in the review UI; the REST API and optional chat use the synthetic estate.
+Saved reviews are also available through the REST API's `/reviews` routes and `review_cli.py`
+([example](docs/api.md#saved-reviews-api-and-cli)); optional chat uses the synthetic estate.
 The public demo disables private imports. See [Import inventory](docs/importing.md).
 
 ## What you get

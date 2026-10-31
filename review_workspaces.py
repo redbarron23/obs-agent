@@ -5,22 +5,45 @@ import json
 import os
 import re
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
+import workflow_metrics
 from drift import compare_snapshots
-from inventory_import import load_inventory_csv
-from label_config import inventory_config
-from label_review import DecisionStore
-from review_context import inventory_id
+from inventory_import import InventoryImportError, apply_column_mapping, load_inventory_csv
+from label_config import LabelConfigError, inventory_config, load_label_config
+from label_review import DecisionStore, demo_enabled
+from review_context import inventory_id, review_context
+
+
+class UnknownReviewError(ValueError):
+    """No saved review has this ID. Callers must never fall back to synthetic data."""
+
+
+class PrivateReviewsDisabled(PermissionError):
+    """Saved private reviews are switched off (the public demo, OBS_AGENT_DEMO=1)."""
+
+
+def require_private_reviews() -> None:
+    """Refuse private imports and saved reviews in demo mode, as the Import page does."""
+    if demo_enabled():
+        raise PrivateReviewsDisabled(
+            "Private inventory imports and saved reviews are disabled in the public demo."
+        )
 
 
 def review_directory() -> Path:
     return Path(os.environ.get("OBS_AGENT_REVIEW_DIR", "review-workspaces"))
 
 
+def is_review_id(review_id) -> bool:
+    """A saved review ID is exactly 64 lowercase hex digits (so never a path)."""
+    return isinstance(review_id, str) and re.fullmatch(r"[0-9a-f]{64}", review_id) is not None
+
+
 def _path(review_id: str) -> Path:
-    if not re.fullmatch(r"[0-9a-f]{64}", review_id):
+    if not is_review_id(review_id):
         raise ValueError("Invalid saved review ID.")
     return review_directory() / f"{review_id}.db"
 
@@ -45,14 +68,61 @@ def save_review(csv: bytes, name: str, config: dict | None = None) -> str:
     return review_id
 
 
-def load_review(review_id: str):
+def _workspace(review_id: str) -> tuple:
+    """(name, created_at, csv, config) of a saved review, opened read-only."""
     path = _path(review_id)
     # A missing selection must not silently create an empty database.
-    with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as conn:
-        row = conn.execute("SELECT csv, config FROM workspace WHERE id = 1").fetchone()
+    if not path.is_file():
+        raise UnknownReviewError("Unknown saved review ID.")
+    with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+        if not conn.execute("SELECT name FROM sqlite_master WHERE name = 'workspace'").fetchone():
+            raise UnknownReviewError("Unknown saved review ID.")
+        row = conn.execute(
+            "SELECT name, created_at, csv, config FROM workspace WHERE id = 1"
+        ).fetchone()
     if row is None:
-        raise ValueError("Saved review has no inventory.")
-    return load_inventory_csv(row[0], json.loads(row[1])), DecisionStore(path)
+        raise UnknownReviewError("Saved review has no inventory.")
+    return row
+
+
+def load_review(review_id: str):
+    _, _, csv, config = _workspace(review_id)
+    return load_inventory_csv(csv, json.loads(config)), DecisionStore(_path(review_id))
+
+
+def review_summary(review_id: str, inventory=None) -> dict:
+    """ID, name, creation time, size and approval-binding context of one saved review."""
+    name, created_at, _, _ = _workspace(review_id)
+    if inventory is None:
+        inventory, _ = load_review(review_id)
+    return {
+        "id": review_id,
+        "name": name,
+        "created_at": created_at,
+        "resources": len(inventory),
+        **review_context(inventory),
+    }
+
+
+def import_review(
+    csv: bytes,
+    name: str,
+    vocabulary: bytes | None = None,
+    column_mapping: dict[str, str | None] | None = None,
+) -> dict:
+    """Validate and save an inventory the way the Import page does; return its summary.
+
+    Re-importing the same snapshot with the same vocabulary reopens the same review.
+    Raises InventoryImportError / LabelConfigError for invalid input.
+    """
+    require_private_reviews()
+    with workflow_metrics.operation("import", invalid=(InventoryImportError, LabelConfigError)):
+        config = load_label_config(vocabulary) if vocabulary is not None else None
+        if column_mapping is not None:
+            # Store the mapped CSV so the saved review reopens without the mapping.
+            csv = apply_column_mapping(csv, column_mapping)
+        review_id = save_review(csv, name, config)
+    return review_summary(review_id)
 
 
 def saved_reviews() -> list[dict]:

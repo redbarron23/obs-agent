@@ -47,9 +47,9 @@ separately on purpose.
 | `oldest_pending_age_seconds` | Now minus `review_started_at` while `pending_items > 0`. `0` when nothing is pending; null when the start is unknown. |
 | `last_action_age_seconds` | Time since the most recent feedback action for the current snapshot. A large value with pending work means review has stalled. |
 
-The API serves the synthetic inventory and `OBS_AGENT_DECISIONS`. Imported reviews are measured
-in the UI process. Call `workflow_metrics.backlog(store, inventory)` against a saved review (see
-`review_workspaces.load_review`) to measure one directly.
+`/labels/backlog` serves the synthetic inventory and `OBS_AGENT_DECISIONS`. For a saved review use
+`GET /reviews/{review_id}/backlog`, `GET /ops/metrics?review_id=...`, or
+`uv run python review_cli.py backlog REVIEW_ID`.
 
 ## Retrieving the measurements
 

@@ -32,8 +32,8 @@ uv run uvicorn api:app --reload          # http://localhost:8000/docs for intera
 
 ### Label endpoints
 
-These endpoints use the bundled synthetic estate and need no LLM. They share the review logic,
-but the UI calls Python functions directly; imported review workspaces are UI-only:
+These endpoints use the bundled synthetic estate and need no LLM. Saved private reviews have their
+own routes, [below](#saved-reviews-api-and-cli). The UI calls the same Python functions directly:
 
 | Endpoint | Purpose |
 |---|---|
@@ -55,6 +55,59 @@ feedback responses include `reviewer`, `inventory_id`, and `model_version`; olde
 have null provenance. Exports ignore approvals that do not match the current snapshot/version.
 `plan` exports use schema version 2 and are always reviewed-only. Other formats also default to
 reviewed-only; `include_auto=true` explicitly includes unreviewed high-confidence suggestions.
+
+### Saved reviews: API and CLI
+
+A pipeline can submit a private inventory, let reviewers decide in the UI, API or CLI, and fetch
+the reviewed plan, with no LLM or cloud credentials. Each surface calls the same workspace,
+validation, inference, decision and export functions, so one saved review shows the same
+suggestions, decisions and plan everywhere. Every route takes the review ID explicitly; an unknown
+ID is a `404`, never the synthetic estate. IDs are exactly 64 lowercase hex digits (anything else
+is a `422`, so an ID cannot name a path).
+
+| Endpoint (all under `/reviews`) | Purpose |
+|---|---|
+| `POST /reviews` | `{"name", "csv", "vocabulary"?, "column_mapping"?}`: validate and save, as the Import page does. The same snapshot and vocabulary return the same ID |
+| `GET /reviews`, `GET /reviews/{review_id}` | Saved reviews; one review's size, `inventory_id` and `model_version` |
+| `GET /reviews/{review_id}/coverage`, `/resources`, `/resources/{id}/labels` | As the synthetic routes above, same filters |
+| `PUT` / `DELETE /reviews/{review_id}/resources/{id}/labels/{label}/decision` | Record a decision, or revoke it with the same optional `{"reviewer", "reason"}` body and `{"deleted", "revocation"}` response as the synthetic `DELETE` (`reviewer` required, as above) |
+| `GET /reviews/{review_id}/decisions[?current=true]`, `/feedback`, `/feedback/metrics`, `/backlog` | Decisions (`current` keeps only exportable ones), history, agreement, pending work |
+| `GET /reviews/{review_id}/export?format=csv\|sh\|tfvars\|plan` | As `/labels/export`; approvals bound to another snapshot or inference version are excluded |
+
+`GET /ops/metrics?review_id=...` reports that review's backlog. With `OBS_AGENT_DEMO=1` every
+`/reviews` route returns `403` and the CLI refuses to run, as the Import page does.
+
+```bash
+H="X-API-Key: $OBS_AGENT_API_KEY"
+ID=$(jq -n --rawfile csv inventory.csv --slurpfile vocab vocabulary.json \
+       '{name: "estate-2026-10.csv", csv: $csv, vocabulary: $vocab[0]}' |
+     curl -sf localhost:8000/reviews -H "$H" -H 'content-type: application/json' -d @- | jq -r .id)
+curl -s "localhost:8000/reviews/$ID/resources?evidence=insufficient" -H "$H"
+curl -s -X PUT "localhost:8000/reviews/$ID/resources/gcp-demo-003/labels/team/decision" -H "$H" \
+  -H 'content-type: application/json' -d '{"decision": "accept", "reviewer": "finops-reviewer"}'
+curl -s "localhost:8000/reviews/$ID/export?format=plan" -H "$H" -o approved-label-change-plan.json
+```
+
+The CLI works on the same `OBS_AGENT_REVIEW_DIR` without the API server (JSON on stdout; exit
+status 2 for invalid input, an unknown ID or a refused decision):
+
+```bash
+uv run python review_cli.py import inventory.csv --vocabulary vocabulary.json   # prints the ID
+uv run python review_cli.py queue "$ID" --label team --hide-reviewed
+uv run python review_cli.py decide "$ID" gcp-demo-003 team accept --reviewer finops-reviewer
+uv run python review_cli.py export "$ID" --format plan --output approved-label-change-plan.json
+uv run python plan_validation.py approved-label-change-plan.json fresh.csv --review-id "$ID"
+```
+
+`undo REVIEW_ID RESOURCE LABEL [--reviewer R] [--reason TEXT]` revokes a decision and records a
+`revoke` event, like `DELETE`. Other commands: `list`, `show`, `coverage`, `resource`, `decisions [--current]`,
+`feedback`, `backlog`; `--help` on each lists its options.
+
+**Storage boundary.** Saved reviews hold private inventory data. Anyone with the API key, shell
+access to `OBS_AGENT_REVIEW_DIR`, or the UI can list, read and decide every saved review: this is
+one trusted-team workspace, not tenant-isolated storage. Reviewer names are self-reported (see
+above). Inventory contents and reviewer input are never written to the logs; error responses quote
+the offending row or value back to the caller only.
 
 ### Agent endpoints
 

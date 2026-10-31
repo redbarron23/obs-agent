@@ -22,8 +22,18 @@ GET  /labels/decisions                         all recorded decisions
 GET  /labels/export?format=csv|sh|tfvars       resolved changes to apply
 GET  /labels/backlog                           pending review work and its age
 
+Saved private reviews (same functions as the UI's Import / Label review pages;
+disabled when OBS_AGENT_DEMO=1; an unknown review ID is a 404, never synthetic data):
+POST /reviews                                  validate and save an inventory CSV
+GET  /reviews                                  list saved reviews
+GET  /reviews/{review_id}                      one review's summary and approval context
+GET  /reviews/{review_id}/coverage | /resources | /resources/{id}/labels
+PUT / DELETE /reviews/{review_id}/resources/{id}/labels/{label}/decision
+GET  /reviews/{review_id}/decisions | /feedback | /feedback/metrics | /backlog
+GET  /reviews/{review_id}/export?format=csv|sh|tfvars|plan
+
 Operations (see docs/operations.md):
-GET  /ops/metrics[?format=prometheus]          workflow counters, durations, backlog
+GET  /ops/metrics[?format=prometheus][&review_id=ID]  workflow counters, durations, backlog
 
 Every response carries an X-Request-ID header (echoed when the client sends a
 safe one); structured server logs carry the same ID as correlation_id.
@@ -47,9 +57,10 @@ import time
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Iterator
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -68,7 +79,19 @@ from agent import (
     served_by,
     stream_run,
 )
+from inventory_import import InventoryImportError
+from label_config import LabelConfigError
 from label_review import DecisionError, DecisionStore
+from review_workspaces import (
+    PrivateReviewsDisabled,
+    UnknownReviewError,
+    import_review,
+    is_review_id,
+    load_review,
+    require_private_reviews,
+    review_summary,
+    saved_reviews,
+)
 
 MAX_SESSIONS = 200
 MAX_AGENT_REQUESTS_PER_MINUTE = 20
@@ -447,6 +470,30 @@ def delete_session(session_id: str) -> dict:
     return {"deleted": session_id}
 
 
+# ── Saved private reviews (shared helpers) ────────────────────────────
+
+REVIEW_ID_PATTERN = r"^[0-9a-f]{64}$"
+
+
+def private_reviews_enabled() -> None:
+    """Saved private reviews are off in the public demo, as on the Import page."""
+    try:
+        require_private_reviews()
+    except PrivateReviewsDisabled as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _open_review(review_id: str):
+    """(inventory, decision store) of a saved review; 404 for an unknown ID, never synthetic."""
+    private_reviews_enabled()
+    if not is_review_id(review_id):  # the route pattern normally rejects it first
+        raise HTTPException(status_code=422, detail="Invalid saved review ID")
+    try:
+        return load_review(review_id)
+    except UnknownReviewError as exc:
+        raise HTTPException(status_code=404, detail="Saved review not found") from exc
+
+
 # ── Label review ───────────────────────────────────────────────────────
 
 LabelName = Literal["team", "env"]
@@ -755,10 +802,16 @@ def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> di
 def delete_decision(
     resource_id: str, label: LabelName, req: RevocationRequest | None = None
 ) -> dict:
+    return _revoke(decisions, resource_id, label, req)
+
+
+def _revoke(
+    store: DecisionStore, resource_id: str, label: str, req: RevocationRequest | None
+) -> dict:
     req = req or RevocationRequest()
     try:
         with workflow_metrics.operation("decision_write", invalid=(DecisionError,)):
-            event = decisions.revoke(resource_id, label, reviewer=req.reviewer, reason=req.reason)
+            event = store.revoke(resource_id, label, reviewer=req.reviewer, reason=req.reason)
     except DecisionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if event is None:
@@ -842,15 +895,19 @@ def export_labels(
     format: Literal["csv", "sh", "tfvars", "plan"] = Query(default="csv"),
     include_auto: bool = Query(default=False),
 ) -> PlainTextResponse:
+    return _export_response(decisions, format, include_auto)
+
+
+def _export_response(store: DecisionStore, fmt: str, include_auto: bool, inventory=None):
     try:
         with workflow_metrics.operation("export", invalid=(DecisionError,)):
-            body = label_review.export(decisions, format, include_auto)
+            body = label_review.export(store, fmt, include_auto, inventory)
     except DecisionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return PlainTextResponse(
         body,
-        media_type=EXPORT_MEDIA[format],
-        headers={"Content-Disposition": f'attachment; filename="{EXPORT_FILENAME[format]}"'},
+        media_type=EXPORT_MEDIA[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{EXPORT_FILENAME[fmt]}"'},
     )
 
 
@@ -873,13 +930,24 @@ def review_backlog() -> dict:
     dependencies=[Depends(require_api_key)],
     summary="Workflow metrics",
     description="In-process counters and durations for import, inference, decision writes and "
-    "exports, plus the review backlog. `format=prometheus` returns the text exposition format.",
+    "exports, plus the review backlog (the synthetic store's, or a saved review's with "
+    "`review_id`). `format=prometheus` returns the text exposition format.",
     tags=["operations"],
     responses={401: ERROR_RESPONSES[401]},
 )
-def ops_metrics(format: Literal["json", "prometheus"] = Query(default="json")):
+def ops_metrics(
+    format: Literal["json", "prometheus"] = Query(default="json"),
+    review_id: str | None = Query(
+        default=None,
+        pattern=REVIEW_ID_PATTERN,
+        description="Report the backlog of this saved review instead of the synthetic store.",
+    ),
+):
+    store, inventory = decisions, None
+    if review_id is not None:
+        inventory, store = _open_review(review_id)
     try:
-        backlog = workflow_metrics.backlog(decisions)
+        backlog = workflow_metrics.backlog(store, inventory)
     except Exception as exc:  # metrics must stay readable while the workflow is failing
         workflow_metrics.log_unhandled(
             workflow_metrics.current_correlation_id(), "/ops/metrics", "GET", exc
@@ -890,3 +958,306 @@ def ops_metrics(format: Literal["json", "prometheus"] = Query(default="json")):
             workflow_metrics.prometheus(backlog), media_type="text/plain; version=0.0.4"
         )
     return workflow_metrics.snapshot() | {"backlog": backlog, "tracing": observability.status()}
+
+
+# ── Saved private reviews ──────────────────────────────────────────────
+#
+# The same workspace, validation, inference, decision and export functions as the
+# Import and Label review pages, addressed by review ID. Every route needs the API key,
+# is refused in demo mode, and returns 404 for an unknown ID (never synthetic data).
+
+MAX_IMPORT_CHARS = 50_000_000
+
+ReviewId = Annotated[
+    str,
+    PathParam(
+        pattern=REVIEW_ID_PATTERN,
+        description="Saved review ID (64 lowercase hex digits) from `POST /reviews` or "
+        "`GET /reviews`.",
+    ),
+]
+REVIEW_DEPENDENCIES = [Depends(require_api_key), Depends(private_reviews_enabled)]
+REVIEW_ERRORS = {
+    401: ERROR_RESPONSES[401],
+    403: {"model": ErrorResponse, "description": "Private reviews are disabled (demo mode)."},
+    404: {"model": ErrorResponse, "description": "Unknown saved review or resource."},
+    422: {"model": ErrorResponse, "description": "Invalid review ID or request."},
+}
+
+
+class SavedReview(BaseModel):
+    id: str
+    name: str
+    created_at: str
+
+
+class SavedReviewSummary(SavedReview):
+    resources: int
+    inventory_id: str = Field(description="Snapshot fingerprint that approvals are bound to.")
+    model_version: str = Field(description="Vocabulary and inference fingerprint.")
+
+
+class ImportRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "estate-2026-10.csv",
+                    "csv": "cloud,resource_id,parent,owners,...\nazure,az-demo-001,...\n",
+                    "vocabulary": {"team": {"values": ["payments", "data-platform"]}},
+                }
+            ]
+        }
+    }
+
+    name: str = Field(min_length=1, max_length=200, description="Display name, e.g. file name.")
+    csv: str = Field(
+        min_length=1,
+        max_length=MAX_IMPORT_CHARS,
+        description="Sanitized inventory CSV text (the Import page's schema).",
+    )
+    vocabulary: dict | None = Field(
+        default=None, description="Team/env vocabulary JSON; omit for the built-in one."
+    )
+    column_mapping: dict[str, str | None] | None = Field(
+        default=None,
+        description="Import field -> source column, when the CSV's headers differ from the "
+        "schema (as on the Import page's mapping step).",
+    )
+
+
+def saved_review(review_id: ReviewId):
+    return _open_review(review_id)
+
+
+def _saved_report_or_404(resource_id: str, inventory) -> dict:
+    report = label_review.resource_report(resource_id, inventory)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Unknown resource in this saved review")
+    return report
+
+
+@app.post(
+    "/reviews",
+    response_model=SavedReviewSummary,
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Import an inventory as a saved review",
+    description="Validates and saves the CSV and vocabulary exactly as the Import page does. "
+    "The same snapshot and vocabulary always yield the same review ID (re-submitting reopens it "
+    "with its decisions); changed data or vocabulary create a separate review. No LLM or cloud "
+    "credentials are used.",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def create_review(req: ImportRequest) -> dict:
+    vocabulary = None if req.vocabulary is None else json.dumps(req.vocabulary).encode()
+    try:
+        return import_review(req.csv.encode(), req.name, vocabulary, req.column_mapping)
+    except (InventoryImportError, LabelConfigError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get(
+    "/reviews",
+    response_model=list[SavedReview],
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="List saved reviews",
+    description="Newest first. Every caller with the API key sees every saved review: "
+    "one trusted-team workspace, not tenant-isolated storage.",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def list_saved_reviews() -> list[dict]:
+    return saved_reviews()
+
+
+@app.get(
+    "/reviews/{review_id}",
+    response_model=SavedReviewSummary,
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="One saved review",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def get_saved_review(review_id: ReviewId, review=Depends(saved_review)) -> dict:
+    return review_summary(review_id, review[0])
+
+
+@app.get(
+    "/reviews/{review_id}/coverage",
+    response_model=Coverage,
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Label coverage of a saved review",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def saved_review_coverage(review=Depends(saved_review)) -> dict:
+    return label_review.coverage(review[0])
+
+
+@app.get(
+    "/reviews/{review_id}/resources",
+    response_model=ResourcePage,
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Review queue of a saved review",
+    description="Same filters and order as `GET /resources`, on the saved snapshot.",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def saved_review_queue(
+    review=Depends(saved_review),
+    label: LabelName | None = Query(default=None),
+    status: Literal["untagged", "suspect"] | None = Query(default=None),
+    cloud: Literal["azure", "gcp"] | None = Query(default=None),
+    min_confidence: float = Query(default=0.0, ge=0, le=1),
+    max_confidence: float = Query(default=1.0, ge=0, le=1),
+    search: str | None = Query(default=None),
+    evidence: Literal[
+        "insufficient", "supported", "missing_signals", "insufficient_support", "conflicting"
+    ]
+    | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    items = label_review.review_queue(
+        label=label,
+        status=status,
+        cloud=cloud,
+        min_confidence=min_confidence,
+        max_confidence=max_confidence,
+        search=search,
+        inventory=review[0],
+        evidence=evidence,
+    )
+    return {"total": len(items), "items": items[offset : offset + limit]}
+
+
+@app.get(
+    "/reviews/{review_id}/resources/{resource_id}/labels",
+    response_model=ResourceLabels,
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Label suggestions for one resource of a saved review",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def saved_resource_labels(resource_id: str, review=Depends(saved_review)) -> dict:
+    return _saved_report_or_404(resource_id, review[0])
+
+
+@app.put(
+    "/reviews/{review_id}/resources/{resource_id}/labels/{label}/decision",
+    response_model=Decision,
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Record a review decision in a saved review",
+    description="As `PUT /resources/{id}/labels/{label}/decision`, bound to the saved snapshot. "
+    "A label withheld for insufficient evidence can only be overridden.",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def put_saved_decision(
+    resource_id: str, label: LabelName, req: DecisionRequest, review=Depends(saved_review)
+) -> dict:
+    inventory, store = review
+    _saved_report_or_404(resource_id, inventory)
+    try:
+        with workflow_metrics.operation("decision_write", invalid=(DecisionError,)):
+            return store.set(
+                resource_id, label, req.decision, req.value, inventory, reviewer=req.reviewer
+            )
+    except DecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete(
+    "/reviews/{review_id}/resources/{resource_id}/labels/{label}/decision",
+    response_model=Revocation,
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Revoke a review decision in a saved review",
+    description="As `DELETE /resources/{id}/labels/{label}/decision`: removes the active "
+    "decision and appends a `revoke` event to this review's feedback. The optional JSON body "
+    "supplies `reviewer` and `reason`. A missing decision returns 404 and records nothing.",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def delete_saved_decision(
+    resource_id: str,
+    label: LabelName,
+    req: RevocationRequest | None = None,
+    review=Depends(saved_review),
+) -> dict:
+    return _revoke(review[1], resource_id, label, req)
+
+
+@app.get(
+    "/reviews/{review_id}/decisions",
+    response_model=list[Decision],
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Decisions of a saved review",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def saved_decisions(
+    review=Depends(saved_review),
+    current: bool = Query(
+        default=False,
+        description="Only decisions bound to this snapshot and inference version (exportable).",
+    ),
+) -> list[dict]:
+    inventory, store = review
+    return label_review.current_decisions(store, inventory) if current else store.all()
+
+
+@app.get(
+    "/reviews/{review_id}/feedback",
+    response_model=list[ReviewFeedback],
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Reviewer feedback of a saved review",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def saved_feedback(review=Depends(saved_review)) -> list[dict]:
+    return review[1].feedback()
+
+
+@app.get(
+    "/reviews/{review_id}/feedback/metrics",
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Reviewer-agreement metrics of a saved review",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def saved_feedback_metrics(review=Depends(saved_review)) -> dict:
+    return label_review.feedback_metrics(review[1].feedback())
+
+
+@app.get(
+    "/reviews/{review_id}/export",
+    response_class=PlainTextResponse,
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Export a saved review's label changes",
+    description="As `GET /labels/export`, for the saved snapshot. `plan` is the same reviewed "
+    "change plan as the Label review page's download; approvals bound to another snapshot or "
+    "inference version are excluded.",
+    tags=["reviews"],
+    responses={200: {"content": {m: {} for m in EXPORT_MEDIA.values()}}, **REVIEW_ERRORS},
+)
+def export_saved_review(
+    review=Depends(saved_review),
+    format: Literal["csv", "sh", "tfvars", "plan"] = Query(default="csv"),
+    include_auto: bool = Query(default=False),
+) -> PlainTextResponse:
+    inventory, store = review
+    return _export_response(store, format, include_auto, inventory)
+
+
+@app.get(
+    "/reviews/{review_id}/backlog",
+    dependencies=REVIEW_DEPENDENCIES,
+    summary="Pending review work in a saved review",
+    description="As `GET /labels/backlog`, for the saved snapshot (docs/operations.md).",
+    tags=["reviews"],
+    responses=REVIEW_ERRORS,
+)
+def saved_review_backlog(review=Depends(saved_review)) -> dict:
+    inventory, store = review
+    return workflow_metrics.backlog(store, inventory)
