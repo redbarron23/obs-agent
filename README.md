@@ -125,6 +125,7 @@ thresholds. See [Evaluation](docs/evaluation.md).
 | Agent tracing and evaluation walkthrough | [MLflow guide](docs/mlflow.md) |
 | Evaluate a real reviewed sample | [Real-world evaluation pack](docs/real-evaluation.md) |
 | Deployment and operations | [Deployment guardrails](docs/deployment.md) |
+| Workflow metrics, error correlation, alerts | [Operations](docs/operations.md) |
 | Components and data flow | [Architecture](docs/architecture.md) |
 | Tests and local checks | [Testing](docs/testing.md) |
 | Reviewer's guide | [Reviewing this project](docs/reviewing.md) |

@@ -118,6 +118,8 @@ Use this change record in the approval ticket:
 
 ## Ongoing operations
 
+- [ ] Scrape `/ops/metrics?format=prometheus` (or collect the structured `obs_agent.workflow`
+  log lines) and set the alerts described in [Operations](operations.md).
 - [ ] Review decision-database backup jobs and restore-test evidence on the same cadence as
   production access reviews.
 - [ ] Review audit-export retention and access at least annually or when policy changes.

@@ -189,23 +189,40 @@ def span(name: str, span_type: str, inputs: dict | None = None, attributes: dict
         return
     import mlflow
 
-    with contextlib.ExitStack() as stack:
+    cm = s = None
+    try:
+        cm = mlflow.start_span(name=name, span_type=span_type)
+        s = cm.__enter__()
+    except Exception as exc:
+        _telemetry_failed("start_span", exc)
+        cm = s = None
+    if s is not None:
         try:
-            s = stack.enter_context(mlflow.start_span(name=name, span_type=span_type))
+            if inputs is not None:
+                s.set_inputs(inputs)
+            if attributes:
+                s.set_attributes(attributes)
         except Exception as exc:
-            _telemetry_failed("start_span", exc)
-            s = None
-        if s is not None:
-            try:
-                if inputs is not None:
-                    s.set_inputs(inputs)
-                if attributes:
-                    s.set_attributes(attributes)
-            except Exception as exc:
-                _telemetry_failed("span inputs", exc)
-        # Outside any telemetry try/except: exceptions from the caller's body
-        # propagate unchanged (MLflow's span records them and re-raises).
+            _telemetry_failed("span inputs", exc)
+    try:
         yield s
+    except BaseException as body_exc:
+        # The caller's own exception: let MLflow record it on the span, then
+        # re-raise it unchanged, whatever the span's __exit__ does.
+        if cm is not None:
+            try:
+                cm.__exit__(type(body_exc), body_exc, body_exc.__traceback__)
+            except Exception as exc:
+                if exc is not body_exc:
+                    _telemetry_failed("span close", exc)
+        raise
+    else:
+        # The body succeeded: a failure closing the span is telemetry only.
+        if cm is not None:
+            try:
+                cm.__exit__(None, None, None)
+            except Exception as exc:
+                _telemetry_failed("span close", exc)
 
 
 def set_outputs(s, outputs) -> None:

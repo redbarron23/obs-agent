@@ -45,6 +45,8 @@ but the UI calls Python functions directly; imported review workspaces are UI-on
 | `GET /labels/feedback` | Append-only reviewer actions with their model context |
 | `GET /labels/feedback/metrics` | Reviewer-agreement precision, recall, F1, and monthly trend |
 | `GET /labels/export?format=csv\|sh\|tfvars\|plan` | Resolved changes as a download; `plan` is reviewed-only and includes approval evidence |
+| `GET /labels/backlog` | Pending review work and its age ([definitions](operations.md#review-backlog)) |
+| `GET /ops/metrics[?format=prometheus]` | Workflow counters, durations and backlog ([operations](operations.md)) |
 
 Decisions need a `reviewer` name or ID (1–128 characters), or a configured
 `OBS_AGENT_REVIEWER` default. The identifier is caller-supplied, not authentication: use an
@@ -86,6 +88,7 @@ curl -s localhost:8000/ask -H 'content-type: application/json' \
 | `404` | `DELETE /sessions/{id}` for an unknown session |
 | `422` | Invalid body (empty question, over 4000 chars) or unknown provider |
 | `502` | The LLM backend failed: bad key, no credits, Ollama not running |
+| `500` | Unexpected server error; the body's `correlation_id` (also the `X-Request-ID` header) matches the server log line ([operations](operations.md#correlating-a-failure)) |
 
 All error bodies are `{"detail": "..."}`. Interactive docs with schemas and examples are at `/docs`
 (Swagger UI) and `/redoc`; the raw spec is at `/openapi.json`.
