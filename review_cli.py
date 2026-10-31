@@ -85,9 +85,11 @@ def _parser() -> argparse.ArgumentParser:
     decide.add_argument("--value", help="value to apply (override only)")
     decide.add_argument("--reviewer", help="reviewer name or ID (default: OBS_AGENT_REVIEWER)")
 
-    undo = review("undo", "remove a decision")
+    undo = review("undo", "revoke a decision (recorded in feedback)")
     undo.add_argument("resource_id")
     undo.add_argument("label", choices=LABELS)
+    undo.add_argument("--reviewer", help="reviewer name or ID (default: OBS_AGENT_REVIEWER)")
+    undo.add_argument("--reason", help="optional reason, kept in the review history only")
 
     decisions = review("decisions", "recorded decisions")
     decisions.add_argument(
@@ -175,10 +177,13 @@ def run(args) -> object:
                 reviewer=args.reviewer,
             )
     if args.command == "undo":
-        with workflow_metrics.operation("decision_write"):
-            if not store.delete(args.resource_id, args.label):
-                raise ValueError("Decision not found.")
-        return {"deleted": f"{args.resource_id}/{args.label}"}
+        with workflow_metrics.operation("decision_write", invalid=(label_review.DecisionError,)):
+            event = store.revoke(
+                args.resource_id, args.label, reviewer=args.reviewer, reason=args.reason
+            )
+        if event is None:
+            raise ValueError("Decision not found.")
+        return {"deleted": f"{args.resource_id}/{args.label}", "revocation": event}
     if args.command == "decisions":
         return label_review.current_decisions(store, inventory) if args.current else store.all()
     if args.command == "feedback":

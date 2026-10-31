@@ -138,8 +138,9 @@ class TestApiWorkflow:
         metrics = client.get("/ops/metrics", params={"review_id": review_id}).json()
         assert metrics["backlog"] == backlog
         url = f"/reviews/{review_id}/resources/{SUGGESTED}/labels/env/decision"
-        assert client.delete(url).status_code == 200
-        assert client.delete(url).status_code == 404
+        body = {"reviewer": REVIEWER}
+        assert client.request("DELETE", url, json=body).status_code == 200
+        assert client.request("DELETE", url, json=body).status_code == 404
         assert client.get(f"/reviews/{review_id}/decisions").json() == []
 
     def test_reviewer_is_required(self, client, review_id):
@@ -426,8 +427,8 @@ class TestCli:
         assert json.loads(plan_file.read_text())["changes"][0]["resource_id"] == SUGGESTED
         code, out, _ = _cli(capsys, "export", rid, "--format", "csv")
         assert out.splitlines()[1].startswith(f"{SUGGESTED},gcp,team")
-        assert _cli(capsys, "undo", rid, SUGGESTED, "team")[0] == 0
-        assert _cli(capsys, "undo", rid, SUGGESTED, "team")[0] == 2
+        assert _cli(capsys, "undo", rid, SUGGESTED, "team", "--reviewer", "a")[0] == 0
+        assert _cli(capsys, "undo", rid, SUGGESTED, "team", "--reviewer", "a")[0] == 2
 
     def test_invalid_input_and_unknown_ids(self, capsys, tmp_path):
         bad = tmp_path / "bad.csv"
@@ -441,6 +442,96 @@ class TestCli:
             review_cli.main(["show", "../escape"])
         assert exc.value.code == 2
         assert not (tmp_path / "reviews").exists()
+
+
+REASON = "revocation-reason-k2"
+
+
+class TestRevocation:
+    """Saved-review undo matches the synthetic DELETE from #64: an auditable revoke event."""
+
+    def _url(self, review_id, label="team"):
+        return f"/reviews/{review_id}/resources/{SUGGESTED}/labels/{label}/decision"
+
+    def _plan_ids(self, client, review_id):
+        plan = _plan(client.get(f"/reviews/{review_id}/export", params={"format": "plan"}).text)
+        return [c["resource_id"] for c in plan["changes"]]
+
+    def test_api_revoke_is_recorded_and_leaves_the_plan(self, client, review_id, caplog):
+        caplog.set_level(logging.INFO)
+        assert _decide(client, review_id, SUGGESTED, "team", "accept").status_code == 200
+        assert self._plan_ids(client, review_id) == [SUGGESTED]
+        r = client.request(
+            "DELETE", self._url(review_id), json={"reviewer": "revoker-1", "reason": REASON}
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["deleted"] == f"{SUGGESTED}/team"
+        assert body["revocation"]["decision"] == "revoke"
+        assert body["revocation"]["revoked_decision"] == "accept"
+        event = client.get(f"/reviews/{review_id}/feedback").json()[-1]
+        assert event["decision"] == "revoke" and event["reviewer"] == "revoker-1"
+        assert event["revocation_reason"] == REASON and event["revoked_reviewer"] == REVIEWER
+        assert self._plan_ids(client, review_id) == []
+        assert client.get(f"/reviews/{review_id}/decisions").json() == []
+        metrics = client.get("/ops/metrics", params={"review_id": review_id})
+        prometheus = client.get(
+            "/ops/metrics", params={"review_id": review_id, "format": "prometheus"}
+        )
+        assert REASON not in metrics.text and REASON not in prometheus.text
+        assert REASON not in caplog.text
+
+    def test_api_missing_decision_and_reviewer(self, client, review_id):
+        r = client.request("DELETE", self._url(review_id), json={"reviewer": REVIEWER})
+        assert r.status_code == 404
+        assert _decide(client, review_id, SUGGESTED, "team", "accept").status_code == 200
+        # No reviewer and no OBS_AGENT_REVIEWER: refused, nothing written.
+        assert client.delete(self._url(review_id)).status_code == 422
+        r = client.request("DELETE", self._url(review_id), json={"reviewer": ""})
+        assert r.status_code == 422
+        long_reason = "x" * (lr.MAX_REVOCATION_REASON + 1)
+        r = client.request(
+            "DELETE", self._url(review_id), json={"reviewer": REVIEWER, "reason": long_reason}
+        )
+        assert r.status_code == 422
+        assert len(client.get(f"/reviews/{review_id}/decisions").json()) == 1
+        assert [e["decision"] for e in client.get(f"/reviews/{review_id}/feedback").json()] == [
+            "accept"
+        ]
+
+    def test_reviewer_falls_back_to_environment(self, client, review_id, monkeypatch):
+        assert _decide(client, review_id, SUGGESTED, "team", "accept").status_code == 200
+        monkeypatch.setenv("OBS_AGENT_REVIEWER", "env-reviewer")
+        r = client.delete(self._url(review_id))
+        assert r.status_code == 200 and r.json()["revocation"]["reviewer"] == "env-reviewer"
+
+    def test_cli_undo_records_revoke(self, client, review_id, capsys, caplog):
+        caplog.set_level(logging.INFO)
+        assert _decide(client, review_id, SUGGESTED, "team", "accept").status_code == 200
+        code, _, err = _cli(capsys, "undo", review_id, SUGGESTED, "team")
+        assert code == 2 and "reviewer" in err
+        code, out, _ = _cli(
+            capsys,
+            "undo",
+            review_id,
+            SUGGESTED,
+            "team",
+            "--reviewer",
+            "cli-rev",
+            "--reason",
+            REASON,
+        )
+        assert code == 0 and json.loads(out)["revocation"]["decision"] == "revoke"
+        event = client.get(f"/reviews/{review_id}/feedback").json()[-1]
+        assert (event["decision"], event["reviewer"], event["revocation_reason"]) == (
+            "revoke",
+            "cli-rev",
+            REASON,
+        )
+        assert self._plan_ids(client, review_id) == []
+        code, _, err = _cli(capsys, "undo", review_id, SUGGESTED, "team", "--reviewer", "cli-rev")
+        assert code == 2 and "not found" in err
+        assert REASON not in caplog.text
 
 
 def test_inventory_and_reviewer_text_are_not_logged(client, caplog):

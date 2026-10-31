@@ -70,7 +70,7 @@ is a `422`, so an ID cannot name a path).
 | `POST /reviews` | `{"name", "csv", "vocabulary"?, "column_mapping"?}`: validate and save, as the Import page does. The same snapshot and vocabulary return the same ID |
 | `GET /reviews`, `GET /reviews/{review_id}` | Saved reviews; one review's size, `inventory_id` and `model_version` |
 | `GET /reviews/{review_id}/coverage`, `/resources`, `/resources/{id}/labels` | As the synthetic routes above, same filters |
-| `PUT` / `DELETE /reviews/{review_id}/resources/{id}/labels/{label}/decision` | Record or undo a decision (`reviewer` required, as above) |
+| `PUT` / `DELETE /reviews/{review_id}/resources/{id}/labels/{label}/decision` | Record a decision, or revoke it with the same optional `{"reviewer", "reason"}` body and `{"deleted", "revocation"}` response as the synthetic `DELETE` (`reviewer` required, as above) |
 | `GET /reviews/{review_id}/decisions[?current=true]`, `/feedback`, `/feedback/metrics`, `/backlog` | Decisions (`current` keeps only exportable ones), history, agreement, pending work |
 | `GET /reviews/{review_id}/export?format=csv\|sh\|tfvars\|plan` | As `/labels/export`; approvals bound to another snapshot or inference version are excluded |
 
@@ -99,7 +99,8 @@ uv run python review_cli.py export "$ID" --format plan --output approved-label-c
 uv run python plan_validation.py approved-label-change-plan.json fresh.csv --review-id "$ID"
 ```
 
-Other commands: `list`, `show`, `coverage`, `resource`, `undo`, `decisions [--current]`,
+`undo REVIEW_ID RESOURCE LABEL [--reviewer R] [--reason TEXT]` revokes a decision and records a
+`revoke` event, like `DELETE`. Other commands: `list`, `show`, `coverage`, `resource`, `decisions [--current]`,
 `feedback`, `backlog`; `--help` on each lists its options.
 
 **Storage boundary.** Saved reviews hold private inventory data. Anyone with the API key, shell

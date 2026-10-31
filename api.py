@@ -802,10 +802,16 @@ def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> di
 def delete_decision(
     resource_id: str, label: LabelName, req: RevocationRequest | None = None
 ) -> dict:
+    return _revoke(decisions, resource_id, label, req)
+
+
+def _revoke(
+    store: DecisionStore, resource_id: str, label: str, req: RevocationRequest | None
+) -> dict:
     req = req or RevocationRequest()
     try:
         with workflow_metrics.operation("decision_write", invalid=(DecisionError,)):
-            event = decisions.revoke(resource_id, label, reviewer=req.reviewer, reason=req.reason)
+            event = store.revoke(resource_id, label, reviewer=req.reviewer, reason=req.reason)
     except DecisionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if event is None:
@@ -1164,18 +1170,22 @@ def put_saved_decision(
 
 @app.delete(
     "/reviews/{review_id}/resources/{resource_id}/labels/{label}/decision",
+    response_model=Revocation,
     dependencies=REVIEW_DEPENDENCIES,
-    summary="Undo a review decision in a saved review",
-    description="Same semantics as `DELETE /resources/{id}/labels/{label}/decision`.",
+    summary="Revoke a review decision in a saved review",
+    description="As `DELETE /resources/{id}/labels/{label}/decision`: removes the active "
+    "decision and appends a `revoke` event to this review's feedback. The optional JSON body "
+    "supplies `reviewer` and `reason`. A missing decision returns 404 and records nothing.",
     tags=["reviews"],
     responses=REVIEW_ERRORS,
 )
-def delete_saved_decision(resource_id: str, label: LabelName, review=Depends(saved_review)) -> dict:
-    with workflow_metrics.operation("decision_write"):
-        deleted = review[1].delete(resource_id, label)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Decision not found")
-    return {"deleted": f"{resource_id}/{label}"}
+def delete_saved_decision(
+    resource_id: str,
+    label: LabelName,
+    req: RevocationRequest | None = None,
+    review=Depends(saved_review),
+) -> dict:
+    return _revoke(review[1], resource_id, label, req)
 
 
 @app.get(
