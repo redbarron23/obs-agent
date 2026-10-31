@@ -47,9 +47,10 @@ Provider SDK autologging may add further nested spans.
 | [tests/test_observability.py](../tests/test_observability.py) | Offline examples with a mocked provider and temporary tracking database |
 
 `observability.setup()` checks whether tracing is requested, imports MLflow if available, selects
-the tracking destination and experiment, and attempts SDK autologging. Configuration is checked
-once per process. The manual spans in `agent.py` give the application a consistent trace structure
-across provider paths, including paths SDK autologging may not cover.
+the tracking destination and experiment, and attempts SDK autologging. A successful configuration
+is kept for the process; failures are retried a bounded number of times (section 6). The manual
+spans in `agent.py` give the application a consistent trace structure across provider paths,
+including paths SDK autologging may not cover.
 
 `observability.span()` wraps `mlflow.start_span()` when tracing is active. Its callers record:
 
@@ -181,12 +182,14 @@ of model quality.
 Changing enablement settings after `setup()` has run requires restarting the process. `reset()`
 exists for isolated tests, not as a per-request production configuration switch.
 
-There is a known initialization failure in
-[#59](https://github.com/redbarron23/obs-agent/issues/59): an unavailable tracking store can raise
-before the agent loop runs. Setup marks itself checked before finishing; subsequent calls can
-then continue with tracing inactive. The intended fix is to preserve agent availability, report
-degraded tracing, and retain application errors. This guide documents current behavior; it does
-not implement that fix.
+Tracing is best-effort and never fails an agent request. If MLflow is missing, `setup()` warns
+and tracing stays off. If the tracking store is unreachable (for example `set_experiment` raises
+`ConnectionError`), `setup()` logs a warning naming the error type and a redacted destination
+(no credentials, path, query or request content), and that request runs untraced. Setup is not
+marked complete: a later request retries after `RETRY_INTERVAL_S` (60 s), and after
+`MAX_SETUP_ATTEMPTS` (3) failures tracing is disabled until the process restarts.
+`observability.status()` reports `active`, `attempts` and `disabled_reason`. A span that fails
+to record is skipped with a single warning. Exceptions raised by the agent itself still propagate.
 
 Trace inputs and outputs can contain questions, tool arguments, answers, and SDK-captured content.
 Choose storage access, retention, and content-capture/redaction policies before using private data.

@@ -155,7 +155,7 @@ the clean estate stays byte-identical so the published metrics keep meaning the 
 | REST API (`test_api.py`) | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
 | Model config (`test_model_config.py`) | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
 | Evals (`test_evals.py`) | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
-| Observability (`test_observability.py`) | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent |
+| Observability (`test_observability.py`) | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent, degraded tracing when the tracking store is down |
 
 ## CI
 
