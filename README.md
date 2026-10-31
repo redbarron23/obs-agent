@@ -125,6 +125,7 @@ representative reviewed sample before relying on confidence thresholds. See [Eva
 | Tests and local checks | [Testing](docs/testing.md) |
 | Reviewer's guide | [Reviewing this project](docs/reviewing.md) |
 | Persistence and approval provenance | [Decision storage](docs/decision-storage.md) |
+| Backup, restore and recovery checks | [Backup and restore](docs/backup-restore.md) |
 | Source material | [References](docs/references.md) |
 
 ## Use as an agent skill

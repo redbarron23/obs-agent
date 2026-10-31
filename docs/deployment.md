@@ -21,6 +21,8 @@ Azure or GCP.
 ### Persistent decisions and backups
 
 How and where decisions are stored is described in [Decision storage](decision-storage.md).
+The backup, verify and restore procedure, with its operator checklist, is in
+[Backup and restore](backup-restore.md).
 
 - [ ] Set `OBS_AGENT_DECISIONS` to a file on a persistent, access-controlled volume.
   The default local `label_decisions.db` is suitable only for local development.
@@ -28,13 +30,15 @@ How and where decisions are stored is described in [Decision storage](decision-s
   databases too. They contain the uploaded inventories as well as approvals.
 - [ ] Authenticate reviewers at the gateway or application boundary and bind the recorded reviewer
   ID to the authenticated subject; identifiers are self-reported locally and a shared API key does not identify a person. Retain authentication logs.
-- [ ] Back up the SQLite decision database before deployments and on a scheduled cadence that meets
-  the team's recovery-point objective. Encrypt backups and restrict restore access to the service
+- [ ] Back up the SQLite decision database and every saved-review database with
+  `scripts/review_backup.py` (SQLite online backup, safe while running) before deployments and on a
+  scheduled cadence that meets the team's recovery-point objective. Encrypt backups and restrict restore access to the service
   owner and designated operators.
 - [ ] Define backup retention, recovery-point objective (maximum acceptable lost decisions), and
   recovery-time objective (maximum acceptable review outage) with the data owner.
 - [ ] Test a restore into an isolated environment at least once per quarter. Confirm both current
-  decisions and the append-only `review_feedback` history are present; record the test result.
+  decisions and the append-only `review_feedback` history are present and that the approved plans
+  reproduce (`review_backup.py plans`); record the test result.
 
 ### Audit exports and retention
 
