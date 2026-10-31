@@ -32,7 +32,7 @@ Saved imports persist across browser/app restarts and can be reopened on the imp
 Their databases also contain a `workspace` table with the original CSV, vocabulary JSON, name, and
 creation time. Each snapshot/vocabulary gets a separate database. All users of this installation
 share the saved-review directory; use it only for one trusted team. Back up this directory along
-with the synthetic decision database.
+with the synthetic decision database (see [Backup and restore](backup-restore.md)).
 
 The app does not delete the public demo's per-session temp files. A session that ends simply stops using its
 file, and the operating system's temp cleanup removes it eventually. Don't rely on these files for
@@ -115,4 +115,6 @@ reliably.
 [Deployment guardrails](deployment.md#persistent-decisions-and-backups) has the checklist. In
 short: put the file on a persistent, access-controlled volume, back it up on a schedule, and test
 restores. A restore must bring back both `decisions` and `review_feedback`, since the feedback table
-is the audit trail.
+is the audit trail. [Backup and restore](backup-restore.md) has the procedure: an online backup of
+the decision database and every saved review, plus a restore check that the approved plans
+reproduce.
