@@ -49,7 +49,7 @@ class TestEvalLive:
 
 class TestCheckEvalNormalisation:
     def test_ignores_case_and_separator_style(self):
-        ok, missing = _check_eval("1. Project Alpha: $12,672", ["project-alpha"])
+        ok, missing = _check_eval("1. Project Alpha: $13,069.13", ["project-alpha"])
         assert ok and not missing
 
     def test_still_requires_the_identifier(self):

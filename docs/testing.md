@@ -50,6 +50,11 @@ def test_top_1(self, patch_azure_summary):
 These tests are strong precisely because the data is hand-built: a ranking bug cannot hide behind
 realistic noise.
 
+**Checking the seeded data.** `test_billing_reconciliation.py` runs on the real `data.py` output.
+It asserts that every Azure and GCP summary total (cost, ingested GB, overage GB) equals the sum of
+that entity's daily rows in the reporting window, and that the summary tools print the window and
+currency. It also pins the headline numbers quoted in `docs/agent.md`.
+
 **Mocking the provider.** `test_agent.py` patches `Provider.create` so no network call happens, then
 drives the loop with a scripted response:
 
