@@ -127,6 +127,23 @@ representative reviewed sample before relying on confidence thresholds. See [Eva
 | Persistence and approval provenance | [Decision storage](docs/decision-storage.md) |
 | Source material | [References](docs/references.md) |
 
+## Use as an agent skill
+
+[`skills/cloud-label-review/`](skills/cloud-label-review/SKILL.md) packages the label-review
+workflow as a `SKILL.md` for Claude Code and other agents that support the format. The agent
+builds the inventory CSV and vocabulary with you, runs a read-only triage, and summarises the
+suggestions; approvals still happen in the Label review page. It never applies tags or records
+decisions.
+
+```bash
+# Claude Code: install for your user, then ask it to "review the labels in inventory.csv"
+cp -r skills/cloud-label-review ~/.claude/skills/
+
+# Or run the triage directly from this checkout
+uv run python skills/cloud-label-review/scripts/triage.py \
+    --csv fixtures/sanitized_inventory_sample.csv --vocab fixtures/label_config_example.json
+```
+
 ## Application and library
 
 This repository is the runnable Streamlit/FastAPI application. Clone it or run the Docker image;
