@@ -129,6 +129,7 @@ the earlier snapshot's database and are never copied into the current review: ap
 against the current snapshot. If the two snapshots use different vocabularies, the page says so,
 because tag and suggestion changes may then reflect the vocabulary rather than the estate.
 
-The API and agent still use synthetic data. Saving/importing does not give either surface access to
-private inventories or cloud accounts. See [Decision storage](decision-storage.md) for approval
+The REST API (`/reviews`) and `review_cli.py` reach the same saved reviews by ID; see
+[Saved reviews: API and CLI](api.md#saved-reviews-api-and-cli). The cost agent still uses synthetic
+data. No surface gets access to cloud accounts. See [Decision storage](decision-storage.md) for approval
 provenance and [the example plan](../fixtures/reviewed_change_plan_example.json) for the export.

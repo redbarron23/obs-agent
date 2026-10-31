@@ -19,7 +19,9 @@ not in a public issue. I aim to reply within a week.
   [docs/api.md](docs/api.md).
 - **Private imports.** Local saved reviews retain uploaded CSVs, vocabularies, and approvals on
   disk. Keep `OBS_AGENT_REVIEW_DIR` private and outside version control. Users of one installation
-  share its saved reviews; it is intended for one trusted team, not multiple tenants.
+  share its saved reviews, and so does every holder of its API key (`/reviews`) or shell access
+  (`review_cli.py`); it is intended for one trusted team, not multiple tenants. Demo mode
+  refuses saved reviews on every surface.
 - **Reviewer identity.** Reviewer names/IDs in the UI and API are self-reported. Authenticate
   reviewers at the deployment boundary before treating them as verified identities.
 - **Exports.** The generated `az` / `gcloud` script quotes every value with `shlex.quote`, but

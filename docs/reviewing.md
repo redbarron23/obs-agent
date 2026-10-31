@@ -21,7 +21,7 @@ Roughly 7k lines of Python. The argument lives in `README.md` and `docs/`; the c
 top-level modules (`labeling.py`, `providers.py`, `tools.py`, `api.py`, …).
 
 **Published benchmarks use synthetic data.** The UI also supports saved, private imports with
-per-inventory vocabularies. The API and cost agent remain synthetic. Every number in the README is measured against a generated inventory
+per-inventory vocabularies, also reachable by review ID through the API and CLI. The cost agent remains synthetic. Every number in the README is measured against a generated inventory
 that carries true labels alongside observed ones. That is what makes honest scoring possible, and
 it is also the project's main limit — see [Judging the numbers](#judging-the-numbers).
 
