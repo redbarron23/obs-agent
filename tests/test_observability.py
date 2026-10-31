@@ -182,6 +182,58 @@ class TestDegraded:
         assert caplog.text.count("start_span failed") == 1
 
 
+class _ClosingFails:
+    """A span context manager whose __exit__ raises, as a failing tracking store would."""
+
+    def __init__(self, exc):
+        self.exc = exc
+        self.exited_with = None
+
+    def __enter__(self):
+        return MagicMock(name="span")
+
+    def __exit__(self, exc_type, exc, tb):
+        self.exited_with = exc_type
+        raise self.exc
+
+
+class TestSpanClose:
+    def _activate(self, fake_mlflow, cm):
+        fake_mlflow.recover()
+        fake_mlflow.start_span.side_effect = lambda **kw: cm
+        assert observability.setup() is True
+
+    def test_close_failure_after_success_does_not_propagate(self, fake_mlflow, clock, caplog):
+        cm = _ClosingFails(ConnectionError("store went away"))
+        self._activate(fake_mlflow, cm)
+        with observability.span("tool", "TOOL") as s:
+            result = "done"
+        assert s is not None and result == "done"
+        assert cm.exited_with is None
+        assert "span close failed (ConnectionError)" in caplog.text
+        assert _ask()[0] == "sub-a is top"  # a whole request survives it too
+
+    def test_body_exception_propagates_unchanged_when_close_also_fails(
+        self, fake_mlflow, clock, caplog
+    ):
+        cm = _ClosingFails(ConnectionError("store went away"))
+        self._activate(fake_mlflow, cm)
+        boom = RuntimeError("caller failure")
+        with pytest.raises(RuntimeError) as info, observability.span("tool", "TOOL"):
+            raise boom
+        assert info.value is boom
+        assert cm.exited_with is RuntimeError  # MLflow still saw the caller's error
+        assert "span close failed" in caplog.text
+
+    def test_body_exception_propagates_when_span_reraises_it(self, fake_mlflow, clock):
+        boom = RuntimeError("caller failure")
+        cm = _ClosingFails(boom)
+        self._activate(fake_mlflow, cm)
+        with pytest.raises(RuntimeError) as info, observability.span("tool", "TOOL"):
+            raise boom
+        assert info.value is boom
+
+
 class TestAgentErrorsStillRaised:
     def test_with_failed_tracing_init(self, fake_mlflow, clock):
         with pytest.raises(RuntimeError, match="provider exploded"):

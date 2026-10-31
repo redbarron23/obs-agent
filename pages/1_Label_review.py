@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+import workflow_metrics
 from label_config import inventory_config
 from label_review import (
     DecisionError,
@@ -31,6 +32,7 @@ from review_context import review_context
 from review_workspaces import load_review
 
 st.set_page_config(page_title="Label review — obs-agent", page_icon="🏷️", layout="wide")
+workflow_metrics.bind(surface="ui")
 
 DEMO = demo_enabled()
 imported_inventory = None if DEMO else st.session_state.get("imported_inventory")
@@ -288,14 +290,22 @@ else:
     if left.button("Save decisions", icon=":material/save:", type="primary", disabled=not reviewer):
         errors, saved = [], 0
         for rid, decision, override in editor_changes(df, edited):
+            write = workflow_metrics.operation("decision_write", invalid=(DecisionError,))
             try:
-                if decision:
-                    store.set(rid, label, decision, override, imported_inventory, reviewer=reviewer)
-                else:
-                    store.delete(rid, label)
+                with write:
+                    if decision:
+                        store.set(
+                            rid, label, decision, override, imported_inventory, reviewer=reviewer
+                        )
+                    else:
+                        store.delete(rid, label)
                 saved += 1
             except DecisionError as exc:
                 errors.append(f"{rid}: {exc}")
+            except Exception:
+                errors.append(
+                    f"{rid}: the decision could not be saved. Reference: `{write.correlation_id}`"
+                )
         for e in errors:
             st.error(e)
         if saved and not errors:
@@ -308,10 +318,23 @@ else:
         icon=":material/done_all:",
         disabled=auto.empty or not reviewer,
     ):
+        bulk_errors = []
         for rid in auto["resource_id"]:
-            store.set(rid, label, "accept", inventory=imported_inventory, reviewer=reviewer)
-        st.toast(f"Accepted {len(auto)} suggestion(s)")
-        _refresh()
+            write = workflow_metrics.operation("decision_write", invalid=(DecisionError,))
+            try:
+                with write:
+                    store.set(rid, label, "accept", inventory=imported_inventory, reviewer=reviewer)
+            except DecisionError as exc:
+                bulk_errors.append(f"{rid}: {exc}")
+            except Exception:
+                bulk_errors.append(
+                    f"{rid}: the decision could not be saved. Reference: `{write.correlation_id}`"
+                )
+        for e in bulk_errors:
+            st.error(e)
+        if not bulk_errors:
+            st.toast(f"Accepted {len(auto)} suggestion(s)")
+            _refresh()
 
 # ── Export ─────────────────────────────────────────────────────────────
 
@@ -322,10 +345,27 @@ include_auto = st.checkbox(
     value=False,
     help="Off by default: export only what a reviewer accepted or overrode.",
 )
+# One "export" operation per render: the page prepares every download up front.
+preparing = workflow_metrics.operation("export", invalid=(DecisionError,))
 try:
-    changes = pending_changes(store, include_auto, imported_inventory)
+    with preparing:
+        changes = pending_changes(store, include_auto, imported_inventory)
+        reviewed_changes = pending_changes(store, include_auto=False, inventory=imported_inventory)
+        downloads = {
+            "plan": export(store, "plan", inventory=imported_inventory),
+            **{
+                fmt: export(store, fmt, include_auto, imported_inventory)
+                for fmt in ("csv", "sh", "tfvars")
+            },
+        }
 except DecisionError as exc:
     st.error(str(exc))
+    st.stop()
+except Exception:
+    st.error(
+        "The export could not be prepared. Ask the operator to check the server log. "
+        f"Reference: `{preparing.correlation_id}`"
+    )
     st.stop()
 st.caption(
     f"{len(changes)} resource(s) would change. Overrides win over accepts, "
@@ -335,16 +375,16 @@ st.caption(
 c1, c2, c3, c4 = st.columns(4)
 c1.download_button(
     "Reviewed change plan",
-    export(store, "plan", inventory=imported_inventory),
+    downloads["plan"],
     "approved-label-change-plan.json",
     "application/json",
     help="Reviewed decisions only, with the before/after diff and approval evidence.",
     icon=":material/fact_check:",
-    disabled=not pending_changes(store, include_auto=False, inventory=imported_inventory),
+    disabled=not reviewed_changes,
 )
 c2.download_button(
     "CSV",
-    export(store, "csv", include_auto, imported_inventory),
+    downloads["csv"],
     "label-changes.csv",
     "text/csv",
     icon=":material/download:",
@@ -352,7 +392,7 @@ c2.download_button(
 )
 c3.download_button(
     "az / gcloud script",
-    export(store, "sh", include_auto, imported_inventory),
+    downloads["sh"],
     "apply-labels.sh",
     "text/x-shellscript",
     icon=":material/download:",
@@ -360,7 +400,7 @@ c3.download_button(
 )
 c4.download_button(
     "Terraform tfvars",
-    export(store, "tfvars", include_auto, imported_inventory),
+    downloads["tfvars"],
     "labels.auto.tfvars.json",
     "application/json",
     icon=":material/download:",

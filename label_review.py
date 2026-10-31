@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import workflow_metrics
 from labeling import (
     AUTO_APPLY_THRESHOLD,
     BEST_STRATEGY,
@@ -165,9 +166,10 @@ def _report(inf: LabelInference, row, suspects: dict[str, pd.DataFrame]) -> dict
 @lru_cache(maxsize=1)
 def all_reports() -> tuple[dict, ...]:
     """Reports for the whole synthetic inventory (computed once)."""
-    inf = get_inference()
-    suspects = {label: get_suspects(label) for label in LABELS}
-    return tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
+    with workflow_metrics.operation("inference"):
+        inf = get_inference()
+        suspects = {label: get_suspects(label) for label in LABELS}
+        return tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
 
 
 _review_cache: OrderedDict[tuple[str, str], tuple[LabelInference, tuple[dict, ...]]] = OrderedDict()
@@ -180,9 +182,10 @@ def _review_data(inventory: pd.DataFrame) -> tuple[LabelInference, tuple[dict, .
     # Fit under the lock so concurrent requests for one snapshot do not duplicate training.
     with _review_cache_lock:
         if key not in _review_cache:
-            inf = LabelInference(inventory)
-            suspects = {label: suspect_labels(inventory, label) for label in LABELS}
-            rows = tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
+            with workflow_metrics.operation("inference"):
+                inf = LabelInference(inventory)
+                suspects = {label: suspect_labels(inventory, label) for label in LABELS}
+                rows = tuple(_report(inf, row, suspects) for _, row in inf.df.iterrows())
             _review_cache[key] = (inf, rows)
             if len(_review_cache) > 4:
                 _review_cache.popitem(last=False)

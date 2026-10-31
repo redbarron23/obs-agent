@@ -5,6 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 
+import workflow_metrics
 from inventory_import import (
     OPTIONAL_COLUMNS,
     REQUIRED_COLUMNS,
@@ -20,6 +21,7 @@ from labeling import LABELS, normalise
 from review_workspaces import load_review, review_directory, save_review, saved_reviews
 
 st.set_page_config(page_title="Import inventory — obs-agent", page_icon="📥", layout="wide")
+workflow_metrics.bind(surface="ui")
 st.title("📥 Import / reopen inventory")
 st.caption(
     "Review Azure subscriptions and GCP projects locally. No cloud credentials or tag writes."
@@ -114,12 +116,21 @@ def map_columns(source: bytes) -> bytes | None:
 
 
 if uploaded:
+    validation = workflow_metrics.operation(
+        "import", invalid=(InventoryImportError, LabelConfigError)
+    )
     try:
-        config = load_label_config(vocabulary.getvalue()) if vocabulary else None
-        normalized = map_columns(uploaded.getvalue())
-        inventory = load_inventory_csv(normalized, config)
+        with validation:
+            config = load_label_config(vocabulary.getvalue()) if vocabulary else None
+            normalized = map_columns(uploaded.getvalue())
+            inventory = load_inventory_csv(normalized, config)
     except (InventoryImportError, LabelConfigError) as exc:
         st.error(str(exc))
+    except Exception:
+        st.error(
+            "The inventory could not be read because of an unexpected server error. "
+            f"Reference: `{validation.correlation_id}`"
+        )
     else:
         st.success(
             f"Validated {len(inventory)} resources across {inventory.cloud.nunique()} clouds."
@@ -146,7 +157,16 @@ if uploaded:
         )
         if st.button("Save and open review", type="primary"):
             # Store the mapped CSV so the saved review reopens without the mapping.
-            review_id = save_review(normalized, uploaded.name, config)
-            open_review(review_id)
-            st.success("Saved locally. Suggestions are ready for human review.")
-            st.page_link("pages/1_Label_review.py", label="Open Label review", icon="🏷️")
+            saving = workflow_metrics.operation("import")
+            try:
+                with saving:
+                    review_id = save_review(normalized, uploaded.name, config)
+                open_review(review_id)
+            except Exception:
+                st.error(
+                    "The review could not be saved. Ask the operator to check the server log. "
+                    f"Reference: `{saving.correlation_id}`"
+                )
+            else:
+                st.success("Saved locally. Suggestions are ready for human review.")
+                st.page_link("pages/1_Label_review.py", label="Open Label review", icon="🏷️")

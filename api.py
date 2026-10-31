@@ -20,6 +20,13 @@ PUT  /resources/{id}/labels/{label}/decision   accept / reject / override
 DELETE /resources/{id}/labels/{label}/decision undo a decision
 GET  /labels/decisions                         all recorded decisions
 GET  /labels/export?format=csv|sh|tfvars       resolved changes to apply
+GET  /labels/backlog                           pending review work and its age
+
+Operations (see docs/operations.md):
+GET  /ops/metrics[?format=prometheus]          workflow counters, durations, backlog
+
+Every response carries an X-Request-ID header (echoed when the client sends a
+safe one); structured server logs carry the same ID as correlation_id.
 
 Pass the same ``session_id`` on follow-up requests to keep conversation memory.
 
@@ -43,10 +50,12 @@ from collections.abc import Iterator
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import label_review
+import observability
+import workflow_metrics
 from agent import (
     PROVIDER_DEFAULT_MODELS,
     PROVIDERS,
@@ -76,6 +85,32 @@ app = FastAPI(
     description="Human-reviewed Azure/GCP label changes, with optional synthetic cost Q&A.",
     version="0.3.0",
 )
+
+
+# ── Correlation IDs ────────────────────────────────────────────────────
+
+
+@app.middleware("http")
+async def correlate(request: Request, call_next):
+    """Bind one correlation ID per request; return it as X-Request-ID."""
+    correlation_id = workflow_metrics.clean_correlation_id(request.headers.get("x-request-id"))
+    tokens = workflow_metrics.bind(correlation_id, surface="api")
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        # Log the type and route template only; the message may quote request data.
+        route = request.scope.get("route")
+        workflow_metrics.log_unhandled(
+            correlation_id, getattr(route, "path", "unknown"), request.method, exc
+        )
+        response = JSONResponse(
+            {"detail": "Internal server error", "correlation_id": correlation_id},
+            status_code=500,
+        )
+    finally:
+        workflow_metrics.unbind(tokens)
+    response.headers["X-Request-ID"] = correlation_id
+    return response
 
 
 # ── Auth ───────────────────────────────────────────────────────────────
@@ -663,7 +698,8 @@ def resource_labels(resource_id: str) -> dict:
 def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> dict:
     _report_or_404(resource_id)
     try:
-        return decisions.set(resource_id, label, req.decision, req.value, reviewer=req.reviewer)
+        with workflow_metrics.operation("decision_write", invalid=(DecisionError,)):
+            return decisions.set(resource_id, label, req.decision, req.value, reviewer=req.reviewer)
     except DecisionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -679,7 +715,9 @@ def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> di
     },
 )
 def delete_decision(resource_id: str, label: LabelName) -> dict:
-    if not decisions.delete(resource_id, label):
+    with workflow_metrics.operation("decision_write"):
+        deleted = decisions.delete(resource_id, label)
+    if not deleted:
         raise HTTPException(status_code=404, detail="Decision not found")
     return {"deleted": f"{resource_id}/{label}"}
 
@@ -760,7 +798,8 @@ def export_labels(
     include_auto: bool = Query(default=False),
 ) -> PlainTextResponse:
     try:
-        body = label_review.export(decisions, format, include_auto)
+        with workflow_metrics.operation("export", invalid=(DecisionError,)):
+            body = label_review.export(decisions, format, include_auto)
     except DecisionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return PlainTextResponse(
@@ -768,3 +807,41 @@ def export_labels(
         media_type=EXPORT_MEDIA[format],
         headers={"Content-Disposition": f'attachment; filename="{EXPORT_FILENAME[format]}"'},
     )
+
+
+@app.get(
+    "/labels/backlog",
+    dependencies=[Depends(require_api_key)],
+    summary="Pending review work",
+    description="Untagged or suspect labels with no decision for the current snapshot, and how "
+    "long review has been open. `feedback_actions` is the historical action count, not backlog. "
+    "Definitions: docs/operations.md.",
+    tags=["labels"],
+    responses={401: ERROR_RESPONSES[401]},
+)
+def review_backlog() -> dict:
+    return workflow_metrics.backlog(decisions)
+
+
+@app.get(
+    "/ops/metrics",
+    dependencies=[Depends(require_api_key)],
+    summary="Workflow metrics",
+    description="In-process counters and durations for import, inference, decision writes and "
+    "exports, plus the review backlog. `format=prometheus` returns the text exposition format.",
+    tags=["operations"],
+    responses={401: ERROR_RESPONSES[401]},
+)
+def ops_metrics(format: Literal["json", "prometheus"] = Query(default="json")):
+    try:
+        backlog = workflow_metrics.backlog(decisions)
+    except Exception as exc:  # metrics must stay readable while the workflow is failing
+        workflow_metrics.log_unhandled(
+            workflow_metrics.current_correlation_id(), "/ops/metrics", "GET", exc
+        )
+        backlog = None
+    if format == "prometheus":
+        return PlainTextResponse(
+            workflow_metrics.prometheus(backlog), media_type="text/plain; version=0.0.4"
+        )
+    return workflow_metrics.snapshot() | {"backlog": backlog, "tracing": observability.status()}
