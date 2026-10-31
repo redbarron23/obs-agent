@@ -9,7 +9,7 @@ Several sessions may work on this repo at once. Sharing a checkout has already m
 - Never edit, branch or commit in the main checkout. Start every task in its own worktree from a fresh `origin/main`:
   `git fetch origin && git worktree add -b <type>/<topic> ../obs-agent-<topic> origin/main`
   Branch types used here: `feature/`, `fix/`, `docs/`, `chore/`.
-- `main` is protected: no direct pushes, PR only, squash merge only, and CI (`test (3.10)`, `test (3.11)`, `test (3.12)`, `docker`) must pass on a branch that is up to date with `main`. If the PR falls behind, rebase onto `origin/main` and rerun the checks.
+- `main` is protected: no direct pushes, PR only, squash merge only, and CI (`test (3.11)`, `test (3.12)`, `docker`) must pass on a branch that is up to date with `main`. If the PR falls behind, rebase onto `origin/main` and rerun the checks.
 - Merge with `gh pr merge <n> --squash --match-head-commit <sha>` so you merge exactly what CI tested. GitHub deletes the remote branch; then `git worktree remove` your worktree and delete the local branch.
 - Never use bare `git stash` / `git stash pop`; the stash is shared by all worktrees.
 

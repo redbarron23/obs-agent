@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from drift import compare_snapshots
@@ -40,7 +40,7 @@ def save_review(csv: bytes, name: str, config: dict | None = None) -> str:
         )
         conn.execute(
             "INSERT OR IGNORE INTO workspace VALUES (1, ?, ?, ?, ?)",
-            (name[:200], csv, vocabulary, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+            (name[:200], csv, vocabulary, datetime.now(UTC).isoformat(timespec="seconds")),
         )
     return review_id
 
