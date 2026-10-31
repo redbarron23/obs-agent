@@ -38,8 +38,8 @@ but the UI calls Python functions directly; imported review workspaces are UI-on
 | Endpoint | Purpose |
 |---|---|
 | `GET /labels/coverage` | Untagged / suspect / auto-apply-ready counts per label |
-| `GET /resources` | Review queue; filters `label`, `status`, `cloud`, `min_confidence`, `max_confidence`, `search`, plus `limit` / `offset` |
-| `GET /resources/{id}/labels` | Current tags, suggestions, confidence, reasons and alternatives for one resource |
+| `GET /resources` | Review queue; filters `label`, `status`, `cloud`, `min_confidence`, `max_confidence`, `search`, `evidence` (`insufficient` or an evidence status), plus `limit` / `offset` |
+| `GET /resources/{id}/labels` | Current tags, suggestions, model score (`confidence`), evidence status, reasons and alternatives for one resource |
 | `PUT` / `DELETE /resources/{id}/labels/{label}/decision` | Record (`accept` / `reject` / `override` + `value`) or undo a review decision |
 | `GET /labels/decisions` | All recorded decisions |
 | `GET /labels/feedback` | Append-only reviewer actions with their model context |

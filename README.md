@@ -100,13 +100,17 @@ synthetic-data workflow. See [Architecture](docs/architecture.md).
 | --- | ---: |
 | Team-label accuracy | 98% |
 | Team-label macro-F1 | 0.98 |
+| Team-label accuracy with abstention (97% coverage) | 99% |
 | Environment-label accuracy (hybrid) | 81% |
 
 These results use the default team model and environment hybrid strategy on the bundled synthetic
 inventory. Environment rules alone score 100% on the 55% of examples they cover; the hybrid covers
-100% of examples at 81% accuracy. These are not production performance claims. Each imported
-label needs at least two recognized values with two labelled resources per value. Validate on a
-representative reviewed sample before relying on confidence thresholds. See [Evaluation](docs/evaluation.md).
+100% of examples at 81% accuracy. Where ownership evidence is missing, unsupported or conflicting,
+team inference abstains instead of suggesting a value: 3% of untagged resources on this estate, 23%
+on the harsh one (where accuracy on the rest rises from 85% to 94%). These are not production
+performance claims. Each imported label needs at least two recognized values with two labelled
+resources per value. Validate on a representative reviewed sample before relying on confidence
+thresholds. See [Evaluation](docs/evaluation.md).
 
 ## Documentation
 

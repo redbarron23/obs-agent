@@ -4,8 +4,16 @@
 
 `inventory.py` keeps ground truth beside deliberately incomplete and messy observed tags. The label
 tests pin quality floors against that ground truth, including auto-apply precision on the adversarial
-estate. The report also includes expected calibration error (ECE), the gap between stated confidence
-and observed accuracy; lower is better.
+estate. The report also includes expected calibration error (ECE), the gap between the model score
+(reported as confidence) and observed accuracy; lower is better. Team ECE is 17–18%, so the score
+is a ranking signal, not a calibrated probability.
+
+For `team`, the report adds an `abstain` row: the team model with
+[insufficient-evidence](label-inference.md#insufficient-evidence) cases withheld, as reviewers see
+it. Its accuracy is over the suggestions made, so always read it with its coverage, the number
+withheld per evidence status, and how often the withheld value would have been right. On the harsh
+estate it suggests a team for 77% of untagged resources at 94% accuracy, against 100% at 85% without
+abstention; the withheld 23% would have been right 53% of the time.
 
 ```bash
 uv run labeling.py --hardness both
@@ -43,7 +51,8 @@ falls relative to lower-confidence review: that is a practical signal to revisit
 These are reviewer-agreement metrics, not an unbiased production benchmark: reviewers choose what
 to inspect, and repeated decisions are retained as historical events. Track the `reviewed`,
 `scored`, and `unresolved` counts with the scores; do not compare periods with too little reviewed
-data.
+data. Overrides of a withheld (abstained) suggestion resolve the label but have no suggestion to
+score; they are counted as `abstained`, not `unresolved`.
 
 ## Cost-agent evaluations
 

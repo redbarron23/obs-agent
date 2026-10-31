@@ -62,9 +62,11 @@ def _refresh():
 st.title("🏷️ Label review")
 st.caption(
     "Suggested `team` / `env` tags for untagged Azure subscriptions and GCP projects, "
-    f"plus existing tags the model thinks are wrong. Suggestions at ≥{AUTO_APPLY_THRESHOLD:.0%} "
-    "confidence are eligible for expedited review; everything else needs an explicit "
-    "human decision."
+    f"plus existing tags the model thinks are wrong. Suggestions with a model score "
+    f"≥{AUTO_APPLY_THRESHOLD:.0%} are eligible for expedited review; everything else needs an "
+    "explicit human decision. The score ranks suggestions; it is not a calibrated probability. "
+    "Where ownership evidence is missing, unsupported or conflicting, no team is suggested: "
+    "the row says why, and only an explicit override resolves it."
 )
 
 if imported_inventory is not None:
@@ -99,13 +101,22 @@ if len(valid_decisions) < len(store.all()):
     )
 cov = coverage(imported_inventory)
 decided = {f"{d['resource_id']}|{d['label']}": d for d in valid_decisions}
-cols = st.columns(6)
+cols = st.columns(7)
 cols[0].metric("Need attention", cov["needs_attention"], help=f"of {cov['total']} resources")
 cols[1].metric("Untagged team", cov["labels"]["team"]["untagged"])
 cols[2].metric("Untagged env", cov["labels"]["env"]["untagged"])
 cols[3].metric("Suspect tags", sum(c["suspect"] for c in cov["labels"].values()))
 cols[4].metric("Auto-apply ready", sum(c["auto_apply_ready"] for c in cov["labels"].values()))
-cols[5].metric("Reviewed", len(decided))
+cols[5].metric(
+    "Insufficient evidence",
+    sum(c["insufficient_evidence"] for c in cov["labels"].values()),
+    help="Untagged labels with no suggestion: "
+    + ", ".join(
+        f"{reason.replace('_', ' ')} {n}"
+        for reason, n in cov["labels"]["team"]["insufficient_evidence_reasons"].items()
+    ),
+)
+cols[6].metric("Reviewed", len(decided))
 
 quality = feedback_metrics(store.feedback())
 with st.expander("Review quality", expanded=bool(quality["reviewed"])):
@@ -149,7 +160,7 @@ with st.expander("Review quality", expanded=bool(quality["reviewed"])):
             for label_name, summary in quality["labels"].items()
             for bucket in summary["confidence_buckets"]
         ]
-        st.caption("Confidence buckets (the threshold is the high-confidence drift check)")
+        st.caption("Model-score buckets (the threshold is the high-score drift check)")
         st.dataframe(pd.DataFrame(buckets), hide_index=True, width="stretch")
 
 # ── Filters ────────────────────────────────────────────────────────────
@@ -158,7 +169,15 @@ st.sidebar.header("Filters")
 label = st.sidebar.radio("Label", ["team", "env"], horizontal=True)
 status = st.sidebar.selectbox("Status", ["untagged or suspect", "untagged", "suspect"])
 cloud = st.sidebar.selectbox("Cloud", ["both", "azure", "gcp"])
-lo, hi = st.sidebar.slider("Confidence", 0.0, 1.0, (0.0, 1.0), step=0.05)
+lo, hi = st.sidebar.slider(
+    "Model score",
+    0.0,
+    1.0,
+    (0.0, 1.0),
+    step=0.05,
+    help="Labels withheld for insufficient evidence have no score and count as 0.",
+)
+only_insufficient = st.sidebar.checkbox("Only insufficient evidence", value=False)
 search = st.sidebar.text_input("Resource contains")
 hide_reviewed = st.sidebar.checkbox("Hide reviewed", value=False)
 drift_filter = st.session_state.get("drift_filter")
@@ -175,6 +194,7 @@ rows = review_queue(
     max_confidence=hi,
     search=search or None,
     inventory=imported_inventory,
+    evidence="insufficient" if only_insufficient else None,
 )
 
 records = []
@@ -196,6 +216,7 @@ for r in rows:
             "suggested": lr["suggested"],
             "confidence": lr["confidence"],
             "action": lr["action"],
+            "evidence": (lr["evidence"] or {}).get("status", "").replace("_", " "),
             "why": f"{lr['source']}: {lr['reason']}",
             "alternatives": ", ".join(
                 f"{a['value']} {a['confidence']:.0%}" for a in lr["alternatives"]
@@ -235,6 +256,7 @@ else:
             "current",
             "status",
             "action",
+            "evidence",
             "cloud",
             "parent",
             "owners",
@@ -245,14 +267,15 @@ else:
         column_config={
             "resource_id": st.column_config.TextColumn("Resource", pinned=True),
             "confidence": st.column_config.ProgressColumn(
-                "Confidence", min_value=0.0, max_value=1.0, format="percent"
+                "Model score", min_value=0.0, max_value=1.0, format="percent"
             ),
             "why": st.column_config.TextColumn("Why", width="large"),
             "decision": st.column_config.SelectboxColumn(
                 "Decision",
                 options=["", "accept", "reject", "override"],
                 help="accept = apply the suggestion · reject = keep today's tag · "
-                "override = apply the value in the next column",
+                "override = apply the value in the next column (the only choice when no "
+                "value is suggested)",
             ),
             "override": st.column_config.SelectboxColumn(
                 "Override value",

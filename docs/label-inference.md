@@ -21,9 +21,38 @@ value belongs there. This project predicts a likely value and exposes the eviden
 4. **Mislabel check:** out-of-fold predictions flag existing tags that the model confidently
    disagrees with, without allowing a resource to vote on its own label.
 
-Each prediction includes confidence, the strongest weighted features, and alternative values. Team
-uses the model because hierarchy is unreliable after a reorganisation; environment uses whichever
-of the rule and model is more confident.
+Each prediction includes a model score (reported as `confidence`), the strongest weighted features,
+and alternative values. Team uses the model because hierarchy is unreliable after a reorganisation;
+environment uses whichever of the rule and model scores higher.
+
+## Insufficient evidence
+
+A model score can be high while the resource itself carries little or contradictory ownership
+evidence. Before a `team` suggestion reaches the review flow, `LabelInference.assess()` checks the
+resource's ownership features — owners, creator, name tokens and parent — against how often each was
+seen on labelled resources. The first condition that holds withholds the suggestion:
+
+| Evidence status | Condition | What the reviewer sees |
+|---|---|---|
+| `missing_signals` | No owner, creator or meaningful name token; only hierarchy, services and spend remain. | Record an owner, or override. |
+| `insufficient_support` | None of the resource's owners, creator or name tokens appears on at least 2 labelled resources with the predicted team. | Confirm ownership, then override. |
+| `conflicting` | The resource has decisive evidence (a feature seen on at least 2 labelled resources, at least 80% with one team) and none of it points to the predicted team. | The conflicting features and counts; resolve with the owners, then override. |
+| `supported` | None of the above. | The suggestion, with the supporting features. |
+
+The bars are the import minimum (two labelled resources per value) and the inheritance rules' 80%
+agreement. They use features and training counts only, never the model score, so there is no
+universal confidence cutoff: a low-scoring prediction with supporting evidence is still suggested,
+and a high-scoring one without it is not. Parent counts towards a conflict but cannot support a
+prediction on its own, because hierarchy goes stale after reorganisations. `env` is not checked:
+name tokens and spend shape are its evidence.
+
+An abstained label stays `untagged` with `suggested` and `confidence` set to null, `action:
+"insufficient evidence"`, `source: "abstain"`, an actionable `reason`, and an `evidence` object
+naming the status, the conflicting features and the withheld value (context only). It cannot be
+accepted, rejected or auto-applied, implies no cost center, and is never part of an unreviewed
+export. An explicit override with an allowed value is still recorded and exported as usual.
+Coverage reports `insufficient_evidence` with a count per status, and the queue can be filtered by
+evidence status (`evidence=insufficient` in the API, **Only insufficient evidence** in the UI).
 
 ## Ground-truth evaluation
 
@@ -35,8 +64,22 @@ top-three recall, and expected calibration error (ECE).
 |---|---:|---:|---:|---:|---:|
 | team | rules | 41% | 94% | 0.81 | 94% |
 | team | model | 100% | 98% | 0.98 | 100% |
+| team | model with abstention | 97% | 99% | 0.99 | 100% |
 | env | rules | 55% | 100% | 1.00 | 100% |
 | env | hybrid | 100% | 81% | 0.79 | 99% |
+
+The `abstain` row scores what reviewers see: the team model with insufficient-evidence cases
+withheld. Accuracy is measured on the suggestions made, so read it with coverage. The report also
+states how often the withheld value would have been right:
+
+| Estate | Team model: coverage / accuracy | With abstention: coverage / accuracy | Withheld (by status) | Withheld value right |
+|---|---:|---:|---|---:|
+| clean | 100% / 98% | 97% / 99% | 5 of 170 (5 conflicting) | 60% |
+| harsh | 100% / 85% | 77% / 94% | 49 of 212 (17 missing, 18 unsupported, 14 conflicting) | 53% |
+| reorg | 100% / 98% | 97% / 100% | 5 of 160 (1 unsupported, 4 conflicting) | 40% |
+
+Abstention trades coverage for accuracy where evidence is weak; it does not change the
+expedited-review slice, whose precision was already 100% on these estates.
 
 Run the report with:
 
@@ -58,17 +101,20 @@ accept the recommendation, reject it, or override it with an allowed value.
 
 ### Confidence and deferral policy
 
-`AUTO_APPLY_THRESHOLD` is **0.90**. Confidence is the model or rule probability for its proposed
-value; it is not proof that the label is correct.
+`AUTO_APPLY_THRESHOLD` is **0.90**. "Confidence" in reports and the API is a model score: the
+logistic-regression probability or the rule's agreement share for its proposed value. It ranks
+suggestions, but it is not a calibrated probability that the label is correct (ECE on the
+clean and harsh synthetic estates is 17–18% for the team model) and should not be read as one until it has been calibrated
+on a representative reviewed estate.
 
 | Result | Policy |
 | --- | --- |
-| Untagged prediction at or above 90% | Eligible for expedited review. It may be bulk-accepted, but it is not sent to a provider automatically. |
+| Untagged prediction with a model score at or above 90% | Eligible for expedited review. It may be bulk-accepted, but it is not sent to a provider automatically. |
 | Untagged prediction below 90% | Deferred: it requires an explicit accept, reject, or override before export. |
-| Existing tag that the model disputes | Always deferred, whatever its confidence. |
-| No useful prediction | Leave the tag unchanged and investigate outside the tool. |
+| Existing tag that the model disputes | Always deferred, whatever its score. |
+| Insufficient evidence (abstained) | No suggestion. Never expedited or exported unreviewed; only an explicit override resolves it. |
 
-Exports default to reviewed decisions only. A user can deliberately include high-confidence,
+Exports default to reviewed decisions only. A user can deliberately include high-scoring,
 unreviewed suggestions in a convenience export, but the reviewed change plan never includes them.
 Before production use, validate the threshold on a representative reviewed sample and raise it or
 disable expedited review if its precision falls below the team’s accepted risk level.

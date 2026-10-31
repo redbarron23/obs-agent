@@ -422,16 +422,48 @@ class Alternative(BaseModel):
     confidence: float
 
 
+class ConflictingSignal(BaseModel):
+    feature: str
+    points_to: str
+    count: int = Field(description="Labelled resources with this feature and that value.")
+    support: int = Field(description="Labelled resources with this feature.")
+
+
+class WithheldSuggestion(BaseModel):
+    value: str
+    model_score: float
+
+
+class EvidenceState(BaseModel):
+    status: Literal["supported", "missing_signals", "insufficient_support", "conflicting"]
+    reason: str
+    supporting: list[str] = Field(default_factory=list)
+    conflicting: list[ConflictingSignal] = Field(default_factory=list)
+    withheld: WithheldSuggestion | None = Field(
+        default=None,
+        description="Value the model would have proposed; context only, it cannot be accepted.",
+    )
+
+
 class LabelState(BaseModel):
     current: str | None = Field(description="Usable tag after cleaning, or null.")
     raw: str | None = Field(description="Tag value exactly as found on the resource.")
     status: Literal["ok", "untagged", "suspect"]
-    suggested: str | None
-    confidence: float | None
-    action: Literal["auto-apply", "needs review"] | None
-    source: str | None = Field(description="rule:parent, rule:name, model or out-of-fold model.")
+    suggested: str | None = Field(
+        description="Null when the label is ok or inference abstained (insufficient evidence)."
+    )
+    confidence: float | None = Field(
+        description="Model or rule score for the suggestion; not a calibrated probability."
+    )
+    action: Literal["auto-apply", "needs review", "insufficient evidence"] | None
+    source: str | None = Field(
+        description="rule:parent, rule:name, model, out-of-fold model, or abstain."
+    )
     reason: str | None
     alternatives: list[Alternative]
+    evidence: EvidenceState | None = Field(
+        default=None, description="Ownership-evidence check for untagged labels."
+    )
 
 
 class CostCenter(BaseModel):
@@ -487,6 +519,10 @@ class LabelCounts(BaseModel):
     untagged: int
     suspect: int
     auto_apply_ready: int
+    insufficient_evidence: int = Field(
+        default=0, description="Untagged labels with no suggestion (inference abstained)."
+    )
+    insufficient_evidence_reasons: dict[str, int] = Field(default_factory=dict)
 
 
 class Coverage(BaseModel):
@@ -563,8 +599,9 @@ def labels_coverage() -> dict:
     response_model=ResourcePage,
     dependencies=[Depends(require_api_key)],
     summary="Review queue",
-    description="Resources with an untagged or suspected-wrong label, most confident "
-    "suggestions first. Filters combine with AND.",
+    description="Resources with an untagged or suspected-wrong label, highest model score "
+    "first; labels withheld for insufficient evidence have no score and come last. "
+    "Filters combine with AND.",
     tags=["labels"],
     responses={401: ERROR_RESPONSES[401]},
 )
@@ -575,6 +612,13 @@ def list_resources(
     min_confidence: float = Query(default=0.0, ge=0, le=1),
     max_confidence: float = Query(default=1.0, ge=0, le=1),
     search: str | None = Query(default=None, description="Substring of resource_id."),
+    evidence: Literal[
+        "insufficient", "supported", "missing_signals", "insufficient_support", "conflicting"
+    ]
+    | None = Query(
+        default=None,
+        description="Evidence status; 'insufficient' matches every abstained label.",
+    ),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
@@ -585,6 +629,7 @@ def list_resources(
         min_confidence=min_confidence,
         max_confidence=max_confidence,
         search=search,
+        evidence=evidence,
     )
     return {"total": len(items), "items": items[offset : offset + limit]}
 
