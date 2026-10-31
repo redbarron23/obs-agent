@@ -50,6 +50,11 @@ def test_top_1(self, patch_azure_summary):
 These tests are strong precisely because the data is hand-built: a ranking bug cannot hide behind
 realistic noise.
 
+**Checking the seeded data.** `test_billing_reconciliation.py` runs on the real `data.py` output.
+It asserts that every Azure and GCP summary total (cost, ingested GB, overage GB) equals the sum of
+that entity's daily rows in the reporting window, and that the summary tools print the window and
+currency. It also pins the headline numbers quoted in `docs/agent.md`.
+
 **Mocking the provider.** `test_agent.py` patches `Provider.create` so no network call happens, then
 drives the loop with a scripted response:
 
@@ -155,7 +160,7 @@ the clean estate stays byte-identical so the published metrics keep meaning the 
 | REST API (`test_api.py`) | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
 | Model config (`test_model_config.py`) | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
 | Evals (`test_evals.py`) | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
-| Observability (`test_observability.py`) | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent |
+| Observability (`test_observability.py`) | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent, degraded tracing when the tracking store is down |
 
 ## CI
 

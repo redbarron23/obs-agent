@@ -50,11 +50,11 @@ class TestBasics:
 
 class TestAsk:
     def test_ask_returns_answer_and_tools(self, client):
-        with patch("api.run", return_value=("$18,411", _history())) as m:
+        with patch("api.run", return_value=("$20,109.04", _history())) as m:
             r = client.post("/ask", json={"question": "top overage?"})
         assert r.status_code == 200
         body = r.json()
-        assert body["answer"] == "$18,411"
+        assert body["answer"] == "$20,109.04"
         assert body["tools_called"] == ["get_azure_top_overages"]
         assert body["provider"] == "ollama"
         assert body["session_id"]

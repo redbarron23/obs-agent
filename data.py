@@ -6,6 +6,12 @@ agent and eval harness work out of the box with no external CSVs.
 
 The seed is fixed so evals pass reliably — every run produces the same
 subscription IDs, project IDs, costs, and spike patterns.
+
+The daily detail records are the single source of truth.  The per-entity
+summaries are *derived* from them for an explicit reporting window (the
+latest ``REPORTING_WINDOW_DAYS`` days, ending ``END_DATE``), so a summary
+total always equals the sum of the matching daily rows.  All amounts are
+in ``CURRENCY``.
 """
 
 from datetime import datetime, timedelta
@@ -16,122 +22,151 @@ import pandas as pd
 # ── Seeded RNG for reproducibility ─────────────────────────────────────
 RNG = np.random.default_rng(seed=42)
 
+CURRENCY = "USD"
+
+# Flat synthetic price for Azure log ingestion beyond a subscription's
+# allowance.  A single rate keeps cost and overage GB consistent; it is not
+# a pricing engine.
+AZURE_OVERAGE_RATE_PER_GB = 2.30
+
 # ── Azure subscriptions ────────────────────────────────────────────────
-AZURE_SUBSCRIPTIONS = [
-    "sub-a1b2c3d4",
-    "sub-e5f6g7h8",
-    "sub-i9j0k1l2",
-    "sub-m3n4o5p6",
-    "sub-q7r8s9t0",
-]
+# Mean daily (ingested GB, overage GB); the difference is the daily
+# allowance.  One subscription dominates; the last one is near zero.
+AZURE_PROFILES = {
+    "sub-a1b2c3d4": (300.0, 260.0),
+    "sub-e5f6g7h8": (60.0, 45.0),
+    "sub-i9j0k1l2": (20.0, 12.0),
+    "sub-m3n4o5p6": (6.0, 1.7),
+    "sub-q7r8s9t0": (2.0, 0.05),
+}
+AZURE_SUBSCRIPTIONS = list(AZURE_PROFILES)
 
 # ── GCP projects ───────────────────────────────────────────────────────
-GCP_PROJECTS = [
-    "project-alpha",
-    "project-bravo",
-    "project-charlie",
-    "project-delta",
-    "project-echo",
-]
+# Mean daily logging cost.
+GCP_PROFILES = {
+    "project-alpha": 420.0,
+    "project-bravo": 220.0,
+    "project-charlie": 70.0,
+    "project-delta": 14.0,
+    "project-echo": 0.5,
+}
+GCP_PROJECTS = list(GCP_PROFILES)
 
 # ── Date range ─────────────────────────────────────────────────────────
 END_DATE = datetime(2026, 6, 1)
 START_DATE = END_DATE - timedelta(days=59)  # 60 days
 DAYS = pd.date_range(START_DATE, END_DATE, freq="D")
 
+# ── Reporting window used by every summary ─────────────────────────────
+REPORTING_WINDOW_DAYS = 30
+REPORTING_END = END_DATE.date()
+REPORTING_START = (END_DATE - timedelta(days=REPORTING_WINDOW_DAYS - 1)).date()
 
-def generate_azure_summary() -> pd.DataFrame:
-    """Returns the per-subscription 30-day overage summary."""
-    # One subscription dominates; others have moderate to near-zero overage.
-    base_costs = [18400, 3200, 850, 120, 0]
-    base_ingested = [520, 95, 28, 5, 2]
-    base_overage = [180, 30, 8, 1, 0]
+# Built-in spikes (index into DAYS) and their size relative to the baseline.
+AZURE_SPIKE = ("sub-a1b2c3d4", 30)
+GCP_SPIKE = ("project-bravo", 20)
+SPIKE_MULTIPLIER = 4.5
 
-    # Add some noise so the exact ranking is robust but ordering is clear.
-    ingested_noise = RNG.integers(-5, 6, size=len(base_costs))
-    overage_noise = RNG.integers(-2, 3, size=len(base_costs))
 
-    rows = []
-    for i, sub in enumerate(AZURE_SUBSCRIPTIONS):
-        rows.append(
-            {
-                "subscription_id": sub,
-                "ingested_gb_30d": max(0, base_ingested[i] + ingested_noise[i]),
-                "overage_gb_30d": max(0, base_overage[i] + overage_noise[i]),
-                "estimated_overage_cost_30d": max(0, base_costs[i] + RNG.integers(-200, 201)),
-            }
-        )
-    return pd.DataFrame(rows)
+def reporting_window_label() -> str:
+    """Human-readable reporting window, e.g. '2026-05-03 to 2026-06-01 (30 days)'."""
+    return f"{REPORTING_START} to {REPORTING_END} ({REPORTING_WINDOW_DAYS} days)"
+
+
+def in_reporting_window(df: pd.DataFrame) -> pd.DataFrame:
+    """Daily rows that fall inside the reporting window."""
+    return df[(df["day"] >= REPORTING_START) & (df["day"] <= REPORTING_END)]
 
 
 def generate_azure_details() -> pd.DataFrame:
     """Returns daily per-subscription detail with a built-in spike."""
     records = []
-    for sub in AZURE_SUBSCRIPTIONS:
-        day_cost = RNG.normal(loc=5, scale=1.5, size=len(DAYS)).clip(0.5)
-        day_ingested = RNG.normal(loc=8, scale=2, size=len(DAYS)).clip(0.5)
-        day_overage = RNG.normal(loc=0.5, scale=0.3, size=len(DAYS)).clip(0)
+    for sub, (ingested_mean, overage_mean) in AZURE_PROFILES.items():
+        # Ingestion is the subscription's daily allowance plus that day's overage.
+        allowance = ingested_mean - overage_mean
+        day_overage = RNG.normal(loc=1.0, scale=0.1, size=len(DAYS)).clip(0.5) * overage_mean
 
-        # Give the top-cost subscription a spike on day 30
-        if sub == "sub-a1b2c3d4":
-            spike_idx = 30
-            day_cost[spike_idx] = 45.0
-            day_overage[spike_idx] = 3.2
+        if sub == AZURE_SPIKE[0]:
+            day_overage[AZURE_SPIKE[1]] = overage_mean * SPIKE_MULTIPLIER
+
+        day_ingested = allowance + day_overage
 
         for idx, day in enumerate(DAYS):
+            overage_gb = round(float(day_overage[idx]), 2)
             records.append(
                 {
                     "subscription_id": sub,
                     "day": day.date(),
-                    "ingested_gb": round(day_ingested[idx], 2),
-                    "overage_gb": round(day_overage[idx], 2),
-                    "estimated_overage_cost": round(day_cost[idx], 2),
+                    "ingested_gb": round(float(day_ingested[idx]), 2),
+                    "overage_gb": overage_gb,
+                    "estimated_overage_cost": round(overage_gb * AZURE_OVERAGE_RATE_PER_GB, 2),
+                    "currency": CURRENCY,
                 }
             )
     return pd.DataFrame(records)
 
 
-def generate_gcp_summary() -> pd.DataFrame:
-    """Returns per-project total cost summary."""
-    base_costs = [12500, 6700, 2100, 430, 0]
-    rows = []
-    for i, proj in enumerate(GCP_PROJECTS):
-        rows.append(
-            {
-                "project_id": proj,
-                "total_cost": max(0, base_costs[i] + int(RNG.integers(-300, 301))),
-                "currency": "USD",
+def generate_azure_summary(details: pd.DataFrame) -> pd.DataFrame:
+    """Per-subscription totals over the reporting window, summed from *details*."""
+    window = in_reporting_window(details)
+    summary = (
+        window.groupby("subscription_id", sort=False)[
+            ["ingested_gb", "overage_gb", "estimated_overage_cost"]
+        ]
+        .sum()
+        .round(2)
+        .reset_index()
+        .rename(
+            columns={
+                "ingested_gb": "ingested_gb_30d",
+                "overage_gb": "overage_gb_30d",
+                "estimated_overage_cost": "estimated_overage_cost_30d",
             }
         )
-    return pd.DataFrame(rows)
+    )
+    summary["currency"] = CURRENCY
+    return summary
 
 
 def generate_gcp_details() -> pd.DataFrame:
     """Returns daily per-project cost detail with a built-in spike."""
     records = []
-    for proj in GCP_PROJECTS:
-        day_cost = RNG.exponential(scale=3, size=len(DAYS)).clip(0.1)
+    for proj, cost_mean in GCP_PROFILES.items():
+        day_cost = RNG.lognormal(mean=0.0, sigma=0.25, size=len(DAYS)) * cost_mean
 
-        # Give project-bravo a spike on day 20
-        if proj == "project-bravo":
-            spike_idx = 20
-            day_cost[spike_idx] = 28.0
+        if proj == GCP_SPIKE[0]:
+            day_cost[GCP_SPIKE[1]] = cost_mean * SPIKE_MULTIPLIER
 
         for idx, day in enumerate(DAYS):
             records.append(
                 {
                     "project_id": proj,
                     "day": day.date(),
-                    "cost": round(day_cost[idx], 2),
+                    "cost": round(float(day_cost[idx]), 2),
+                    "currency": CURRENCY,
                 }
             )
     return pd.DataFrame(records)
 
 
+def generate_gcp_summary(details: pd.DataFrame) -> pd.DataFrame:
+    """Per-project total cost over the reporting window, summed from *details*."""
+    window = in_reporting_window(details)
+    summary = (
+        window.groupby("project_id", sort=False)["cost"]
+        .sum()
+        .round(2)
+        .reset_index()
+        .rename(columns={"cost": "total_cost"})
+    )
+    summary["currency"] = CURRENCY
+    return summary
+
+
 # ── Public in-memory data ──────────────────────────────────────────────
 # These are imported by tools.py instead of reading real CSVs.
 
-AZURE_SUMMARY_DF = generate_azure_summary()
 AZURE_DETAILS_DF = generate_azure_details()
-GCP_SUMMARY_DF = generate_gcp_summary()
 GCP_DETAILS_DF = generate_gcp_details()
+AZURE_SUMMARY_DF = generate_azure_summary(AZURE_DETAILS_DF)
+GCP_SUMMARY_DF = generate_gcp_summary(GCP_DETAILS_DF)
