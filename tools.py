@@ -12,31 +12,43 @@ import pandas as pd
 from data import (
     AZURE_DETAILS_DF,
     AZURE_SUMMARY_DF,
+    CURRENCY,
     GCP_DETAILS_DF,
     GCP_SUMMARY_DF,
+    REPORTING_END,
+    REPORTING_WINDOW_DAYS,
+    reporting_window_label,
 )
 
 
+def _summary_scope() -> str:
+    """Reporting window and currency shared by every summary tool."""
+    return (
+        f"Reporting window: {reporting_window_label()}; amounts in {CURRENCY}; "
+        "totals are sums of the daily records in that window."
+    )
+
+
 def get_azure_top_overages(n: int = 5) -> str:
-    """Top N Azure subscriptions by estimated 30-day overage cost."""
+    """Top N Azure subscriptions by estimated overage cost in the reporting window."""
     df = AZURE_SUMMARY_DF.copy()
     top = df[df["estimated_overage_cost_30d"] > 0].nlargest(n, "estimated_overage_cost_30d")[
         ["subscription_id", "ingested_gb_30d", "overage_gb_30d", "estimated_overage_cost_30d"]
     ]
     if top.empty:
-        return "No Azure subscriptions with overage found."
-    return top.to_string(index=False)
+        return f"No Azure subscriptions with overage found. {_summary_scope()}"
+    return f"{_summary_scope()}\n{top.to_string(index=False)}"
 
 
 def get_gcp_top_projects(n: int = 5) -> str:
-    """Top N GCP projects by total logging cost."""
+    """Top N GCP projects by total logging cost in the reporting window."""
     df = GCP_SUMMARY_DF.copy()
     top = df[df["total_cost"] > 0].nlargest(n, "total_cost")[
         ["project_id", "total_cost", "currency"]
     ]
     if top.empty:
-        return "No GCP projects with costs found."
-    return top.to_string(index=False)
+        return f"No GCP projects with costs found. {_summary_scope()}"
+    return f"{_summary_scope()}\n{top.to_string(index=False)}"
 
 
 def get_daily_trend(platform: str, identifier: str) -> str:
@@ -54,7 +66,10 @@ def get_daily_trend(platform: str, identifier: str) -> str:
             .reset_index()
             .sort_values("day")
         )
-        header = f"Daily cost trend for Azure subscription {identifier}:\n"
+        header = (
+            f"Daily cost trend for Azure subscription {identifier} (costs in {CURRENCY}; "
+            f"summary tools total the reporting window {reporting_window_label()}):\n"
+        )
         return header + daily.to_string(index=False)
 
     elif platform == "gcp":
@@ -63,7 +78,10 @@ def get_daily_trend(platform: str, identifier: str) -> str:
         if proj.empty:
             return f"No GCP data found for project: {identifier}"
         daily = proj.groupby("day")[["cost"]].sum().reset_index().sort_values("day")
-        header = f"Daily cost trend for GCP project {identifier}:\n"
+        header = (
+            f"Daily cost trend for GCP project {identifier} (costs in {CURRENCY}; "
+            f"summary tools total the reporting window {reporting_window_label()}):\n"
+        )
         return header + daily.to_string(index=False)
 
     else:
@@ -165,7 +183,8 @@ def compare_cross_cloud() -> str:
     """Compares total costs across Azure and GCP side by side.
 
     Returns a summary of total Azure overage cost, total GCP logging
-    cost, and the cost split between the two clouds.  Useful for
+    cost, and the cost split between the two clouds, for the reporting
+    window in data.py (every total is a sum of daily records).  Useful for
     executive-level "what are we spending across both clouds?" questions.
     """
     az_total = AZURE_SUMMARY_DF["estimated_overage_cost_30d"].sum()
@@ -173,7 +192,8 @@ def compare_cross_cloud() -> str:
     grand_total = az_total + gcp_total
 
     lines = [
-        "Cross-Cloud Cost Summary (30 days)",
+        "Cross-Cloud Cost Summary",
+        _summary_scope(),
         "=" * 40,
         f"Azure total overage cost:  ${az_total:,.2f}",
         f"GCP total logging cost:    ${gcp_total:,.2f}",
@@ -272,7 +292,10 @@ TOOL_DEFINITIONS = [
     {
         "name": "get_azure_top_overages",
         "description": "Returns the top N Azure subscriptions "
-        "ranked by estimated overage cost over the last 30 days.",
+        f"ranked by estimated overage cost ({CURRENCY}) over the "
+        f"{REPORTING_WINDOW_DAYS}-day reporting window ending {REPORTING_END}, "
+        "with ingested and overage GB for the same window. Totals are sums "
+        "of the daily records.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -286,7 +309,10 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "get_gcp_top_projects",
-        "description": "Returns the top N GCP projects ranked by total logging cost.",
+        "description": "Returns the top N GCP projects ranked by total logging "
+        f"cost ({CURRENCY}) over the {REPORTING_WINDOW_DAYS}-day reporting window "
+        f"ending {REPORTING_END}. Totals "
+        "are sums of the daily records.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -348,7 +374,8 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "compare_cross_cloud",
-        "description": "Compares total costs across Azure and GCP side by side. "
+        "description": f"Compares total costs ({CURRENCY}) across Azure and GCP side by "
+        f"side for the {REPORTING_WINDOW_DAYS}-day reporting window ending {REPORTING_END}. "
         "Returns total Azure overage cost, total GCP logging cost, "
         "and per-subscription / per-project breakdowns. "
         "Takes no arguments.",

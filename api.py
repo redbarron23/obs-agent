@@ -205,7 +205,7 @@ class AskResponse(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {
-                    "answer": "sub-a1b2c3d4 has the highest overage at $18,411.",
+                    "answer": "sub-a1b2c3d4 has the highest overage at $20,109.04 (USD, 30 days).",
                     "session_id": "demo",
                     "provider": "ollama",
                     "model": "qwen2.5:7b",

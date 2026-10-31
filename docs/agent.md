@@ -42,8 +42,8 @@ Supports both **batch** (full response at once) and **streaming** (token-by-toke
 
 | Tool | Purpose |
 |---|---|
-| `get_azure_top_overages` | Top N Azure subscriptions by estimated 30-day overage cost |
-| `get_gcp_top_projects` | Top N GCP projects by total logging cost |
+| `get_azure_top_overages` | Top N Azure subscriptions by estimated overage cost (USD) in the 30-day reporting window |
+| `get_gcp_top_projects` | Top N GCP projects by total logging cost (USD) in the 30-day reporting window |
 | `get_daily_trend` | Day-by-day cost/ingestion trend for a given subscription or project |
 | `find_spikes` | Detects days where cost jumped >X% vs the previous day. Optional `platform` (`azure`/`gcp`/`all`) and `limit` (default 10); results are ranked by dollar cost and the total count is reported when truncated |
 | `compare_cross_cloud` | Total cost comparison across Azure and GCP with per-sub/project breakdown |
@@ -58,12 +58,13 @@ Two further tools bridge to the tag inference system: `get_label_coverage` and
 A single tool that sums costs across both clouds and provides per-subscription and per-project breakdowns:
 
 ```
-Cross-Cloud Cost Summary (30 days)
+Cross-Cloud Cost Summary
+Reporting window: 2026-05-03 to 2026-06-01 (30 days); amounts in USD; totals are sums of the daily records in that window.
 ========================================
-Azure total overage cost:  $23,059.00
-GCP total logging cost:    $21,705.00
+Azure total overage cost:  $24,070.49
+GCP total logging cost:    $22,407.78
 ────────────────────────────────────────
-Grand total:               $44,764.00
+Grand total:               $46,478.27
 ```
 
 ## The data (`data.py`)
@@ -72,7 +73,8 @@ Generates 60 days of realistic multi-cloud billing data with a fixed random seed
 
 - **5 Azure subscriptions** with varying ingestion/overage levels — one dominant, one near-zero
 - **5 GCP projects** with different cost profiles
-- **Built-in cost spikes**: `sub-a1b2c3d4` spikes to $45 on day 30, `project-bravo` spikes to $28 on day 20
+- **Built-in cost spikes**: `sub-a1b2c3d4` spikes to $2,691 on day 30 (2026-05-03), `project-bravo` spikes to $990 on day 20 (2026-04-23); each is 4.5× that entity's normal daily cost
+- **Summaries derived from the daily rows**: the per-subscription and per-project totals cover an explicit reporting window, the latest 30 days (2026-05-03 to 2026-06-01). Each total is the sum of the daily records in that window, so the summary tools and `get_daily_trend` reconcile. Azure overage cost is overage GB × a flat synthetic $2.30/GB; all amounts are USD. The tools print the window and currency with their results
 - **Deterministic**: every run produces the same IDs, costs, and patterns, so evals always pass
 
 Label inference uses a separate inventory (`inventory.py`, own seed) so it never changes these numbers.
@@ -83,8 +85,8 @@ Key identifiers in the synthetic data:
 
 | Cloud | Subscriptions / Projects | Known spike |
 |---|---|---|
-| Azure | `sub-a1b2c3d4` (dominant, $18,411 overage), `sub-e5f6g7h8`, `sub-i9j0k1l2`, `sub-m3n4o5p6`, `sub-q7r8s9t0` (near-zero) | Day 30: $45 → triggered by `--threshold 50` |
-| GCP | `project-alpha` (highest, $12,672), `project-bravo`, `project-charlie`, `project-delta`, `project-echo` (lowest) | Day 20: $28 |
+| Azure | `sub-a1b2c3d4` (dominant, $20,109.04 overage), `sub-e5f6g7h8`, `sub-i9j0k1l2`, `sub-m3n4o5p6`, `sub-q7r8s9t0` (near-zero, $3.32) | Day 30 (2026-05-03): $2,691 → triggered by `--threshold 50` |
+| GCP | `project-alpha` (highest, $13,069.13), `project-bravo`, `project-charlie`, `project-delta`, `project-echo` (lowest, $14.73) | Day 20 (2026-04-23): $990, before the reporting window |
 
 ## Architecture diagram
 
@@ -202,7 +204,7 @@ The REPL and web UI remember previous turns. Ask follow-up questions naturally:
 
 ```
 You: Which Azure subscription has the highest overage?
-Agent: sub-a1b2c3d4 at $18,411...
+Agent: sub-a1b2c3d4 at $20,109.04...
 
 You: Show me its daily trend
 Agent: (remembers which subscription you meant and fetches the trend)
@@ -279,8 +281,8 @@ Live output (streaming, token by token):
 
 ```
 The Azure subscription with the highest overage cost is **sub-a1b2c3d4**, with an estimated
-overage cost of **$18,411.00** over the last 30 days. It ingested 42.8 GB of log data,
-with 3.7 GB exceeding its allocation.
+overage cost of **$20,109.04** for the reporting window 2026-05-03 to 2026-06-01 (30 days, USD).
+It ingested 9,943.06 GB of log data, with 8,743.06 GB exceeding its allowance.
 ```
 
 ### Verbose mode (see tool calls)
@@ -298,10 +300,10 @@ uv run agent.py -q "Find cost spikes in the last 60 days" --verbose
 Spikes detected (both clouds):
 
 [Azure]
-  • sub-a1b2c3d4 — day 30: $45.00 (+350% vs $10.00 previous day)
+  • sub-a1b2c3d4 — 2026-05-03: $2,691.00 (+331% vs the previous day)
 
 [GCP]
-  • project-bravo — day 20: $28.00 (+180% vs $10.00 previous day)
+  • project-bravo — 2026-04-23: $990.00 (+405% vs the previous day)
 ```
 
 ### Multi-turn conversation (REPL)
@@ -312,28 +314,28 @@ obs-agent — Multi-Cloud Cost Triage Agent
 Provider: anthropic  |  Model: claude-opus-5-5  |  Mode: batch  |  Type 'quit' to exit.
 
 You: Which GCP project costs the most?
-Agent: **project-alpha** is the most expensive at **$12,672.00** over the past 30 days.
+Agent: **project-alpha** is the most expensive at **$13,069.13** (USD) for 2026-05-03 to 2026-06-01.
 
 You: Show me its daily trend
 Agent: (remembers you mean project-alpha, fetches the trend)
 
-Daily cost trend for project-alpha:
-  Day        Cost
-  ─────────────────
-  2026-05-01   $42.00
-  2026-05-02   $38.00
-  ...
-  2026-06-29   $45.00
+Daily cost trend for GCP project project-alpha (costs in USD; summary tools total the reporting window 2026-05-03 to 2026-06-01 (30 days)):
+       day   cost
+2026-04-03 646.84
+2026-04-04 286.23
+...
+2026-06-01 404.79
 
 You: How does that compare to Azure's total?
 Agent: Let me look at both clouds together...
 
-Cross-Cloud Cost Summary (30 days)
+Cross-Cloud Cost Summary
+Reporting window: 2026-05-03 to 2026-06-01 (30 days); amounts in USD; totals are sums of the daily records in that window.
 ========================================
-Azure total overage cost:  $23,059.00
-GCP total logging cost:    $21,705.00
+Azure total overage cost:  $24,070.49
+GCP total logging cost:    $22,407.78
 ────────────────────────────────────────
-Grand total:               $44,764.00
+Grand total:               $46,478.27
 ```
 
 ### DeepSeek as provider
