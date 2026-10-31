@@ -293,7 +293,7 @@ def _cost_stats(env: str) -> dict:
     mean, weekend_mult, noise = ENV_COST_SHAPE[env]
     scale = mean * RNG.lognormal(0, 0.6)
     days = pd.date_range(END_DATE - timedelta(days=N_DAYS - 1), END_DATE, freq="D")
-    weekend = days.dayofweek >= 5
+    weekend = days.day_of_week >= 5
     cost = scale * np.where(weekend, weekend_mult, 1.0)
     cost = (cost * RNG.lognormal(0, noise, size=len(days))).clip(0.01)
     weekday_mean = cost[~weekend].mean()
