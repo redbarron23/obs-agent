@@ -50,7 +50,8 @@ directory must be writable by `appuser`.
 
 ## What is stored
 
-Two tables are created on first use.
+Two tables are created on first use, plus `review_collaboration`
+([below](#assignments-notes-and-questions)).
 
 **`decisions`** holds the current decision for each `(resource_id, label)` pair, which is the
 table's primary key:
@@ -119,6 +120,35 @@ and an optional reason box.
 - The reason is review history only. It is returned by `GET /labels/feedback` and kept in backups,
   but never written to logs or workflow metrics, and the approved change plan omits revocation
   columns. Treat it like reviewer IDs when sharing exports of the feedback history.
+
+## Assignments, notes and questions
+
+`review_collaboration` holds collaboration metadata for a `(resource_id, label)`: who should
+investigate it, short notes, and unresolved questions. It is append-only (triggers refuse `UPDATE`
+and `DELETE`); every row records `reviewer` (self-reported, with the `OBS_AGENT_REVIEWER`
+fallback) and `created_at`. Current state is derived from the history.
+
+| `event` | Meaning | Columns used |
+| --- | --- | --- |
+| `assign` / `unassign` | Assign or reassign / remove the assignment | `assignee` (new, or the one removed) |
+| `note` | Short free-text note (at most 1000 characters) | `text` |
+| `rationale` | Reason given with a decision, e.g. why a suggestion was overridden | `text`, `feedback_id` (the decision's `review_feedback` row, written in the same transaction) |
+| `question` | Opens an unresolved question; its `id` is the question ID | `text` |
+| `answer` / `resolve` | Answers (still unresolved) / resolves a question | `question_id`, `text` (optional for `resolve`) |
+
+A question is *unresolved* while open or answered. Reassigning to the current assignee, or
+unassigning an unassigned label, writes nothing. Invalid input is rejected before anything is
+written.
+
+This is not approval. `resolve()`, exports, the approved change plan and `current_decisions()`
+never read the table, so an assignment, note or resolved question cannot authorize or change an
+exported label, and plans and exports are byte-for-byte the same with or without it. It is also
+not in `review_feedback`, so feedback exports (and the anonymized evaluation fixtures made from
+them) contain no notes. Note, question and rationale text is returned by the collaboration routes
+and kept in backups, but never written to logs, workflow metrics or plans.
+
+Databases from earlier versions gain the empty table (and its triggers) when the store opens; no
+assignment, note or question is invented for past decisions.
 
 ## Legacy JSON files
 

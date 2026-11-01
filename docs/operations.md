@@ -15,7 +15,7 @@ Labels are fixed sets. Nothing from the inventory, reviewer or request becomes a
 
 | Label | Values |
 | --- | --- |
-| `operation` | `import`, `inference`, `decision_write`, `export` |
+| `operation` | `import`, `inference`, `decision_write`, `collaboration_write`, `export` |
 | `surface` | `api` (REST API), `ui` (Streamlit pages), `other` (CLI, agent tool, tests) |
 | `outcome` | `success`, `invalid` (input was rejected: bad CSV or vocabulary, bad decision value, invalid export value), `error` (anything else; investigate) |
 
@@ -24,6 +24,7 @@ Labels are fixed sets. Nothing from the inventory, reviewer or request becomes a
 | `import` | Import page: CSV/vocabulary validation, then saving the review workspace (two operations per saved import) |
 | `inference` | Fitting suggestions for a snapshot (`label_review`), once per snapshot and inference version. Cache hits are not counted. Includes the abstention checks. |
 | `decision_write` | `PUT`/`DELETE …/decision` and the review page's Save and Accept-all buttons, one per decision |
+| `collaboration_write` | Assigning, unassigning, notes and questions (API, review page, CLI). Note and question text is never logged or a label. |
 | `export` | `GET /labels/export` per request. The review page prepares every download on each render, so `ui` export counts are renders, not downloads. |
 
 `obs_agent_workflow_telemetry_errors_total` counts measurements that could not be recorded.
@@ -40,6 +41,8 @@ separately on purpose.
 | `pending_items` | (resource, label) pairs that are `untagged` or `suspect` and have no decision bound to the current snapshot and inference version. Labels withheld for insufficient evidence count, because they still need a reviewer's override. |
 | `pending_resources` | Distinct resources with at least one pending item |
 | `pending_auto_apply_ready` / `pending_insufficient_evidence` | Subsets of `pending_items` by suggested action |
+| `pending_assigned_items` | Subset of `pending_items` assigned to a reviewer. Assignment never makes an item reviewed. |
+| `unresolved_questions` | Questions on any label that are open or answered but not resolved |
 | `reviewed_items` | Decisions bound to the current snapshot and inference version |
 | `stale_decisions` | Decisions made against an earlier snapshot or inference version. They are not exported and must be reviewed again. |
 | `feedback_actions` | All rows in the append-only `review_feedback` history, including superseded and earlier-snapshot actions and `revoke` events. Not backlog. |

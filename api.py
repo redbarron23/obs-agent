@@ -21,6 +21,10 @@ DELETE /resources/{id}/labels/{label}/decision revoke a decision (recorded in fe
 GET  /labels/decisions                         all recorded decisions
 GET  /labels/export?format=csv|sh|tfvars       resolved changes to apply
 GET  /labels/backlog                           pending review work and its age
+GET  /labels/collaboration[/history]           assignments, notes, unresolved questions
+GET  /resources/{id}/labels/{label}/collaboration  one label's collaboration state and history
+PUT / DELETE /resources/{id}/labels/{label}/assignment   assign / unassign a reviewer
+POST /resources/{id}/labels/{label}/notes | /questions | /questions/{qid}/answer | /resolve
 
 Saved private reviews (same functions as the UI's Import / Label review pages;
 disabled when OBS_AGENT_DEMO=1; an unknown review ID is a 404, never synthetic data):
@@ -31,6 +35,7 @@ GET  /reviews/{review_id}/coverage | /resources | /resources/{id}/labels
 PUT / DELETE /reviews/{review_id}/resources/{id}/labels/{label}/decision
 GET  /reviews/{review_id}/decisions | /feedback | /feedback/metrics | /backlog
 GET  /reviews/{review_id}/export?format=csv|sh|tfvars|plan
+GET  /reviews/{review_id}/collaboration[/history] and the same per-label collaboration routes
 
 Operations (see docs/operations.md):
 GET  /ops/metrics[?format=prometheus][&review_id=ID]  workflow counters, durations, backlog
@@ -592,11 +597,6 @@ class ResourceLabels(BaseModel):
     needs_attention: bool
 
 
-class ResourcePage(BaseModel):
-    total: int
-    items: list[ResourceLabels]
-
-
 class LabelCounts(BaseModel):
     untagged: int
     suspect: int
@@ -631,6 +631,12 @@ class DecisionRequest(BaseModel):
         min_length=1,
         max_length=128,
         description="Reviewer name or ID. Required unless OBS_AGENT_REVIEWER is configured.",
+    )
+    rationale: str | None = Field(
+        default=None,
+        max_length=label_review.MAX_NOTE,
+        description="Optional reason for the decision (e.g. why the suggestion was overridden). "
+        "Kept in the collaboration history only; never in plans, exports, logs or metrics.",
     )
 
 
@@ -686,7 +692,128 @@ class Revocation(BaseModel):
     revocation: ReviewFeedback
 
 
+class CollaborationSummary(BaseModel):
+    assignee: str | None
+    notes: int
+    unresolved_questions: int
+
+
+class QueueItem(ResourceLabels):
+    collaboration: dict[str, CollaborationSummary] = Field(
+        default_factory=dict,
+        description="Per label: assignee and counts of notes and unresolved questions. "
+        "Collaboration metadata never changes suggestions or approvals.",
+    )
+
+
+class QueuePage(BaseModel):
+    total: int
+    items: list[QueueItem]
+
+
+ReviewerId = Field(
+    default=None,
+    min_length=1,
+    max_length=128,
+    description="Your reviewer name or ID. Required unless OBS_AGENT_REVIEWER is configured. "
+    "Self-reported, like the reviewer on a decision.",
+)
+
+
+class ReviewerRequest(BaseModel):
+    reviewer: str | None = ReviewerId
+
+
+class AssignmentRequest(ReviewerRequest):
+    model_config = {"json_schema_extra": {"examples": [{"assignee": "bob", "reviewer": "alice"}]}}
+
+    assignee: str = Field(min_length=1, max_length=128, description="Reviewer ID to assign.")
+
+
+class NoteRequest(ReviewerRequest):
+    model_config = {
+        "json_schema_extra": {"examples": [{"text": "Ask the data team", "reviewer": "alice"}]}
+    }
+
+    text: str = Field(min_length=1, max_length=label_review.MAX_NOTE)
+
+
+class ResolveRequest(ReviewerRequest):
+    text: str | None = Field(
+        default=None, max_length=label_review.MAX_NOTE, description="Optional resolution note."
+    )
+
+
+class CollaborationEvent(BaseModel):
+    id: int
+    resource_id: str
+    label: str
+    event: Literal["assign", "unassign", "note", "rationale", "question", "answer", "resolve"]
+    reviewer: str = Field(description="Who recorded the event (self-reported).")
+    created_at: str
+    assignee: str | None = Field(
+        default=None, description="assign: the new assignee; unassign: the one removed."
+    )
+    question_id: int | None = Field(default=None, description="answer / resolve: the question.")
+    feedback_id: int | None = Field(
+        default=None, description="rationale: the review_feedback row of the decision explained."
+    )
+    text: str | None = None
+
+
+class Note(BaseModel):
+    id: int
+    kind: Literal["note", "rationale"]
+    text: str
+    feedback_id: int | None
+    reviewer: str
+    created_at: str
+
+
+class Answer(BaseModel):
+    text: str
+    reviewer: str
+    created_at: str
+
+
+class Question(BaseModel):
+    id: int
+    text: str
+    status: Literal["open", "answered", "resolved"]
+    asked_by: str
+    asked_at: str
+    answers: list[Answer]
+    resolved_by: str | None
+    resolved_at: str | None
+    resolution: str | None
+
+
+class CollaborationItem(BaseModel):
+    resource_id: str
+    label: str
+    assignee: str | None
+    assigned_by: str | None
+    assigned_at: str | None
+    notes: list[Note]
+    questions: list[Question]
+    unresolved_questions: int = Field(description="Questions that are open or answered.")
+
+
+class CollaborationDetail(CollaborationItem):
+    history: list[CollaborationEvent]
+
+
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Unknown resource."}}
+COLLABORATION_DESCRIPTION = (
+    "Collaboration metadata (assignment, notes, unresolved questions) is history for reviewers. "
+    "It is never an approval: it does not change suggestions, decisions, the backlog's reviewed "
+    "items, reviewed change plans or exports. Text is never written to logs or metrics."
+)
+COLLABORATION_ERRORS = {
+    401: ERROR_RESPONSES[401],
+    404: {"model": ErrorResponse, "description": "Unknown resource, question or assignment."},
+    422: {"model": ErrorResponse, "description": "Missing reviewer, invalid text or state."},
+}
 
 
 def _report_or_404(resource_id: str) -> dict:
@@ -710,7 +837,7 @@ def labels_coverage() -> dict:
 
 @app.get(
     "/resources",
-    response_model=ResourcePage,
+    response_model=QueuePage,
     dependencies=[Depends(require_api_key)],
     summary="Review queue",
     description="Resources with an untagged or suspected-wrong label, highest model score "
@@ -721,6 +848,12 @@ def labels_coverage() -> dict:
 )
 def list_resources(
     label: LabelName | None = Query(default=None, description="Only check this label."),
+    assignee: str | None = Query(
+        default=None, max_length=128, description="Only labels assigned to this reviewer ID."
+    ),
+    unresolved: bool | None = Query(
+        default=None, description="true: only labels with an unresolved question; false: none."
+    ),
     status: Literal["untagged", "suspect"] | None = Query(default=None),
     cloud: Literal["azure", "gcp"] | None = Query(default=None),
     min_confidence: float = Query(default=0.0, ge=0, le=1),
@@ -744,8 +877,12 @@ def list_resources(
         max_confidence=max_confidence,
         search=search,
         evidence=evidence,
+        store=decisions,
+        assignee=assignee,
+        unresolved=unresolved,
     )
-    return {"total": len(items), "items": items[offset : offset + limit]}
+    page = label_review.with_collaboration(items[offset : offset + limit], decisions)
+    return {"total": len(items), "items": page}
 
 
 @app.get(
@@ -778,7 +915,14 @@ def put_decision(resource_id: str, label: LabelName, req: DecisionRequest) -> di
     _report_or_404(resource_id)
     try:
         with workflow_metrics.operation("decision_write", invalid=(DecisionError,)):
-            return decisions.set(resource_id, label, req.decision, req.value, reviewer=req.reviewer)
+            return decisions.set(
+                resource_id,
+                label,
+                req.decision,
+                req.value,
+                reviewer=req.reviewer,
+                rationale=req.rationale,
+            )
     except DecisionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1097,7 +1241,7 @@ def saved_review_coverage(review=Depends(saved_review)) -> dict:
 
 @app.get(
     "/reviews/{review_id}/resources",
-    response_model=ResourcePage,
+    response_model=QueuePage,
     dependencies=REVIEW_DEPENDENCIES,
     summary="Review queue of a saved review",
     description="Same filters and order as `GET /resources`, on the saved snapshot.",
@@ -1107,6 +1251,8 @@ def saved_review_coverage(review=Depends(saved_review)) -> dict:
 def saved_review_queue(
     review=Depends(saved_review),
     label: LabelName | None = Query(default=None),
+    assignee: str | None = Query(default=None, max_length=128),
+    unresolved: bool | None = Query(default=None),
     status: Literal["untagged", "suspect"] | None = Query(default=None),
     cloud: Literal["azure", "gcp"] | None = Query(default=None),
     min_confidence: float = Query(default=0.0, ge=0, le=1),
@@ -1128,8 +1274,12 @@ def saved_review_queue(
         search=search,
         inventory=review[0],
         evidence=evidence,
+        store=review[1],
+        assignee=assignee,
+        unresolved=unresolved,
     )
-    return {"total": len(items), "items": items[offset : offset + limit]}
+    page = label_review.with_collaboration(items[offset : offset + limit], review[1])
+    return {"total": len(items), "items": page}
 
 
 @app.get(
@@ -1162,7 +1312,13 @@ def put_saved_decision(
     try:
         with workflow_metrics.operation("decision_write", invalid=(DecisionError,)):
             return store.set(
-                resource_id, label, req.decision, req.value, inventory, reviewer=req.reviewer
+                resource_id,
+                label,
+                req.decision,
+                req.value,
+                inventory,
+                reviewer=req.reviewer,
+                rationale=req.rationale,
             )
     except DecisionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1261,3 +1417,209 @@ def export_saved_review(
 def saved_review_backlog(review=Depends(saved_review)) -> dict:
     inventory, store = review
     return workflow_metrics.backlog(store, inventory)
+
+
+# ── Collaboration: assignments, notes, unresolved questions (#46) ──────
+#
+# Registered once for the synthetic store and once per saved review, so both call the same
+# DecisionStore methods as the review page and the CLI. Nothing here is an approval.
+
+
+def synthetic_review():
+    """(inventory, store) of the synthetic demo, looked up per request."""
+    return None, decisions
+
+
+def _collaboration_write(store: DecisionStore, write) -> object:
+    try:
+        with workflow_metrics.operation("collaboration_write", invalid=(DecisionError, KeyError)):
+            return write()
+    except DecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown resource or question") from exc
+
+
+def _register_collaboration(prefix: str, list_path: str, source, dependencies, tag: str) -> None:
+    item = prefix + "/resources/{resource_id}/labels/{label}"
+    common = {"dependencies": dependencies, "tags": [tag], "responses": COLLABORATION_ERRORS}
+
+    def detail(review, resource_id: str, label: str) -> dict:
+        return review[1].collaboration_item(resource_id, label)
+
+    @app.get(
+        list_path,
+        response_model=list[CollaborationItem],
+        summary="Assignments, notes and questions",
+        description="Current collaboration state per resource label, filterable by assignee and "
+        "unresolved questions. " + COLLABORATION_DESCRIPTION,
+        **common,
+    )
+    def list_collaboration(
+        review=Depends(source),
+        assignee: str | None = Query(default=None, max_length=128),
+        unresolved: bool | None = Query(default=None),
+    ) -> list[dict]:
+        return review[1].collaboration(assignee=assignee, unresolved=unresolved)
+
+    @app.get(
+        list_path + "/history",
+        response_model=list[CollaborationEvent],
+        summary="Collaboration history",
+        description="Append-only, attributable assignment, note, rationale and question events, "
+        "oldest first. Separate from `/feedback`, which holds decisions only.",
+        **common,
+    )
+    def collaboration_history(review=Depends(source)) -> list[dict]:
+        return review[1].collaboration_history()
+
+    @app.get(
+        item + "/collaboration",
+        response_model=CollaborationDetail,
+        summary="Collaboration state and history of one label",
+        description=COLLABORATION_DESCRIPTION,
+        **common,
+    )
+    def label_collaboration(resource_id: str, label: LabelName, review=Depends(source)) -> dict:
+        if label_review.resource_report(resource_id, review[0]) is None:
+            raise HTTPException(status_code=404, detail="Unknown resource")
+        return detail(review, resource_id, label)
+
+    @app.put(
+        item + "/assignment",
+        response_model=CollaborationDetail,
+        summary="Assign or reassign a label",
+        description="Assigns the label to `assignee`; reassigning to the current assignee "
+        "records nothing. " + COLLABORATION_DESCRIPTION,
+        **common,
+    )
+    def put_assignment(
+        resource_id: str, label: LabelName, req: AssignmentRequest, review=Depends(source)
+    ) -> dict:
+        inventory, store = review
+        _collaboration_write(
+            store,
+            lambda: store.assign(
+                resource_id, label, req.assignee, inventory, reviewer=req.reviewer
+            ),
+        )
+        return detail(review, resource_id, label)
+
+    @app.delete(
+        item + "/assignment",
+        response_model=CollaborationDetail,
+        summary="Unassign a label",
+        description="Records an `unassign` event. 404, recording nothing, when unassigned. "
+        "The optional JSON body supplies `reviewer`.",
+        **common,
+    )
+    def delete_assignment(
+        resource_id: str,
+        label: LabelName,
+        req: ReviewerRequest | None = None,
+        review=Depends(source),
+    ) -> dict:
+        store = review[1]
+        reviewer = (req or ReviewerRequest()).reviewer
+        event = _collaboration_write(
+            store, lambda: store.unassign(resource_id, label, reviewer=reviewer)
+        )
+        if event is None:
+            raise HTTPException(status_code=404, detail="Not assigned")
+        return detail(review, resource_id, label)
+
+    @app.post(
+        item + "/notes",
+        response_model=CollaborationDetail,
+        summary="Add a review note",
+        description="Appends a short free-text note. " + COLLABORATION_DESCRIPTION,
+        **common,
+    )
+    def post_note(
+        resource_id: str, label: LabelName, req: NoteRequest, review=Depends(source)
+    ) -> dict:
+        inventory, store = review
+        _collaboration_write(
+            store,
+            lambda: store.add_note(resource_id, label, req.text, inventory, reviewer=req.reviewer),
+        )
+        return detail(review, resource_id, label)
+
+    @app.post(
+        item + "/questions",
+        response_model=CollaborationDetail,
+        summary="Open an unresolved question",
+        description="The new question's `id` is in `questions`. It stays unresolved (open, then "
+        "answered) until resolved. " + COLLABORATION_DESCRIPTION,
+        **common,
+    )
+    def post_question(
+        resource_id: str, label: LabelName, req: NoteRequest, review=Depends(source)
+    ) -> dict:
+        inventory, store = review
+        _collaboration_write(
+            store,
+            lambda: store.ask_question(
+                resource_id, label, req.text, inventory, reviewer=req.reviewer
+            ),
+        )
+        return detail(review, resource_id, label)
+
+    @app.post(
+        item + "/questions/{question_id}/answer",
+        response_model=CollaborationDetail,
+        summary="Answer a question",
+        description="404 for a question on another label; 422 once resolved.",
+        **common,
+    )
+    def post_answer(
+        resource_id: str,
+        label: LabelName,
+        question_id: int,
+        req: NoteRequest,
+        review=Depends(source),
+    ) -> dict:
+        store = review[1]
+        _collaboration_write(
+            store,
+            lambda: store.answer_question(
+                question_id, req.text, reviewer=req.reviewer, resource_id=resource_id, label=label
+            ),
+        )
+        return detail(review, resource_id, label)
+
+    @app.post(
+        item + "/questions/{question_id}/resolve",
+        response_model=CollaborationDetail,
+        summary="Resolve a question",
+        description="Resolving is not an approval; the label still needs a decision.",
+        **common,
+    )
+    def post_resolve(
+        resource_id: str,
+        label: LabelName,
+        question_id: int,
+        req: ResolveRequest | None = None,
+        review=Depends(source),
+    ) -> dict:
+        store = review[1]
+        req = req or ResolveRequest()
+        _collaboration_write(
+            store,
+            lambda: store.resolve_question(
+                question_id, req.text, reviewer=req.reviewer, resource_id=resource_id, label=label
+            ),
+        )
+        return detail(review, resource_id, label)
+
+
+_register_collaboration(
+    "", "/labels/collaboration", synthetic_review, [Depends(require_api_key)], "labels"
+)
+_register_collaboration(
+    "/reviews/{review_id}",
+    "/reviews/{review_id}/collaboration",
+    saved_review,
+    REVIEW_DEPENDENCIES,
+    "reviews",
+)
