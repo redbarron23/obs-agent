@@ -1,0 +1,70 @@
+{
+  "query": {
+    "question": "What does our runbook say to investigate for a GCP logging cost spike?",
+    "k": 4,
+    "max_distance": 0.6,
+    "retrieval": "vector"
+  },
+  "hits": [
+    {
+      "rank": 1,
+      "chunk_id": "runbooks/logging-cost-spike.md#5",
+      "text": "Logging Cost Spike Runbook > Investigation: GCP Cloud Logging\n\nIn Metrics Explorer, chart `logging.googleapis.com/billing/bytes_ingested` for the affected project, grouped by `resource_type` and `log`, to find which logs grew. The Logs Storage page shows the volume per log bucket.",
+      "source": "runbooks/logging-cost-spike.md",
+      "file": "logging-cost-spike.md",
+      "section": "Investigation: GCP Cloud Logging",
+      "distance": 0.1915,
+      "exact_term_match": false
+    },
+    {
+      "rank": 2,
+      "chunk_id": "runbooks/logging-cost-spike.md#6",
+      "text": "Logging Cost Spike Runbook > Investigation: GCP Cloud Logging\n\nIn the billing export in BigQuery, filter `service.description = \"Cloud Logging\"` and group cost by `project.id`, `sku.description` and day. Check the admin activity audit log for recent changes to sinks and exclusions (`UpdateSink`, `UpdateExclusion`, `DeleteExclusion`) and to Data Access audit log settings.",
+      "source": "runbooks/logging-cost-spike.md",
+      "file": "logging-cost-spike.md",
+      "section": "Investigation: GCP Cloud Logging",
+      "distance": 0.227,
+      "exact_term_match": false
+    },
+    {
+      "rank": 3,
+      "chunk_id": "runbooks/logging-cost-spike.md#0",
+      "text": "Logging Cost Spike Runbook\n\nFictional sample document for the Contoso Cloud observability programme. Contoso Cloud, its teams, workspaces and projects are invented, and no customer data is used.\n\nThis runbook guides the investigation of a sudden rise in Azure Log Analytics or GCP Cloud Logging cost. Take amounts, rankings and dates from the billing data, never from this document. The steps below are recommendations: they do not establish a root cause, and no remediation is guaranteed to save money.",
+      "source": "runbooks/logging-cost-spike.md",
+      "file": "logging-cost-spike.md",
+      "section": "Logging Cost Spike Runbook",
+      "distance": 0.2622,
+      "exact_term_match": false
+    },
+    {
+      "rank": 4,
+      "chunk_id": "runbooks/logging-cost-spike.md#1",
+      "text": "Logging Cost Spike Runbook > Detection and triage\n\nConfirm the spike in the billing data first: the cloud, the Azure subscription or GCP project, the day or days affected, and the amount, together with the billing period and currency the data covers. Note whether it is a one-day spike or a step change that persists.",
+      "source": "runbooks/logging-cost-spike.md",
+      "file": "logging-cost-spike.md",
+      "section": "Detection and triage",
+      "distance": 0.3113,
+      "exact_term_match": false
+    }
+  ],
+  "corpus": {
+    "provenance": "available",
+    "corpus_sha256": "931f94bb9cb2da87f7079fa5b636d4778861d4058e550701632f6d421e6b51a0",
+    "ingested_at": "2026-11-01T13:33:59.440332+00:00",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "embedding_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "chunk_size": 500,
+    "document_count": 9,
+    "collection": "observability-docs-9ae355a09d4045c491e028693abd5146",
+    "chunk_count": 66
+  },
+  "freshness": {
+    "status": "current",
+    "checked_at": "2026-11-01T13:37:32.825229+00:00",
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "content_trust": "untrusted",
+  "generated": false
+}

@@ -1,0 +1,70 @@
+{
+  "query": {
+    "question": "When should we buy a commitment tier after a logging cost spike?",
+    "k": 4,
+    "max_distance": 0.6,
+    "retrieval": "vector"
+  },
+  "hits": [
+    {
+      "rank": 1,
+      "chunk_id": "runbooks/logging-cost-spike.md#13",
+      "text": "Logging Cost Spike Runbook > Commitment tiers\n\nConflicting guidance: this section deliberately disagrees with the Commitment tiers section of programme/COST_SMOOTHING.md. That plan buys a 100 GB per day commitment tier once ingestion is stable for two consecutive months. This runbook requires three consecutive stable months after the last spike, and sizes the tier from the median daily ingestion of those months rather than a fixed 100 GB per day.",
+      "source": "runbooks/logging-cost-spike.md",
+      "file": "logging-cost-spike.md",
+      "section": "Commitment tiers",
+      "distance": 0.283,
+      "exact_term_match": false
+    },
+    {
+      "rank": 2,
+      "chunk_id": "runbooks/logging-cost-spike.md#14",
+      "text": "Logging Cost Spike Runbook > Commitment tiers\n\nDo not buy or resize a commitment tier while a spike is under investigation. Until the programme reconciles the two documents, do not choose between them: escalate the commitment decision to FinOps.",
+      "source": "runbooks/logging-cost-spike.md",
+      "file": "logging-cost-spike.md",
+      "section": "Commitment tiers",
+      "distance": 0.3025,
+      "exact_term_match": false
+    },
+    {
+      "rank": 3,
+      "chunk_id": "programme/COST_SMOOTHING.md#3",
+      "text": "Log Analytics Cost Smoothing Plan > Commitment tiers\n\nOnce ingestion is stable for two consecutive months, the programme purchases a 100 GB per day commitment tier to lower the per-GB price.",
+      "source": "programme/COST_SMOOTHING.md",
+      "file": "COST_SMOOTHING.md",
+      "section": "Commitment tiers",
+      "distance": 0.3118,
+      "exact_term_match": false
+    },
+    {
+      "rank": 4,
+      "chunk_id": "runbooks/logging-cost-spike.md#10",
+      "text": "Logging Cost Spike Runbook > Remediation options\n\n- Retention: move high-volume Azure tables to the Basic Logs tier and shorten interactive retention; on GCP, shorten log bucket retention beyond the included 30 days. Retention mainly reduces storage cost, not ingestion cost.\n- Sampling: sample debug and trace-level logs at the source or in the collector before ingestion.\n- Exclusion filters: on GCP, add exclusion filters to the `_Default` sink for noisy logs; on Azure, drop rows or columns with a DCR transformation.\n- Commitment tiers: see Commitment tiers below. A tier lowers the per-GB price; it does not reduce volume.",
+      "source": "runbooks/logging-cost-spike.md",
+      "file": "logging-cost-spike.md",
+      "section": "Remediation options",
+      "distance": 0.3772,
+      "exact_term_match": false
+    }
+  ],
+  "corpus": {
+    "provenance": "available",
+    "corpus_sha256": "931f94bb9cb2da87f7079fa5b636d4778861d4058e550701632f6d421e6b51a0",
+    "ingested_at": "2026-11-01T13:33:59.440332+00:00",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "embedding_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "chunk_size": 500,
+    "document_count": 9,
+    "collection": "observability-docs-9ae355a09d4045c491e028693abd5146",
+    "chunk_count": 66
+  },
+  "freshness": {
+    "status": "current",
+    "checked_at": "2026-11-01T13:37:32.825229+00:00",
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "content_trust": "untrusted",
+  "generated": false
+}

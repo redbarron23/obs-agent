@@ -91,8 +91,8 @@ The tool result is framed for the model as follows:
   `>` and `&` escaped so a document cannot close or forge the delimiters. A document saying
   "ignore previous instructions" is quoted there, not obeyed.
 
-On a failure the result says that policy guidance is unavailable and tells the model to answer from
-the other tools' facts. The answer comes from the existing provider loop, so a combined answer such
+On a failure or no match the result says that documentation guidance is unavailable and tells the
+model to answer from the other tools' facts. The answer comes from the existing provider loop, so a combined answer such
 as "why is this env label suspect, and what does our standard require?" uses `suggest_labels` for
 the facts and `search_observability_docs` for the cited policy.
 
@@ -112,10 +112,12 @@ read.
 
 ## Reuse
 
-`policy_docs.retrieve()` and `policy_docs.format_for_llm()` are generic. Later integrations
-(cost runbooks in [#91](https://github.com/redbarron23/obs-agent/issues/91), review-history
-summaries in [#92](https://github.com/redbarron23/obs-agent/issues/92)) reuse the same tool and
-client with their own questions instead of a second retrieval stack.
+`policy_docs.retrieve()` and `policy_docs.format_for_llm()` are generic. Cost runbooks
+([#91](https://github.com/redbarron23/obs-agent/issues/91)) reuse the same tool and client: the
+chat combines `find_spikes` and trend facts with cited runbook steps, kept apart as billing facts
+and suggested next steps. See the [cost runbook walkthrough](cost-runbook-walkthrough.md).
+Review-history summaries ([#92](https://github.com/redbarron23/obs-agent/issues/92)) will do the
+same with their own questions instead of a second retrieval stack.
 
 ## Tests
 
@@ -125,4 +127,5 @@ unsupported questions, source attribution, every failure status, timeouts, redir
 unavailable freshness, untrusted-content framing (an injected instruction stays quoted and escaped),
 conflict disclosure, that policy text never changes suggestions or model scores, tool registration
 on and off, the agent loop with the tool, and the review page in each state, including that context
-is not reused for another label. `uv run evals.py --dry-run` adds two stub-retrieval cases.
+is not reused for another label. `uv run evals.py --dry-run` adds five stub-retrieval cases (two policy, three cost runbook), and
+`tests/test_cost_runbooks.py` covers the cost-runbook rules.

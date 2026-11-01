@@ -1,0 +1,29 @@
+{
+  "query": {
+    "question": "How much did project-bravo spend on logging on 23 April?",
+    "k": 4,
+    "max_distance": 0.6,
+    "retrieval": "vector"
+  },
+  "hits": [],
+  "corpus": {
+    "provenance": "available",
+    "corpus_sha256": "931f94bb9cb2da87f7079fa5b636d4778861d4058e550701632f6d421e6b51a0",
+    "ingested_at": "2026-11-01T13:33:59.440332+00:00",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "embedding_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "chunk_size": 500,
+    "document_count": 9,
+    "collection": "observability-docs-9ae355a09d4045c491e028693abd5146",
+    "chunk_count": 66
+  },
+  "freshness": {
+    "status": "current",
+    "checked_at": "2026-11-01T13:37:32.825229+00:00",
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "content_trust": "untrusted",
+  "generated": false
+}

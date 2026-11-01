@@ -10,7 +10,7 @@ import os
 import sys
 from collections.abc import Callable
 
-from tools import TOOL_DEFINITIONS, optional_tool_definitions
+from tools import TOOL_DEFINITIONS, billing_scope, optional_tool_definitions
 
 # ── System prompt ──────────────────────────────────────────────────────
 
@@ -38,10 +38,34 @@ separate from policy evidence: a policy's allowed values never establish which
 team owns a resource and never change a model score. Disclose policy conflicts
 instead of resolving them."""
 
+# Also appended only when search_observability_docs is enabled: billing facts plus cited
+# runbook steps (issue #91). With the tool off the prompt is SYSTEM alone.
+COST_RUNBOOK_PROMPT = f"""
+For a cost question that also asks what to investigate or do (for example the
+largest logging spike and what the runbook says), get the billing facts from the
+cost tools first, then call search_observability_docs with a documentation question
+that names no resource. Answer in two labelled parts:
+- Billing facts: amounts, rankings, spike days and trends exactly as the cost tools
+  report them. Say they come from the synthetic demo billing data and name the
+  period. {billing_scope()} Give the date of each spike you mention; find_spikes
+  ranks spikes by that day's cost, not by percentage, so say which one "largest" means.
+- Suggested next steps: investigation and remediation steps from the runbook, each
+  cited as `source § section`. These are recommendations, not findings: present
+  listed causes as hypotheses to check, never say that a spike proves a cause or
+  that a change guarantees savings, and say that any saving must be verified in the
+  billing data.
+Never take an amount, ranking, date or trend from a document. If the documentation
+is unavailable or has no matching section, still give the billing facts and say that
+documentation guidance is unavailable. Inventory cost-shape fields (avg_daily_cost,
+weekend_ratio, cost_cv) are label-inference features, not billing history: never
+present them as spend. Disclose runbook conflicts instead of resolving them."""
+
 
 def system_prompt() -> str:
     """The system prompt, plus documentation-search rules when that tool is enabled."""
-    return SYSTEM + (POLICY_DOCS_PROMPT if optional_tool_definitions() else "")
+    if not optional_tool_definitions():
+        return SYSTEM
+    return SYSTEM + POLICY_DOCS_PROMPT + COST_RUNBOOK_PROMPT
 
 
 def tool_definitions() -> list[dict]:

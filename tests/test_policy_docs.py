@@ -350,7 +350,7 @@ class TestToolResult:
 
         out = search_observability_docs("q")
         assert "status: index_unavailable" in out
-        assert "policy guidance is unavailable" in out
+        assert "documentation guidance is unavailable" in out
 
     def test_names_what_obs_agent_does_not_evaluate(self, rag):
         assert policy_docs.NOT_EVALUATED_SECTION in _framed(rag)
