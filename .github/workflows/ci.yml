@@ -95,6 +95,17 @@ jobs:
         if: always()
         run: docker compose -f compose.rag.yml down -v
 
+  review-persistence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify review decisions survive container recreation
+        run: python3 scripts/review_persistence_check.py
+
   docker:
     runs-on: ubuntu-latest
     steps:

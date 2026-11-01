@@ -70,6 +70,28 @@ The `local-rag` CI job builds this same stack, runs the normal check, stops RAG 
 check, then removes the disposable containers/volumes. It records the obs-agent revision and pinned
 RAG source. Normal unit tests remain independent of Docker and the second repository.
 
+## Check review persistence automatically
+
+From the checkout, run:
+
+```bash
+python3 scripts/review_persistence_check.py
+```
+
+This needs Docker Compose 2.24.4 or newer and Python 3.11+. It builds only the API service
+from this checkout, imports the bundled synthetic CSV through the production CLI, and saves
+accept, reject and override decisions with a test reviewer. It captures their snapshot/model
+context and reviewed change plan, runs Compose `down`/`up` without deleting volumes, and verifies
+that a new API container reads exactly the same decisions and approval evidence. Missing or
+altered decisions fail the check; the rejected resource must not appear as an exported change.
+
+The check uses a generated project/image name, no published ports and its own review volume.
+It does not stop or change your running simulation. No RAG download, cloud credentials or LLM
+are needed. On success or failure it prints service diagnostics and removes its disposable
+containers, volumes and image. Command/startup waits are bounded. The `review-persistence` CI job
+runs the same command; this checks storage across container recreation, while browser editing
+is tracked separately in [#107](https://github.com/redbarron23/obs-agent/issues/107).
+
 ## Simulate a RAG outage
 
 ```bash
