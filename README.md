@@ -126,6 +126,7 @@ thresholds. See [Evaluation](docs/evaluation.md).
 | Inference, review, and drift | [Label inference](docs/label-inference.md) |
 | Optional cost Q&A | [Agent guide](docs/agent.md) |
 | Optional cited tagging-policy context (RAG) | [Policy context](docs/policy-context.md) |
+| Run obs-agent and RAG together locally | [Compose simulation](docs/local-rag-stack.md) |
 | REST API, Docker, hosted demo | [Interfaces](docs/api.md) |
 | Quality and calibration | [Evaluation](docs/evaluation.md) |
 | Agent tracing and evaluation walkthrough | [MLflow guide](docs/mlflow.md) |
