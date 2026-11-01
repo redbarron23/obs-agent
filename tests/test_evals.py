@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from evals import EVALS, _check_eval, run_evals
+from evals import EVALS, RAG_DRY_RUN_EVALS, _check_eval, run_evals
 
 
 class TestEvalDryRun:
@@ -13,7 +13,19 @@ class TestEvalDryRun:
     def test_all_dry_run_pass(self):
         passed, failed = run_evals(dry_run=True)
         assert failed == 0
-        assert passed == len(EVALS)
+        assert passed == len(EVALS) + len(RAG_DRY_RUN_EVALS)
+
+    def test_existing_cases_unchanged_by_rag(self):
+        """The 12 tool-fact cases run without the retrieval tool; stub cases are separate."""
+        assert len(EVALS) == 12
+        assert not any("search_observability_docs" in str(c["dry_run_tool"]) for c in EVALS)
+
+    @pytest.mark.parametrize("eval_case", RAG_DRY_RUN_EVALS, ids=lambda e: e["id"])
+    def test_stub_retrieval_cases(self, eval_case):
+        from evals import _rag_dry_run_case
+
+        ok, missing = _check_eval(_rag_dry_run_case(eval_case), eval_case["must_contain"])
+        assert ok, missing
 
     @pytest.mark.parametrize("eval_case", EVALS, ids=[e["id"] for e in EVALS])
     def test_each_dry_run_case(self, eval_case):

@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+import policy_docs
 import workflow_metrics
 from label_config import inventory_config
 from label_review import (
@@ -474,6 +475,113 @@ if not df.empty:
                 ],
                 hide_index=True,
                 width="stretch",
+            )
+
+# ── Policy context (optional) ──────────────────────────────────────────
+
+
+def _plain(value: str) -> str:
+    """Service-supplied text for a Markdown code span: no backticks or line breaks."""
+    return " ".join(str(value).replace("`", "'").split()) or "-"
+
+
+def _show_excerpts(hits: list[dict]) -> None:
+    for h in hits:
+        distance = "unknown" if h["distance"] is None else f"{h['distance']:.3f}"
+        st.markdown(
+            f"**{h['rank']}.** `{_plain(h['source'])}` § `{_plain(h['section'] or '(no heading)')}`"
+            f" · distance {distance}"
+        )
+        # Plain text, never Markdown or HTML: retrieved documents are untrusted.
+        st.text(h["text"])
+
+
+def _show_policy_context(shown: dict, facts: dict) -> None:
+    result = shown["result"]
+    st.markdown("**Resource facts and model score** (this snapshot's inference)")
+    st.caption("Policy excerpts below never change these values or establish an owner.")
+    st.dataframe(pd.DataFrame([facts]), hide_index=True, width="stretch")
+    st.markdown("**Policy evidence** (retrieved documentation, untrusted)")
+    st.caption(f"Query sent: {shown['question']}")
+    status = result["status"]
+    if status not in policy_docs.ANSWERED:
+        show = st.error if status == "misconfigured" else st.warning
+        show(
+            f"Policy context unavailable ({status.replace('_', ' ')}): {result['message']} "
+            "Review, decisions and exports are unaffected.",
+            icon=":material/cloud_off:",
+        )
+        return
+    st.caption(policy_docs.corpus_line(result))
+    if warning := policy_docs.freshness_warning(result):
+        st.warning(warning, icon=":material/history:")
+    if status == "no_match":
+        st.info("No documentation section matched this label. The corpus has no supporting text.")
+    else:
+        if conflicts := policy_docs.possible_conflicts(result["hits"]):
+            st.warning(
+                "Unresolved: these sections came from more than one document and may conflict: "
+                + ", ".join(conflicts)
+                + ". obs-agent does not decide between them."
+            )
+        _show_excerpts(result["hits"])
+    st.markdown("**Not evaluated by obs-agent**")
+    st.caption(policy_docs.EVALUATED_FIELDS)
+    if shown["not_evaluated"]:
+        _show_excerpts(shown["not_evaluated"])
+    else:
+        st.info(
+            f"The corpus returned no '{policy_docs.NOT_EVALUATED_SECTION}' section, so the "
+            "out-of-scope requirements cannot be cited here."
+        )
+
+
+if not df.empty:
+    st.subheader("Policy context")
+    rag = policy_docs.load_config()
+    if not rag.enabled:
+        st.caption(
+            "Optional: set `OBS_AGENT_RAG_URL` to a local rag-observability retrieval API to show "
+            "cited tagging-policy excerpts beside a label. Review works the same without it."
+        )
+    else:
+        snapshot = (
+            f"imported review {st.session_state['review_id']}"
+            if imported_inventory is not None
+            else "synthetic demo inventory"
+        )
+        st.caption(
+            f"Snapshot: {snapshot} (inventory sha256:{context['inventory_id'][:12]}…) · "
+            f"Documentation service: {policy_docs.describe(rag)}. Only a fixed question about "
+            f"the `{label}` tag is sent; no resource name, owner, parent or tag value."
+        )
+        policy_target = st.selectbox("Resource", list(df["resource_id"]), key="policy_resource")
+        row = df[df["resource_id"] == policy_target].iloc[0]
+        policy_key = [
+            context["inventory_id"],
+            st.session_state.get("review_id"),
+            policy_target,
+            label,
+        ]
+        if st.button("Show policy context", icon=":material/menu_book:", key="policy_show"):
+            st.session_state["policy_context"] = {
+                "key": policy_key,
+                **policy_docs.review_policy_context(label, row["status"]),
+            }
+        shown = st.session_state.get("policy_context")
+        # Never show context fetched for another resource, label or snapshot.
+        if shown and shown["key"] == policy_key:
+            _show_policy_context(
+                shown,
+                {
+                    "resource_id": policy_target,
+                    "label": label,
+                    "status": row["status"],
+                    "current": row["current"],
+                    "suggested": row["suggested"],
+                    "model score": row["confidence"],
+                    "evidence": row["evidence"],
+                },
             )
 
 # ── Export ─────────────────────────────────────────────────────────────

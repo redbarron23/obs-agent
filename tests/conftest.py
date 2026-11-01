@@ -17,6 +17,9 @@ def _fake_api_keys(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("OBS_AGENT_REVIEWER", "test-reviewer")
+    # Documentation retrieval is off unless a test turns it on (tests/test_policy_docs.py).
+    for name in ("OBS_AGENT_RAG_URL", "RAG_API_KEY", "OBS_AGENT_RAG_ALLOW_REMOTE"):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

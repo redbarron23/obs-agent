@@ -20,6 +20,7 @@ import os
 
 import streamlit as st
 
+import policy_docs
 from agent import (
     PROVIDERS,
     ConfigError,
@@ -134,6 +135,11 @@ else:
     st.caption(
         f"Provider: **{provider}**  ·  Model: **{effective_model}**"
         + ("  ·  Streaming" if use_streaming else "")
+    )
+    # Chat answers over the bundled synthetic data only; imported reviews stay out (#50).
+    st.caption(
+        "Data: bundled synthetic demo inventory and billing (imported reviews are not used in "
+        f"chat)  ·  Documentation search: {policy_docs.describe()}"
     )
 
 if "messages" not in st.session_state:

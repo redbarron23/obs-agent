@@ -36,7 +36,7 @@ Supports both **batch** (full response at once) and **streaming** (token-by-toke
 |---|---|
 | `agent.py` | The agent loop (`run`, `stream_run`), history pruning, turn bookkeeping, CLI entrypoint. Re-exports the names below, so `from agent import ...` keeps working. |
 | `providers.py` | `Provider` (the Anthropic / OpenAI-compatible abstraction), message formatting, the system prompt, provider and model config (`check_config`, `default_model`, `model_warning`, `max_tokens_setting`). |
-| `tools.py` | The seven tool functions, their LLM-facing definitions, and the dispatch table. |
+| `tools.py` | The seven tool functions, their LLM-facing definitions, and the dispatch table, plus the optional `search_observability_docs` tool. |
 
 ## The tools (`tools.py`)
 
@@ -52,6 +52,10 @@ Each tool returns a clean formatted string so the model gets compact, readable r
 
 Two further tools bridge to the tag inference system: `get_label_coverage` and
 `suggest_labels` (see [How it works](../README.md#how-it-works)).
+
+An eighth, read-only tool, `search_observability_docs`, is offered to the model only when
+`OBS_AGENT_RAG_URL` points at a rag-observability retrieval API. It returns cited, untrusted
+documentation excerpts; see [Policy context](policy-context.md).
 
 ### Cross-cloud cost comparison
 

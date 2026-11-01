@@ -1,0 +1,60 @@
+{
+  "query": {
+    "question": "Which environment values are allowed?",
+    "k": 4,
+    "max_distance": 0.6,
+    "retrieval": "vector"
+  },
+  "hits": [
+    {
+      "rank": 1,
+      "chunk_id": "reference/tagging-standard.md#4",
+      "text": "Resource Tagging Standard > Allowed values\n\nThe `environment` tag must be one of `prod`, `staging`, `dev`, `sandbox`. The `tier` tag must be `1`, `2` or `3` and drives coverage targets and alert routing.",
+      "source": "reference/tagging-standard.md",
+      "file": "tagging-standard.md",
+      "section": "Allowed values",
+      "distance": 0.2412,
+      "exact_term_match": false
+    },
+    {
+      "rank": 2,
+      "chunk_id": "reference/tagging-standard.md#6",
+      "text": "Resource Tagging Standard > Environment vocabulary\n\nLegacy spellings are read as the canonical environment when reviewing existing tags, but new tags must use the canonical value. A name token is evidence for an environment value; it does not replace the `environment` tag.",
+      "source": "reference/tagging-standard.md",
+      "file": "tagging-standard.md",
+      "section": "Environment vocabulary",
+      "distance": 0.3105,
+      "exact_term_match": false
+    },
+    {
+      "rank": 3,
+      "chunk_id": "reference/tagging-standard.md#9",
+      "text": "Resource Tagging Standard > Requirements obs-agent does not evaluate\n\nobs-agent infers `team` and `env` for Azure subscriptions and GCP projects and derives `cost_center` from the team. These requirements of this standard are outside its scope and must be checked by other means:\n\n- Other tag keys: the `tier` and `service` tags, and any key other than `owner`, `environment` and `cost-centre`.\n- Resource-level tags: only subscription and project labels are reviewed, not the tags on resources inside them.\n- Ownership of a specific resource: the allowed values in this standard cannot establish which team owns a resource or raise the confidence of a suggestion.",
+      "source": "reference/tagging-standard.md",
+      "file": "tagging-standard.md",
+      "section": "Requirements obs-agent does not evaluate",
+      "distance": 0.3871,
+      "exact_term_match": false
+    }
+  ],
+  "corpus": {
+    "provenance": "available",
+    "corpus_sha256": "0a50d30289062a4f9a9bbd16bf9d3d226cd62c6d2fb6736ba82d7c38c55b6748",
+    "ingested_at": "2026-11-01T11:44:36.554475+00:00",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "embedding_revision": null,
+    "chunk_size": 500,
+    "document_count": 8,
+    "collection": "observability-docs-6354276fdc674d1396600f02996c7497",
+    "chunk_count": 37
+  },
+  "freshness": {
+    "status": "current",
+    "checked_at": "2026-11-01T11:44:41.572986+00:00",
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "content_trust": "untrusted",
+  "generated": false
+}
