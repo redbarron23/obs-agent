@@ -483,6 +483,11 @@ def _escape(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+def _escape_attr(text: str) -> str:
+    """Escape a value placed inside a double-quoted attribute of the delimiter tag."""
+    return html.escape(text, quote=True)
+
+
 def format_for_llm(result: dict, *, scope_note: str | None = None) -> str:
     """The tool-result text for a retrieval: framed, delimited and escaped."""
     lines = ["search_observability_docs result", f"status: {result['status']}"]
@@ -517,9 +522,10 @@ def format_for_llm(result: dict, *, scope_note: str | None = None) -> str:
     lines += ["", _RULES, ""]
     for h in result["hits"]:
         distance = "unknown" if h["distance"] is None else f"{h['distance']:.4f}"
+        # Attribute values also escape quotes, so a source or section cannot add attributes.
         attrs = (
-            f'rank="{h["rank"]}" source="{_escape(h["source"])}" '
-            f'section="{_escape(h["section"])}" distance="{distance}"'
+            f'rank="{h["rank"]}" source="{_escape_attr(h["source"])}" '
+            f'section="{_escape_attr(h["section"])}" distance="{distance}"'
         )
         lines += [f"<{EXCERPT_TAG} {attrs}>", _escape(h["text"]), f"</{EXCERPT_TAG}>"]
     return "\n".join(lines)
