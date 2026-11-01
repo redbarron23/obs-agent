@@ -79,6 +79,20 @@ that the loop *dispatches* a tool call and *reassembles* the answer. It does not
 model would have chosen that tool, with those arguments, or phrased a correct answer. A change that
 made the prompts subtly worse would pass every test in this layer.
 
+### Documentation consumer contract tests
+
+`tests/test_documentation.py` exercises the real RAG HTTP client with a stub at the network
+boundary. It checks request fields, source/section and corpus preservation, empty results,
+unknown provenance, disabled configuration, timeouts/service errors, malformed or oversized
+responses, and isolation between requests. One scripted-provider test drives the actual agent
+dispatch and verifies that source evidence reaches the next model turn. No RAG checkout, server,
+provider key or private corpus is required; these tests run in normal offline CI.
+
+The consumer contract follows the retrieval interface in
+[RAG PR #64](https://github.com/redbarron23/rag-observability/pull/64)
+(initial API revision `d2208d890fd80323dac2d1ab4d6f720b5755a45b`). Provider contract tests live in
+that repo. A test running both real services is a separate later layer, not provided by these stubs.
+
 ## Layer 2 — the eval dry-run (offline)
 
 `evals.py` holds 12 cases, each pairing a question with a list of strings a correct answer must

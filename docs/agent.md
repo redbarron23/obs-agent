@@ -36,7 +36,8 @@ Supports both **batch** (full response at once) and **streaming** (token-by-toke
 |---|---|
 | `agent.py` | The agent loop (`run`, `stream_run`), history pruning, turn bookkeeping, CLI entrypoint. Re-exports the names below, so `from agent import ...` keeps working. |
 | `providers.py` | `Provider` (the Anthropic / OpenAI-compatible abstraction), message formatting, the system prompt, provider and model config (`check_config`, `default_model`, `model_warning`, `max_tokens_setting`). |
-| `tools.py` | The seven tool functions, their LLM-facing definitions, and the dispatch table. |
+| `tools.py` | Cost/label tools, LLM-facing tool definitions, and the dispatch table. |
+| `documentation.py` | Read-only HTTP client and response validation for optional RAG retrieval. |
 
 ## The tools (`tools.py`)
 
@@ -47,11 +48,40 @@ Supports both **batch** (full response at once) and **streaming** (token-by-toke
 | `get_daily_trend` | Day-by-day cost/ingestion trend for a given subscription or project |
 | `find_spikes` | Detects days where cost jumped >X% vs the previous day. Optional `platform` (`azure`/`gcp`/`all`) and `limit` (default 10); results are ranked by dollar cost and the total count is reported when truncated |
 | `compare_cross_cloud` | Total cost comparison across Azure and GCP with per-sub/project breakdown |
+| `search_observability_docs` | Optional documentation excerpts with source, section, distance and indexed corpus identity |
 
-Each tool returns a clean formatted string so the model gets compact, readable results. Tools are pure functions operating on in-memory DataFrames — no network calls, no side effects.
+Each tool returns a string for the agent loop. Cost/label tools operate on local synthetic data;
+documentation search makes a read-only HTTP request only when configured.
 
 Two further tools bridge to the tag inference system: `get_label_coverage` and
 `suggest_labels` (see [How it works](../README.md#how-it-works)).
+
+### Optional documentation search
+
+Run the [rag-observability retrieval API](https://github.com/redbarron23/rag-observability/issues/13),
+then set `OBS_AGENT_RAG_URL=http://127.0.0.1:8001` before starting obs-agent. The value is the base
+URL; the client posts to `/retrieve`. In Docker, use an address reachable from the container
+instead of its loopback address. Unset the variable to disable outbound RAG requests.
+
+Ask a policy question such as "What tags does the documentation require?" The tool sends only
+its explicit question and result count, with a 30-second timeout. It returns validated JSON
+containing document excerpts and their source/section references, distances and indexed corpus
+identity. Unknown provenance stays explicit; an indexed timestamp does not establish that a
+policy is current. No matches is an empty chunk list. Service, timeout, malformed-response and
+oversized-response errors return an explanatory tool result without exposing remote error bodies.
+
+Only enable this for questions and documents approved for the retrieval service and selected LLM.
+The model may include details from the conversation in its search question. Retrieved text is sent
+back to that LLM; optional MLflow tracing can also record tool questions/results and model messages.
+Keep those destinations inside the approved data boundary. This client reads no saved inventories,
+approvals or review notes, and adds no private-review chat or review-page UI. Existing chat cost/label
+tools still use the synthetic estate. Imported-review chat remains tracked in
+[#50](https://github.com/redbarron23/obs-agent/issues/50), and the full policy-review UI in
+[#90](https://github.com/redbarron23/obs-agent/issues/90).
+
+The agent is instructed to cite policy sources, treat retrieved instructions as untrusted content,
+and keep policy requirements separate from resource ownership and inference confidence. Offline
+tests verify transport and source preservation; they do not prove a live model follows those rules.
 
 ### Cross-cloud cost comparison
 
