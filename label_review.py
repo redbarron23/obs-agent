@@ -8,7 +8,9 @@ Human-in-the-loop label review on top of labeling.py.
                      (including ones withheld for insufficient evidence)
   DecisionStore      reviewer decisions (accept / reject / override), with an
                      append-only feedback trail shared by the API and UI;
-                     revoking a decision appends an attributable 'revoke' event
+                     revoking a decision appends an attributable 'revoke' event;
+                     assignments, notes and unresolved questions go to a separate
+                     append-only collaboration history that never approves anything
   export_*()         resolved label changes as CSV, a shell script of
                      az / gcloud commands, or a Terraform tfvars map
 
@@ -66,6 +68,11 @@ REVOCATION_COLUMNS = {
     "revocation_reason": "TEXT",
 }
 MAX_REVOCATION_REASON = 500
+# Collaboration metadata (#46): who should look at a label, notes, and unresolved questions.
+# Stored in its own append-only table, so it never reaches decisions, feedback, plans or exports.
+COLLABORATION_EVENTS = ("assign", "unassign", "note", "rationale", "question", "answer", "resolve")
+QUESTION_STATUSES = ("open", "answered", "resolved")
+MAX_NOTE = 1000
 EXPORT_FORMATS = ("csv", "sh", "tfvars", "plan")
 
 DEFAULT_DECISIONS_PATH = "label_decisions.db"
@@ -230,6 +237,9 @@ def review_queue(
     search: str | None = None,
     inventory: pd.DataFrame | None = None,
     evidence: str | None = None,
+    store: DecisionStore | None = None,
+    assignee: str | None = None,
+    unresolved: bool | None = None,
 ) -> list[dict]:
     """Resources needing review, highest model score first.
 
@@ -238,16 +248,34 @@ def review_queue(
     evidence status (e.g. 'conflicting'); 'insufficient' matches every
     abstained status. Abstained labels have no score; the confidence range
     treats them as 0, so they are listed last and kept by the default range.
+    *assignee* and *unresolved* (has / has no unresolved question) filter on the
+    collaboration state in *store*; they never change the suggestions shown.
     """
     labels = [label] if label else list(LABELS)
     wanted = {status} if status else {"untagged", "suspect"}
+    state = {}
+    if assignee is not None or unresolved is not None:
+        if store is None:
+            raise ValueError("Filtering by assignee or unresolved questions needs a store.")
+        state = collaboration_state(store.collaboration_history())
     out = []
     for r in reports(inventory):
         if cloud and r["cloud"] != cloud:
             continue
         if search and search.lower() not in r["resource_id"].lower():
             continue
-        hits = [r["labels"][lbl] for lbl in labels if r["labels"][lbl]["status"] in wanted]
+        names = [lbl for lbl in labels if r["labels"][lbl]["status"] in wanted]
+        if assignee is not None or unresolved is not None:
+            items = {lbl: state.get((r["resource_id"], lbl)) or {} for lbl in names}
+            if assignee is not None:
+                names = [lbl for lbl in names if items[lbl].get("assignee") == assignee]
+            if unresolved is not None:
+                names = [
+                    lbl
+                    for lbl in names
+                    if bool(items[lbl].get("unresolved_questions")) == unresolved
+                ]
+        hits = [r["labels"][lbl] for lbl in names]
         if evidence:
             hits = [h for h in hits if _evidence_matches(h, evidence)]
         if not hits:
@@ -357,6 +385,30 @@ class DecisionStore:
                 for name, kind in wanted.items():
                     if name not in columns:
                         conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            # Collaboration history (#46). A new table, so databases from earlier versions open
+            # unchanged and start with no assignments, notes or questions.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS review_collaboration (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    resource_id TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    reviewer TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    assignee TEXT,
+                    question_id INTEGER,
+                    feedback_id INTEGER,
+                    text TEXT
+                )
+                """
+            )
+            for action in ("UPDATE", "DELETE"):
+                conn.execute(
+                    f"CREATE TRIGGER IF NOT EXISTS review_collaboration_no_{action.lower()} "
+                    f"BEFORE {action} ON review_collaboration "
+                    "BEGIN SELECT RAISE(ABORT, 'review_collaboration is append-only'); END"
+                )
             if is_new and self._legacy_path.exists():
                 for entry in json.loads(self._legacy_path.read_text()):
                     conn.execute(
@@ -398,8 +450,13 @@ class DecisionStore:
         inventory: pd.DataFrame | None = None,
         *,
         reviewer: str | None = None,
+        rationale: str | None = None,
     ) -> dict:
+        """Record a decision. An optional *rationale* (e.g. why a suggestion was overridden) is
+        kept in the collaboration history, linked to this decision's feedback row; it is never
+        part of the decision, the feedback row, plans or exports."""
         reviewer = _reviewer(reviewer)
+        rationale = _text(rationale, "rationale", required=False)
         report = resource_report(resource_id, inventory)
         if report is None:
             raise KeyError(resource_id)
@@ -455,7 +512,7 @@ class DecisionStore:
                 """,
                 entry,
             )
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO review_feedback
                 (resource_id, label, decision, value, suggested, previous,
@@ -466,6 +523,16 @@ class DecisionStore:
                 """,
                 feedback,
             )
+            if rationale is not None:
+                self._append(
+                    conn,
+                    resource_id,
+                    label,
+                    "rationale",
+                    reviewer,
+                    feedback_id=cursor.lastrowid,
+                    text=rationale,
+                )
         return entry
 
     def revoke(
@@ -567,6 +634,237 @@ class DecisionStore:
         """Revoke the decision (see revoke()); True if there was one."""
         return self.revoke(resource_id, label, reviewer=reviewer, reason=reason) is not None
 
+    # ── Collaboration: assignments, notes, unresolved questions (#46) ──────
+    #
+    # Every write appends one attributable row to review_collaboration (triggers refuse UPDATE
+    # and DELETE); current state is derived from that history. None of it is read by
+    # resolve(), pending_changes(), approved_change_plan() or export(), so it can never approve
+    # or change an exported label.
+
+    def _append(
+        self,
+        conn: sqlite3.Connection,
+        resource_id: str,
+        label: str,
+        event: str,
+        reviewer: str,
+        *,
+        assignee: str | None = None,
+        question_id: int | None = None,
+        feedback_id: int | None = None,
+        text: str | None = None,
+    ) -> dict:
+        cursor = conn.execute(
+            """
+            INSERT INTO review_collaboration
+            (resource_id, label, event, reviewer, created_at, assignee, question_id,
+             feedback_id, text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                resource_id,
+                label,
+                event,
+                reviewer,
+                datetime.now(UTC).isoformat(timespec="seconds"),
+                assignee,
+                question_id,
+                feedback_id,
+                text,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM review_collaboration WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+        return dict(row)
+
+    def collaboration_history(
+        self, resource_id: str | None = None, label: str | None = None
+    ) -> list[dict]:
+        """Append-only collaboration events, oldest first (optionally for one item)."""
+        query, args = "SELECT * FROM review_collaboration", []
+        if resource_id is not None:
+            query += " WHERE resource_id = ? AND label = ?"
+            args = [resource_id, label]
+        with self._connect() as conn:
+            return [dict(row) for row in conn.execute(query + " ORDER BY id", args)]
+
+    def collaboration(
+        self, *, assignee: str | None = None, unresolved: bool | None = None
+    ) -> list[dict]:
+        """Current collaboration state per (resource, label), filtered by assignee and
+        whether the item has an unresolved question."""
+        items = collaboration_state(self.collaboration_history()).values()
+        return [
+            item
+            for item in items
+            if (assignee is None or item["assignee"] == assignee)
+            and (unresolved is None or bool(item["unresolved_questions"]) == unresolved)
+        ]
+
+    def collaboration_item(self, resource_id: str, label: str) -> dict:
+        """State and history of one (resource, label); empty state when nothing is recorded."""
+        history = self.collaboration_history(resource_id, label)
+        state = collaboration_state(history).get((resource_id, label)) or _empty_item(
+            resource_id, label
+        )
+        return state | {"history": history}
+
+    def _target(self, resource_id: str, label: str, inventory: pd.DataFrame | None) -> None:
+        if label not in LABELS:
+            raise DecisionError(f"Unknown label '{label}'. Choose from {list(LABELS)}.")
+        if resource_report(resource_id, inventory) is None:
+            raise KeyError(resource_id)
+
+    @staticmethod
+    def _current_assignee(conn: sqlite3.Connection, resource_id: str, label: str) -> str | None:
+        row = conn.execute(
+            """
+            SELECT event, assignee FROM review_collaboration
+            WHERE resource_id = ? AND label = ? AND event IN ('assign', 'unassign')
+            ORDER BY id DESC LIMIT 1
+            """,
+            (resource_id, label),
+        ).fetchone()
+        return row["assignee"] if row and row["event"] == "assign" else None
+
+    def assign(
+        self,
+        resource_id: str,
+        label: str,
+        assignee: str,
+        inventory: pd.DataFrame | None = None,
+        *,
+        reviewer: str | None = None,
+    ) -> dict | None:
+        """Assign (or reassign) a label to a reviewer ID. None, writing nothing, when it is
+        already assigned to that reviewer. An assignment is never an approval."""
+        reviewer = _reviewer(reviewer)
+        assignee = _identity(assignee, "assignee")
+        self._target(resource_id, label, inventory)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if self._current_assignee(conn, resource_id, label) == assignee:
+                return None
+            return self._append(conn, resource_id, label, "assign", reviewer, assignee=assignee)
+
+    def unassign(self, resource_id: str, label: str, *, reviewer: str | None = None) -> dict | None:
+        """Remove the assignment; None, writing nothing, when there is none."""
+        reviewer = _reviewer(reviewer)
+        if label not in LABELS:
+            raise DecisionError(f"Unknown label '{label}'. Choose from {list(LABELS)}.")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self._current_assignee(conn, resource_id, label)
+            if current is None:
+                return None
+            return self._append(conn, resource_id, label, "unassign", reviewer, assignee=current)
+
+    def add_note(
+        self,
+        resource_id: str,
+        label: str,
+        text: str,
+        inventory: pd.DataFrame | None = None,
+        *,
+        reviewer: str | None = None,
+    ) -> dict:
+        """Append a short free-text review note (history only; never exported)."""
+        reviewer = _reviewer(reviewer)
+        text = _text(text, "note")
+        self._target(resource_id, label, inventory)
+        with self._connect() as conn:
+            return self._append(conn, resource_id, label, "note", reviewer, text=text)
+
+    def ask_question(
+        self,
+        resource_id: str,
+        label: str,
+        text: str,
+        inventory: pd.DataFrame | None = None,
+        *,
+        reviewer: str | None = None,
+    ) -> dict:
+        """Open an unresolved question; the returned event's id is the question ID."""
+        reviewer = _reviewer(reviewer)
+        text = _text(text, "question")
+        self._target(resource_id, label, inventory)
+        with self._connect() as conn:
+            return self._append(conn, resource_id, label, "question", reviewer, text=text)
+
+    def _question_event(
+        self,
+        question_id: int,
+        event: str,
+        text: str | None,
+        reviewer: str,
+        resource_id: str | None,
+        label: str | None,
+    ) -> dict:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            question = conn.execute(
+                "SELECT * FROM review_collaboration WHERE id = ? AND event = 'question'",
+                (question_id,),
+            ).fetchone()
+            if question is None or (
+                resource_id is not None
+                and (question["resource_id"], question["label"]) != (resource_id, label)
+            ):
+                raise KeyError(question_id)
+            resolved = conn.execute(
+                "SELECT 1 FROM review_collaboration WHERE question_id = ? AND event = 'resolve'",
+                (question_id,),
+            ).fetchone()
+            if resolved:
+                raise DecisionError(f"Question {question_id} is already resolved.")
+            return self._append(
+                conn,
+                question["resource_id"],
+                question["label"],
+                event,
+                reviewer,
+                question_id=question_id,
+                text=text,
+            )
+
+    def answer_question(
+        self,
+        question_id: int,
+        text: str,
+        *,
+        reviewer: str | None = None,
+        resource_id: str | None = None,
+        label: str | None = None,
+    ) -> dict:
+        """Answer an open question (it stays unresolved until resolved). KeyError for an
+        unknown question (or one on another item when resource_id/label are given)."""
+        reviewer = _reviewer(reviewer)
+        text = _text(text, "answer")
+        return self._question_event(question_id, "answer", text, reviewer, resource_id, label)
+
+    def resolve_question(
+        self,
+        question_id: int,
+        text: str | None = None,
+        *,
+        reviewer: str | None = None,
+        resource_id: str | None = None,
+        label: str | None = None,
+    ) -> dict:
+        """Mark a question resolved, with an optional resolution note. Resolving is not an
+        approval: the label still needs a decision."""
+        reviewer = _reviewer(reviewer)
+        text = _text(text, "resolution", required=False)
+        return self._question_event(question_id, "resolve", text, reviewer, resource_id, label)
+
+
+def _identity(value: str | None, what: str) -> str:
+    value = (value or "").strip()
+    if not value or len(value) > 128:
+        raise DecisionError(f"Provide the {what} name or ID (1–128 characters).")
+    return value
+
 
 def _reviewer(reviewer: str | None) -> str:
     """The self-reported reviewer ID for a write, falling back to OBS_AGENT_REVIEWER."""
@@ -576,6 +874,103 @@ def _reviewer(reviewer: str | None) -> str:
     if not reviewer or len(reviewer) > 128:
         raise DecisionError("Provide a reviewer name or ID (1–128 characters).")
     return reviewer
+
+
+def _text(value: str | None, what: str, *, required: bool = True) -> str | None:
+    """Validated free text. Error messages never quote it (they can reach logs and clients)."""
+    value = (value or "").strip()
+    if not value:
+        if required:
+            raise DecisionError(f"Provide the {what} text.")
+        return None
+    if len(value) > MAX_NOTE:
+        raise DecisionError(f"Keep the {what} to {MAX_NOTE} characters or fewer.")
+    return value
+
+
+def _empty_item(resource_id: str, label: str) -> dict:
+    return {
+        "resource_id": resource_id,
+        "label": label,
+        "assignee": None,
+        "assigned_by": None,
+        "assigned_at": None,
+        "notes": [],
+        "questions": [],
+        "unresolved_questions": 0,
+    }
+
+
+def collaboration_state(history: list[dict]) -> dict[tuple[str, str], dict]:
+    """Fold collaboration events into the current state per (resource_id, label)."""
+    items: dict[tuple[str, str], dict] = {}
+    questions: dict[int, dict] = {}
+    for e in history:
+        key = (e["resource_id"], e["label"])
+        item = items.setdefault(key, _empty_item(*key))
+        kind = e["event"]
+        by = {"reviewer": e["reviewer"], "created_at": e["created_at"]}
+        if kind == "assign":
+            item |= {
+                "assignee": e["assignee"],
+                "assigned_by": e["reviewer"],
+                "assigned_at": e["created_at"],
+            }
+        elif kind == "unassign":
+            item |= {"assignee": None, "assigned_by": None, "assigned_at": None}
+        elif kind in ("note", "rationale"):
+            item["notes"].append(
+                {"id": e["id"], "kind": kind, "text": e["text"], "feedback_id": e["feedback_id"]}
+                | by
+            )
+        elif kind == "question":
+            questions[e["id"]] = {
+                "id": e["id"],
+                "text": e["text"],
+                "status": "open",
+                "asked_by": e["reviewer"],
+                "asked_at": e["created_at"],
+                "answers": [],
+                "resolved_by": None,
+                "resolved_at": None,
+                "resolution": None,
+            }
+            item["questions"].append(questions[e["id"]])
+        elif kind == "answer" and e["question_id"] in questions:
+            question = questions[e["question_id"]]
+            question["answers"].append({"text": e["text"]} | by)
+            question["status"] = "answered"
+        elif kind == "resolve" and e["question_id"] in questions:
+            questions[e["question_id"]] |= {
+                "status": "resolved",
+                "resolved_by": e["reviewer"],
+                "resolved_at": e["created_at"],
+                "resolution": e["text"],
+            }
+    for item in items.values():
+        item["unresolved_questions"] = sum(q["status"] != "resolved" for q in item["questions"])
+    return items
+
+
+def with_collaboration(rows: list[dict], store: DecisionStore) -> list[dict]:
+    """Queue rows (copies) with a per-label summary of assignments and unresolved questions.
+
+    Counts only: note and question text stay in the collaboration routes and history.
+    """
+    state = collaboration_state(store.collaboration_history())
+    out = []
+    for r in rows:
+        summary = {}
+        for label in LABELS:
+            item = state.get((r["resource_id"], label))
+            if item:
+                summary[label] = {
+                    "assignee": item["assignee"],
+                    "notes": len(item["notes"]),
+                    "unresolved_questions": item["unresolved_questions"],
+                }
+        out.append(r | {"collaboration": summary})
+    return out
 
 
 def _blank(value):

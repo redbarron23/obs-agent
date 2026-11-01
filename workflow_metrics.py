@@ -32,7 +32,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 
-OPERATIONS = ("import", "inference", "decision_write", "export")
+OPERATIONS = ("import", "inference", "decision_write", "collaboration_write", "export")
 SURFACES = ("api", "ui", "other")
 # success: completed. invalid: rejected user input (bad CSV, bad decision
 # value); expected, not an alert. error: anything else; investigate.
@@ -268,7 +268,9 @@ def backlog(store, inventory=None, now: datetime | None = None) -> dict:
         (d["resource_id"], d["label"]) for d in label_review.current_decisions(store, inventory)
     }
     decisions = store.all()
-    pending = pending_auto = pending_abstained = 0
+    # Collaboration metadata is counted, never used to decide what is pending or reviewed.
+    collaboration = label_review.collaboration_state(store.collaboration_history())
+    pending = pending_auto = pending_abstained = pending_assigned = 0
     pending_resources = set()
     for r in label_review.reports(inventory):
         for label, lr in r["labels"].items():
@@ -276,6 +278,9 @@ def backlog(store, inventory=None, now: datetime | None = None) -> dict:
                 pending += 1
                 pending_auto += lr["action"] == "auto-apply"
                 pending_abstained += lr["action"] == label_review.INSUFFICIENT_EVIDENCE
+                pending_assigned += bool(
+                    (collaboration.get((r["resource_id"], label)) or {}).get("assignee")
+                )
                 pending_resources.add(r["resource_id"])
     feedback = store.feedback()
     snapshot_feedback = sorted(
@@ -297,6 +302,8 @@ def backlog(store, inventory=None, now: datetime | None = None) -> dict:
         "pending_resources": len(pending_resources),
         "pending_auto_apply_ready": pending_auto,
         "pending_insufficient_evidence": pending_abstained,
+        "pending_assigned_items": pending_assigned,
+        "unresolved_questions": sum(i["unresolved_questions"] for i in collaboration.values()),
         "reviewed_items": len(current),
         "stale_decisions": len(decisions) - len(current),
         "feedback_actions": len(feedback),

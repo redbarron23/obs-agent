@@ -49,6 +49,10 @@ def live(tmp_path, monkeypatch):
     store.set("gcp-demo-003", "team", "override", "Platform", inventory, reviewer="bob")
     store.set("gcp-demo-003", "env", "accept", inventory=inventory, reviewer="bob")
     store.revoke("gcp-demo-003", "env", reviewer="bob", reason="wrong env")  # recorded event
+    # Collaboration metadata (#46): backed up and restored, never part of the plan.
+    store.assign("gcp-demo-003", "env", "carol", inventory, reviewer="bob")
+    question = store.ask_question("gcp-demo-003", "env", "prod or dev?", inventory, reviewer="bob")
+    store.answer_question(question["id"], "development", reviewer="carol")
     return decisions, review_dir, review_id
 
 
@@ -63,6 +67,7 @@ def _state(decisions: Path, review_dir: Path, review_id: str, monkeypatch) -> di
         "feedback": store.feedback(),
         "main_decisions": main.all(),
         "main_feedback": main.feedback(),
+        "collaboration": store.collaboration_history(),
         "plans": review_backup.plans(decisions, review_dir),
     }
 
@@ -76,8 +81,10 @@ def test_round_trip_restores_review_vocabulary_decisions_and_plan(live, tmp_path
     assert manifest["files"][f"reviews/{review_id}.db"]["rows"] == {
         "decisions": 1,
         "review_feedback": 4,
+        "review_collaboration": 3,
         "workspace": 1,
     }
+    assert manifest["files"]["label_decisions.db"]["rows"]["review_collaboration"] == 0
     assert review_backup.verify(backup) == []
 
     isolated = tmp_path / "restored"
@@ -90,8 +97,9 @@ def test_round_trip_restores_review_vocabulary_decisions_and_plan(live, tmp_path
     assert after["inventory"].attrs == before["inventory"].attrs  # vocabulary
     assert after["inventory"].attrs["label_config"]["team"]["values"] == CONFIG["team"]["values"]
     pd.testing.assert_frame_equal(after["inventory"], before["inventory"])
-    for key in ("decisions", "feedback", "main_decisions", "main_feedback"):
+    for key in ("decisions", "feedback", "main_decisions", "main_feedback", "collaboration"):
         assert after[key] == before[key]
+    assert [e["event"] for e in after["collaboration"]] == ["assign", "question", "answer"]
     revocation = after["feedback"][-1]  # the revocation event survives the round trip
     assert (revocation["decision"], revocation["reviewer"]) == ("revoke", "bob")
     assert revocation["revocation_reason"] == "wrong env"

@@ -5,6 +5,9 @@
     uv run python review_cli.py queue REVIEW_ID [--label team] [--evidence insufficient]
     uv run python review_cli.py decide REVIEW_ID RESOURCE team accept --reviewer alice
     uv run python review_cli.py export REVIEW_ID --format plan --output plan.json
+    uv run python review_cli.py assign REVIEW_ID RESOURCE team bob --reviewer alice
+    uv run python review_cli.py ask REVIEW_ID RESOURCE team "Who owns this?" --reviewer alice
+    uv run python review_cli.py queue REVIEW_ID --mine --unresolved --reviewer bob
 
 It calls the same workspace, validation, inference, decision and export functions as the Label
 review UI and the REST API's /reviews routes, on the saved reviews in OBS_AGENT_REVIEW_DIR
@@ -74,6 +77,7 @@ def _parser() -> argparse.ArgumentParser:
     queue.add_argument("--search", help="substring of resource_id")
     queue.add_argument("--evidence", choices=EVIDENCE)
     queue.add_argument("--hide-reviewed", action="store_true", help="omit decided resources")
+    _collaboration_filters(queue)
 
     resource = review("resource", "suggestions for one resource")
     resource.add_argument("resource_id")
@@ -84,6 +88,9 @@ def _parser() -> argparse.ArgumentParser:
     decide.add_argument("decision", choices=("accept", "reject", "override"))
     decide.add_argument("--value", help="value to apply (override only)")
     decide.add_argument("--reviewer", help="reviewer name or ID (default: OBS_AGENT_REVIEWER)")
+    decide.add_argument(
+        "--rationale", help="why (e.g. for an override); kept in the collaboration history only"
+    )
 
     undo = review("undo", "revoke a decision (recorded in feedback)")
     undo.add_argument("resource_id")
@@ -98,6 +105,32 @@ def _parser() -> argparse.ArgumentParser:
     review("feedback", "append-only reviewer actions with model context")
     review("backlog", "pending review work and its age")
 
+    def item(name: str, help: str) -> argparse.ArgumentParser:
+        sub = review(name, help)
+        sub.add_argument("resource_id")
+        sub.add_argument("label", choices=LABELS)
+        return sub
+
+    def reviewer(sub: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        sub.add_argument("--reviewer", help="reviewer name or ID (default: OBS_AGENT_REVIEWER)")
+        return sub
+
+    reviewer(item("assign", "assign or reassign a label to a reviewer")).add_argument("assignee")
+    reviewer(item("unassign", "remove a label's assignment"))
+    reviewer(item("note", "add a short review note")).add_argument("text")
+    reviewer(item("ask", "open an unresolved question")).add_argument("text")
+    answer = reviewer(review("answer", "answer a question"))
+    answer.add_argument("question_id", type=int)
+    answer.add_argument("text")
+    resolve = reviewer(review("resolve", "resolve a question (not an approval)"))
+    resolve.add_argument("question_id", type=int)
+    resolve.add_argument("--text", help="optional resolution note")
+    collab = review("collaboration", "assignments, notes and questions (no approvals)")
+    collab.add_argument("--resource", help="one resource's label (with --label)")
+    collab.add_argument("--label", choices=LABELS)
+    collab.add_argument("--history", action="store_true", help="the append-only event history")
+    _collaboration_filters(collab)
+
     export = review("export", "resolved label changes")
     export.add_argument("--format", choices=("csv", "sh", "tfvars", "plan"), default="plan")
     export.add_argument(
@@ -109,8 +142,29 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _collaboration_filters(sub: argparse.ArgumentParser) -> None:
+    who = sub.add_mutually_exclusive_group()
+    who.add_argument("--assignee", help="only labels assigned to this reviewer ID")
+    who.add_argument(
+        "--mine",
+        action="store_true",
+        help="only labels assigned to --reviewer / OBS_AGENT_REVIEWER",
+    )
+    sub.add_argument(
+        "--unresolved", action="store_true", help="only labels with an unresolved question"
+    )
+    sub.add_argument("--reviewer", help="your reviewer ID for --mine (default: OBS_AGENT_REVIEWER)")
+
+
+def _filters(args) -> dict:
+    from label_review import _reviewer
+
+    assignee = _reviewer(args.reviewer) if args.mine else args.assignee
+    return {"assignee": assignee, "unresolved": True if args.unresolved else None}
+
+
 def _queue(args, inventory, store) -> list[dict]:
-    from label_review import current_decisions, review_queue
+    from label_review import current_decisions, review_queue, with_collaboration
 
     rows = review_queue(
         label=args.label,
@@ -121,6 +175,8 @@ def _queue(args, inventory, store) -> list[dict]:
         search=args.search,
         inventory=inventory,
         evidence=args.evidence,
+        store=store,
+        **_filters(args),
     )
     if args.hide_reviewed:
         # As in the UI: a resource is hidden once every flagged label it shows is decided.
@@ -134,7 +190,31 @@ def _queue(args, inventory, store) -> list[dict]:
                 for lbl in labels
             )
         ]
-    return rows
+    return with_collaboration(rows, store)
+
+
+COLLABORATION_WRITES = ("assign", "unassign", "note", "ask", "answer", "resolve")
+
+
+def _collaborate(args, inventory, store) -> dict:
+    """Same DecisionStore methods as the API and the review page; returns the item's state."""
+    who = {"reviewer": args.reviewer}
+    if args.command == "assign":
+        store.assign(args.resource_id, args.label, args.assignee, inventory, **who)
+    elif args.command == "unassign":
+        if store.unassign(args.resource_id, args.label, **who) is None:
+            raise ValueError("Not assigned.")
+    elif args.command == "note":
+        store.add_note(args.resource_id, args.label, args.text, inventory, **who)
+    elif args.command == "ask":
+        store.ask_question(args.resource_id, args.label, args.text, inventory, **who)
+    else:
+        if args.command == "answer":
+            event = store.answer_question(args.question_id, args.text, **who)
+        else:
+            event = store.resolve_question(args.question_id, args.text, **who)
+        return store.collaboration_item(event["resource_id"], event["label"])
+    return store.collaboration_item(args.resource_id, args.label)
 
 
 def run(args) -> object:
@@ -175,7 +255,23 @@ def run(args) -> object:
                 args.value,
                 inventory,
                 reviewer=args.reviewer,
+                rationale=args.rationale,
             )
+    if args.command in COLLABORATION_WRITES:
+        with workflow_metrics.operation(
+            "collaboration_write", invalid=(label_review.DecisionError, KeyError)
+        ):
+            return _collaborate(args, inventory, store)
+    if args.command == "collaboration":
+        if (args.resource is None) != (args.label is None):
+            raise ValueError("Give --resource and --label together.")
+        if args.resource is not None:
+            if label_review.resource_report(args.resource, inventory) is None:
+                raise ValueError("Unknown resource in this saved review.")
+            return store.collaboration_item(args.resource, args.label)
+        if args.history:
+            return store.collaboration_history()
+        return store.collaboration(**_filters(args))
     if args.command == "undo":
         with workflow_metrics.operation("decision_write", invalid=(label_review.DecisionError,)):
             event = store.revoke(
@@ -207,6 +303,9 @@ def main(argv: list[str] | None = None) -> int:
         # ValueError covers invalid CSV/vocabulary, unknown reviews and refused decisions.
         # The message goes to the caller's terminal only; nothing is logged.
         print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except KeyError:
+        print("error: Unknown resource or question in this saved review.", file=sys.stderr)
         return 2
     text = result if isinstance(result, str) else json.dumps(result, indent=2, default=str) + "\n"
     output = getattr(args, "output", None)

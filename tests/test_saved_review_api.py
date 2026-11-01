@@ -118,12 +118,12 @@ class TestApiWorkflow:
         assert api.decisions.all() == []
 
     def test_matches_library_functions_used_by_the_ui(self, client, review_id):
-        inventory, _ = load_review(review_id)
+        inventory, store = load_review(review_id)
         assert client.get(f"/reviews/{review_id}/coverage").json() == lr.coverage(inventory)
         report = client.get(f"/reviews/{review_id}/resources/{SUGGESTED}/labels").json()
         assert report == lr.resource_report(SUGGESTED, inventory)
         items = client.get(f"/reviews/{review_id}/resources").json()["items"]
-        assert items == lr.review_queue(inventory=inventory)
+        assert items == lr.with_collaboration(lr.review_queue(inventory=inventory), store)
 
     def test_decisions_feedback_backlog_and_undo(self, client, review_id):
         assert _decide(client, review_id, SUGGESTED, "env", "accept").status_code == 200
@@ -361,7 +361,9 @@ def _review_routes(review_id: str) -> list[tuple[str, str]]:
     for route in api.app.routes:
         if not getattr(route, "path", "").startswith("/reviews"):
             continue
-        path = route.path.format(review_id=review_id, resource_id=SUGGESTED, label="team")
+        path = route.path.format(
+            review_id=review_id, resource_id=SUGGESTED, label="team", question_id=1
+        )
         calls += [(method, path) for method in route.methods]
     return calls
 
@@ -369,7 +371,7 @@ def _review_routes(review_id: str) -> list[tuple[str, str]]:
 class TestAuthAndDemo:
     def test_every_review_route_requires_the_api_key(self, review_id):
         calls = _review_routes(review_id)
-        assert len(calls) == 13
+        assert len(calls) == 22  # 13 review routes + 9 collaboration routes (#46)
         for headers in ({}, {"X-API-Key": "wrong"}):
             anonymous = TestClient(api.app, headers=headers)
             for method, path in calls:

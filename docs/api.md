@@ -38,7 +38,7 @@ own routes, [below](#saved-reviews-api-and-cli). The UI calls the same Python fu
 | Endpoint | Purpose |
 |---|---|
 | `GET /labels/coverage` | Untagged / suspect / auto-apply-ready counts per label |
-| `GET /resources` | Review queue; filters `label`, `status`, `cloud`, `min_confidence`, `max_confidence`, `search`, `evidence` (`insufficient` or an evidence status), plus `limit` / `offset` |
+| `GET /resources` | Review queue; filters `label`, `status`, `cloud`, `min_confidence`, `max_confidence`, `search`, `evidence` (`insufficient` or an evidence status), `assignee`, `unresolved` (`true`: has an unresolved question), plus `limit` / `offset`. Each item carries a `collaboration` summary per label (assignee, note and unresolved-question counts) |
 | `GET /resources/{id}/labels` | Current tags, suggestions, model score (`confidence`), evidence status, reasons and alternatives for one resource |
 | `PUT` / `DELETE /resources/{id}/labels/{label}/decision` | Record (`accept` / `reject` / `override` + `value`) or undo a review decision |
 | `GET /labels/decisions` | All recorded decisions |
@@ -46,6 +46,11 @@ own routes, [below](#saved-reviews-api-and-cli). The UI calls the same Python fu
 | `GET /labels/feedback/metrics` | Reviewer-agreement precision, recall, F1, and monthly trend |
 | `GET /labels/export?format=csv\|sh\|tfvars\|plan` | Resolved changes as a download; `plan` is reviewed-only and includes approval evidence |
 | `GET /labels/backlog` | Pending review work and its age ([definitions](operations.md#review-backlog)) |
+| `GET /labels/collaboration[?assignee=&unresolved=]`, `/labels/collaboration/history` | Assignments, notes and questions per label; the append-only event history |
+| `GET /resources/{id}/labels/{label}/collaboration` | One label's assignment, notes, questions and history |
+| `PUT` / `DELETE /resources/{id}/labels/{label}/assignment` | `{"assignee", "reviewer"}`: assign or reassign; `DELETE` unassigns (`404` if unassigned) |
+| `POST /resources/{id}/labels/{label}/notes`, `/questions` | `{"text", "reviewer"}`: add a note, or open an unresolved question |
+| `POST /resources/{id}/labels/{label}/questions/{qid}/answer`, `/resolve` | Answer (`text` required) or resolve (`text` optional) a question |
 | `GET /ops/metrics[?format=prometheus]` | Workflow counters, durations and backlog ([operations](operations.md)) |
 
 Decisions need a `reviewer` name or ID (1–128 characters), or a configured
@@ -55,6 +60,11 @@ feedback responses include `reviewer`, `inventory_id`, and `model_version`; olde
 have null provenance. Exports ignore approvals that do not match the current snapshot/version.
 `plan` exports use schema version 2 and are always reviewed-only. Other formats also default to
 reviewed-only; `include_auto=true` explicitly includes unreviewed high-confidence suggestions.
+
+Assignments, notes and questions are collaboration metadata ([storage](decision-storage.md#assignments-notes-and-questions)).
+They use the same self-reported `reviewer` and never approve anything: they don't change
+suggestions, decisions, plans or exports. `PUT …/decision` also accepts an optional `rationale`
+(why a suggestion was overridden), kept in the collaboration history and linked to the decision.
 
 ### Saved reviews: API and CLI
 
@@ -73,6 +83,7 @@ is a `422`, so an ID cannot name a path).
 | `PUT` / `DELETE /reviews/{review_id}/resources/{id}/labels/{label}/decision` | Record a decision, or revoke it with the same optional `{"reviewer", "reason"}` body and `{"deleted", "revocation"}` response as the synthetic `DELETE` (`reviewer` required, as above) |
 | `GET /reviews/{review_id}/decisions[?current=true]`, `/feedback`, `/feedback/metrics`, `/backlog` | Decisions (`current` keeps only exportable ones), history, agreement, pending work |
 | `GET /reviews/{review_id}/export?format=csv\|sh\|tfvars\|plan` | As `/labels/export`; approvals bound to another snapshot or inference version are excluded |
+| `GET /reviews/{review_id}/collaboration[/history]` and `…/resources/{id}/labels/{label}/collaboration`, `/assignment`, `/notes`, `/questions[/{qid}/answer\|resolve]` | As the synthetic collaboration routes, stored in the saved review's database |
 
 `GET /ops/metrics?review_id=...` reports that review's backlog. With `OBS_AGENT_DEMO=1` every
 `/reviews` route returns `403` and the CLI refuses to run, as the Import page does.
@@ -100,7 +111,12 @@ uv run python plan_validation.py approved-label-change-plan.json fresh.csv --rev
 ```
 
 `undo REVIEW_ID RESOURCE LABEL [--reviewer R] [--reason TEXT]` revokes a decision and records a
-`revoke` event, like `DELETE`. Other commands: `list`, `show`, `coverage`, `resource`, `decisions [--current]`,
+`revoke` event, like `DELETE`. `decide … --rationale TEXT` keeps a reason with the decision.
+Collaboration: `assign REVIEW_ID RESOURCE LABEL ASSIGNEE`, `unassign`, `note … TEXT`,
+`ask … TEXT`, `answer REVIEW_ID QUESTION_ID TEXT`, `resolve REVIEW_ID QUESTION_ID [--text]` (each
+takes `--reviewer`), `collaboration REVIEW_ID [--assignee A | --mine] [--unresolved]
+[--resource R --label L] [--history]`, and `queue … [--assignee A | --mine] [--unresolved]`.
+Other commands: `list`, `show`, `coverage`, `resource`, `decisions [--current]`,
 `feedback`, `backlog`; `--help` on each lists its options.
 
 **Storage boundary.** Saved reviews hold private inventory data. Anyone with the API key, shell
