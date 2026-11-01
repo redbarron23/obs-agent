@@ -54,7 +54,7 @@ def _summary(path: Path) -> dict:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         counts = {
             t: conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
-            for t in ("decisions", "review_feedback", "workspace")
+            for t in ("decisions", "review_feedback", "review_collaboration", "workspace")
             if t in tables
         }
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]

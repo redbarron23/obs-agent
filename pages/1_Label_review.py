@@ -16,9 +16,11 @@ import streamlit as st
 import workflow_metrics
 from label_config import inventory_config
 from label_review import (
+    MAX_NOTE,
     MAX_REVOCATION_REASON,
     DecisionError,
     DecisionStore,
+    collaboration_state,
     coverage,
     current_decisions,
     demo_enabled,
@@ -183,6 +185,13 @@ lo, hi = st.sidebar.slider(
 only_insufficient = st.sidebar.checkbox("Only insufficient evidence", value=False)
 search = st.sidebar.text_input("Resource contains")
 hide_reviewed = st.sidebar.checkbox("Hide reviewed", value=False)
+assigned_to_me = st.sidebar.checkbox(
+    "Assigned to me",
+    value=False,
+    disabled=not reviewer,
+    help="Labels assigned to the reviewer name or ID above.",
+)
+only_unresolved = st.sidebar.checkbox("Only unresolved questions", value=False)
 drift_filter = st.session_state.get("drift_filter")
 drifted = None
 if drift_filter and drift_filter["review_id"] == st.session_state.get("review_id"):
@@ -198,12 +207,18 @@ rows = review_queue(
     search=search or None,
     inventory=imported_inventory,
     evidence="insufficient" if only_insufficient else None,
+    store=store,
+    assignee=reviewer if assigned_to_me and reviewer else None,
+    unresolved=True if only_unresolved else None,
 )
+# Collaboration metadata is shown alongside, never used to resolve or export a label.
+collab = collaboration_state(store.collaboration_history())
 
 records = []
 for r in rows:
     lr = r["labels"][label]
     d = decided.get(f"{r['resource_id']}|{label}")
+    item = collab.get((r["resource_id"], label)) or {}
     if hide_reviewed and d:
         continue
     if drifted is not None and r["resource_id"] not in drifted:
@@ -231,6 +246,8 @@ for r in rows:
             ),
             "decision": d["decision"] if d else "",
             "override": d["value"] if d and d["decision"] == "override" else None,
+            "assignee": item.get("assignee") or "",
+            "questions": item.get("unresolved_questions", 0),
         }
     )
 df = pd.DataFrame(records)
@@ -256,6 +273,8 @@ else:
             "confidence",
             "decision",
             "override",
+            "assignee",
+            "questions",
             "current",
             "status",
             "action",
@@ -273,6 +292,10 @@ else:
                 "Model score", min_value=0.0, max_value=1.0, format="percent"
             ),
             "why": st.column_config.TextColumn("Why", width="large"),
+            "assignee": st.column_config.TextColumn("Assigned to"),
+            "questions": st.column_config.NumberColumn(
+                "Unresolved questions", help="Open or answered, not yet resolved."
+            ),
             "decision": st.column_config.SelectboxColumn(
                 "Decision",
                 options=["", "accept", "reject", "override"],
@@ -287,6 +310,13 @@ else:
         },
     )
 
+    rationale = st.text_input(
+        "Rationale for these decisions (optional)",
+        key="decision_rationale",
+        max_chars=MAX_NOTE,
+        help="Why you overrode (or accepted / rejected) a suggestion. Kept in the review history "
+        "with each decision saved; never in plans, exports, logs or metrics.",
+    ).strip()
     revoke_reason = st.text_input(
         "Reason for clearing a decision (optional)",
         key="revoke_reason",
@@ -303,7 +333,13 @@ else:
                 with write:
                     if decision:
                         store.set(
-                            rid, label, decision, override, imported_inventory, reviewer=reviewer
+                            rid,
+                            label,
+                            decision,
+                            override,
+                            imported_inventory,
+                            reviewer=reviewer,
+                            rationale=rationale or None,
                         )
                     elif not store.revoke(
                         rid, label, reviewer=reviewer, reason=revoke_reason or None
@@ -346,6 +382,99 @@ else:
         if not bulk_errors:
             st.toast(f"Accepted {len(auto)} suggestion(s)")
             _refresh()
+
+# ── Collaboration ──────────────────────────────────────────────────────
+
+if not df.empty:
+    st.subheader("Assignments, notes and questions")
+    st.caption(
+        "Record who should investigate a label, short notes, and unresolved questions. "
+        "None of this is an approval: only a decision above changes the export. "
+        "Text is kept in the review history, never in logs, metrics, plans or exports."
+    )
+    target = st.selectbox("Resource", list(df["resource_id"]), key="collab_resource")
+    state = store.collaboration_item(target, label)
+
+    def _collaborate(action, success: str) -> None:
+        if not reviewer:
+            st.error("Enter your reviewer name or ID first.")
+            return
+        write = workflow_metrics.operation("collaboration_write", invalid=(DecisionError, KeyError))
+        try:
+            with write:
+                result = action()
+        except (DecisionError, KeyError) as exc:
+            st.error(str(exc) if isinstance(exc, DecisionError) else "Unknown resource.")
+            return
+        except Exception:
+            st.error(f"Could not save. Reference: `{write.correlation_id}`")
+            return
+        if result is None:
+            st.info("Nothing changed.")
+            return
+        st.toast(success)
+        _refresh()
+
+    acol, ncol = st.columns(2)
+    acol.markdown(
+        f"**Assigned to:** {state['assignee']} (by {state['assigned_by']}, {state['assigned_at']})"
+        if state["assignee"]
+        else "**Assigned to:** nobody"
+    )
+    assignee = acol.text_input("Assign to reviewer ID", key="collab_assignee", max_chars=128)
+    b1, b2 = acol.columns(2)
+    if b1.button("Assign", key="collab_assign", disabled=not reviewer or not assignee.strip()):
+        _collaborate(
+            lambda: store.assign(target, label, assignee, imported_inventory, reviewer=reviewer),
+            "Assigned",
+        )
+    if b2.button("Unassign", key="collab_unassign", disabled=not reviewer or not state["assignee"]):
+        _collaborate(lambda: store.unassign(target, label, reviewer=reviewer), "Unassigned")
+
+    note = ncol.text_area("Note or question", key="collab_text", max_chars=MAX_NOTE, height=80)
+    b3, b4 = ncol.columns(2)
+    if b3.button("Add note", key="collab_note", disabled=not reviewer or not note.strip()):
+        _collaborate(
+            lambda: store.add_note(target, label, note, imported_inventory, reviewer=reviewer),
+            "Note added",
+        )
+    if b4.button("Ask question", key="collab_ask", disabled=not reviewer or not note.strip()):
+        _collaborate(
+            lambda: store.ask_question(target, label, note, imported_inventory, reviewer=reviewer),
+            "Question opened",
+        )
+
+    unresolved = {q["id"]: q for q in state["questions"] if q["status"] != "resolved"}
+    if unresolved:
+        question = unresolved[
+            st.selectbox(
+                "Unresolved question",
+                list(unresolved),
+                format_func=lambda i: f"#{i} ({unresolved[i]['status']}) {unresolved[i]['text']}",
+                key="collab_question",
+            )
+        ]
+        reply = st.text_input("Answer or resolution", key="collab_reply", max_chars=MAX_NOTE)
+        b5, b6 = st.columns([1, 3])
+        if b5.button("Answer", key="collab_answer", disabled=not reviewer or not reply.strip()):
+            _collaborate(
+                lambda: store.answer_question(question["id"], reply, reviewer=reviewer),
+                "Answer added",
+            )
+        if b6.button("Resolve", key="collab_resolve", disabled=not reviewer):
+            _collaborate(
+                lambda: store.resolve_question(question["id"], reply or None, reviewer=reviewer),
+                "Question resolved",
+            )
+    if state["history"]:
+        with st.expander(f"History ({len(state['history'])} events)"):
+            st.dataframe(
+                pd.DataFrame(state["history"])[
+                    ["created_at", "event", "reviewer", "assignee", "question_id", "text"]
+                ],
+                hide_index=True,
+                width="stretch",
+            )
 
 # ── Export ─────────────────────────────────────────────────────────────
 

@@ -36,6 +36,10 @@ See the [five-minute walkthrough](docs/five-minute-demo.md).
 4. Return to **Import / reopen inventory** to resume a saved snapshot after a browser or app restart.
 5. Next cycle, save the new snapshot and open **Compare snapshots** to review only what changed.
 
+To hand work to a colleague, assign a label, add a note, or open a question below the review
+table, then filter by **Assigned to me** or **Only unresolved questions**. These never approve a
+change ([details](docs/decision-storage.md#assignments-notes-and-questions)).
+
 Snapshots, vocabularies, and approvals persist locally in `review-workspaces/` (configurable with
 `OBS_AGENT_REVIEW_DIR`). Keep this private directory outside version control and back it up.
 Saved reviews are also available through the REST API's `/reviews` routes and `review_cli.py`
