@@ -22,9 +22,9 @@ class TestEvalDryRun:
 
     @pytest.mark.parametrize("eval_case", RAG_DRY_RUN_EVALS, ids=lambda e: e["id"])
     def test_stub_retrieval_cases(self, eval_case):
-        from evals import _rag_dry_run_case
+        from evals import _check_rag_case
 
-        ok, missing = _check_eval(_rag_dry_run_case(eval_case), eval_case["must_contain"])
+        ok, missing = _check_rag_case(eval_case)
         assert ok, missing
 
     @pytest.mark.parametrize("eval_case", EVALS, ids=[e["id"] for e in EVALS])

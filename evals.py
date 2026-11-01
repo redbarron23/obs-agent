@@ -126,8 +126,15 @@ EVALS = [
 
 # Documentation-retrieval cases: dry run only, against a stub of the rag-observability
 # retrieval API (fixtures/), never the real service. Kept apart from EVALS so the live
-# evals and evals_mlflow.py are unchanged when OBS_AGENT_RAG_URL is unset.
-RAG_FIXTURE = Path(__file__).with_name("fixtures") / "rag_retrieve_tagging_standard.json"
+# evals and evals_mlflow.py are unchanged when OBS_AGENT_RAG_URL is unset. A case with
+# `dry_run_tool` also runs that cost tool for real, so it checks the billing facts and
+# the cited runbook sources together (issue #91); `docs_question` is what the model would
+# send to search_observability_docs, and `must_not_contain` lists what must be absent.
+FIXTURES = Path(__file__).with_name("fixtures")
+RAG_FIXTURE = FIXTURES / "rag_retrieve_tagging_standard.json"
+# Captured from rag-observability's api.py over its fictional corpus, which includes
+# data/runbooks/logging-cost-spike.md (see docs/cost-runbook-walkthrough.md).
+RUNBOOK_CORPUS = "corpus_sha256=931f94bb"
 RAG_DRY_RUN_EVALS = [
     {
         "id": "policy-env-values-cited",
@@ -140,26 +147,92 @@ RAG_DRY_RUN_EVALS = [
             "freshness=current",
             "untrusted",
         ],
-        "stub": (200, "fixture"),
+        "stub": (200, RAG_FIXTURE.name),
     },
     {
         "id": "policy-docs-unavailable",
         "question": "What does our standard require for the owner tag?",
-        "must_contain": ["status: index_unavailable", "policy guidance is unavailable"],
+        "must_contain": ["status: index_unavailable", "documentation guidance is unavailable"],
         "stub": (503, {"error": {"code": "index_unavailable", "message": "no index"}}),
+    },
+    # Cost findings plus cited runbook steps (issue #91).
+    {
+        "id": "cost-runbook-supported",
+        "question": "Which GCP project has the largest logging spike, and what does our "
+        "runbook say to investigate?",
+        "dry_run_tool": ("find_spikes", {"threshold_pct": 200, "platform": "gcp"}),
+        "docs_question": "What does our runbook say to investigate for a GCP logging cost spike?",
+        "must_contain": [
+            # Billing facts from the tool and the stated dataset and period.
+            "project-bravo on 2026-04-23: +405% ($990.00)",
+            "synthetic demo billing data",
+            "2026-05-03 to 2026-06-01 (30 days)",
+            "2026-04-03 to 2026-06-01",
+            # Cited runbook source and section, and the corpus identity.
+            'source="runbooks/logging-cost-spike.md" section="Investigation: GCP Cloud Logging"',
+            "bytes_ingested",
+            RUNBOOK_CORPUS,
+            "status: ok",
+        ],
+        "must_not_contain": ["may conflict"],
+        "stub": (200, "rag_retrieve_logging_cost_runbook.json"),
+    },
+    {
+        "id": "cost-runbook-no-match",
+        "question": "Which GCP project has the largest logging spike, and what does our "
+        "runbook say about its spend that day?",
+        "dry_run_tool": ("find_spikes", {"threshold_pct": 200, "platform": "gcp"}),
+        "docs_question": "How much did project-bravo spend on logging on 23 April?",
+        "must_contain": [
+            "project-bravo on 2026-04-23: +405% ($990.00)",
+            "2026-05-03 to 2026-06-01 (30 days)",
+            "status: no_match",
+            "documentation guidance is unavailable",
+            RUNBOOK_CORPUS,
+        ],
+        "must_not_contain": ["<untrusted_document_excerpt "],
+        "stub": (200, "rag_retrieve_no_match.json"),
+    },
+    {
+        "id": "cost-runbook-conflict",
+        "question": "sub-a1b2c3d4 spiked on Azure. Should we buy a Log Analytics commitment "
+        "tier now, according to our documents?",
+        "dry_run_tool": ("find_spikes", {"threshold_pct": 200, "platform": "azure"}),
+        "docs_question": "When should we buy a commitment tier after a logging cost spike?",
+        "must_contain": [
+            "sub-a1b2c3d4 on 2026-05-03: +331% ($2691.00)",
+            "2026-05-03 to 2026-06-01 (30 days)",
+            'source="runbooks/logging-cost-spike.md" section="Commitment tiers"',
+            'source="programme/COST_SMOOTHING.md" section="Commitment tiers"',
+            "may conflict: Commitment tiers",
+            RUNBOOK_CORPUS,
+        ],
+        "stub": (200, "rag_retrieve_commitment_tier_conflict.json"),
     },
 ]
 
 
 def _rag_dry_run_case(eval_case: dict) -> str:
+    """Tool facts (if the case names a cost tool) followed by the stubbed docs result."""
     status, payload = eval_case["stub"]
-    if payload == "fixture":
-        payload = json.loads(RAG_FIXTURE.read_text())
+    if isinstance(payload, str):
+        payload = json.loads((FIXTURES / payload).read_text())
     with policy_docs.override(
         policy_docs.RagConfig(url="http://127.0.0.1:8765"),
         policy_docs.stub_transport(status, payload),
     ):
-        return search_observability_docs(eval_case["question"])
+        docs = search_observability_docs(eval_case.get("docs_question", eval_case["question"]))
+    if "dry_run_tool" not in eval_case:
+        return docs
+    return _dry_run_case(eval_case) + "\n" + docs
+
+
+def _check_rag_case(eval_case: dict) -> tuple[bool, list[str]]:
+    """must_contain as for every case, plus nothing from must_not_contain."""
+    answer = _rag_dry_run_case(eval_case)
+    ok, missing = _check_eval(answer, eval_case["must_contain"])
+    present = [e for e in eval_case.get("must_not_contain", []) if e in answer]
+    return ok and not present, missing + [f"unexpected: {e}" for e in present]
 
 
 def _normalise(text: str) -> str:
@@ -230,7 +303,7 @@ def run_evals(
 
     if dry_run:
         for eval_case in RAG_DRY_RUN_EVALS:
-            ok, missing = _check_eval(_rag_dry_run_case(eval_case), eval_case["must_contain"])
+            ok, missing = _check_rag_case(eval_case)
             print(f"[{'PASS' if ok else 'FAIL'}] [DRY] {eval_case['id']} (stub retrieval)")
             if missing:
                 print(f"       Missing: {missing}")
