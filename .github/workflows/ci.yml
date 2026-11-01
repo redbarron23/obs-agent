@@ -80,12 +80,12 @@ jobs:
         run: docker compose -f compose.rag.yml up -d --build --wait --wait-timeout 600
 
       - name: Check real retrieval and authentication without an LLM
-        run: docker compose -f compose.rag.yml --profile checks run --rm smoke
+        run: docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke
 
       - name: Check graceful failure when RAG stops
         run: |
           docker compose -f compose.rag.yml stop rag
-          docker compose -f compose.rag.yml --profile checks run --rm smoke --rag-down
+          docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke --rag-down
 
       - name: Show service diagnostics
         if: always()

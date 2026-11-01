@@ -57,13 +57,15 @@ of this simulation's startup or smoke checks.
 ## Run the real-service smoke check
 
 ```bash
-docker compose -f compose.rag.yml --profile checks run --rm smoke
+docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke
 ```
 
 The check runs inside the obs-agent image and uses its production `policy_docs.retrieve` client
 against the real RAG service. It verifies obs-agent health and inventory access, tagging-policy
 source/section attribution, indexed corpus identity/current source freshness, an empty retrieval,
 and rejection of a wrong bearer key. It uses no provider key and records no approvals.
+Start the stack first and keep `--no-deps` on the check commands: Compose must not recreate the
+API container while the other services still share its network namespace.
 The `local-rag` CI job builds this same stack, runs the normal check, stops RAG and runs the outage
 check, then removes the disposable containers/volumes. It records the obs-agent revision and pinned
 RAG source. Normal unit tests remain independent of Docker and the second repository.
@@ -72,7 +74,7 @@ RAG source. Normal unit tests remain independent of Docker and the second reposi
 
 ```bash
 docker compose -f compose.rag.yml stop rag
-docker compose -f compose.rag.yml --profile checks run --rm smoke --rag-down
+docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke --rag-down
 ```
 
 The UI and obs-agent API remain running. Press **Show policy context** again: it should report that
@@ -86,7 +88,7 @@ Restore retrieval, then repeat the normal smoke check:
 docker compose -f compose.rag.yml start rag
 docker compose -f compose.rag.yml logs -f rag
 # Once RAG reports it is serving, leave the log view with Ctrl-C:
-docker compose -f compose.rag.yml --profile checks run --rm smoke
+docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke
 ```
 
 ## Networking and state
