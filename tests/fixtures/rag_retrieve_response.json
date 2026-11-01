@@ -1,0 +1,40 @@
+{
+  "query": {
+    "question": "Required tags?",
+    "k": 3,
+    "max_distance": 0.6,
+    "retrieval": "vector"
+  },
+  "hits": [
+    {
+      "rank": 1,
+      "chunk_id": "reference/tagging-standard.md#0",
+      "text": "Tagging Standard > Required tags\n\nEvery resource requires an environment tag. This fictional policy is for the integration test.",
+      "source": "reference/tagging-standard.md",
+      "file": "tagging-standard.md",
+      "section": "Required tags",
+      "distance": 0.0,
+      "exact_term_match": false
+    }
+  ],
+  "corpus": {
+    "provenance": "available",
+    "corpus_sha256": "0aaa890c211c625a58dc9318f3f1effde427df249abbc91a517ea6e7668af4fc",
+    "ingested_at": "2026-11-01T12:44:28.118523+00:00",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "embedding_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "chunk_size": 500,
+    "document_count": 1,
+    "collection": "observability-docs-71c3ecd46048468baaa637876e5d8591",
+    "chunk_count": 1
+  },
+  "freshness": {
+    "status": "current",
+    "checked_at": "2026-11-01T12:44:28.145299+00:00",
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "content_trust": "untrusted",
+  "generated": false
+}

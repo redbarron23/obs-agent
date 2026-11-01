@@ -59,16 +59,23 @@ Two further tools bridge to the tag inference system: `get_label_coverage` and
 ### Optional documentation search
 
 Run the [rag-observability retrieval API](https://github.com/redbarron23/rag-observability/issues/13),
-then set `OBS_AGENT_RAG_URL=http://127.0.0.1:8001` before starting obs-agent. The value is the base
+then set `OBS_AGENT_RAG_URL=http://127.0.0.1:8765` before starting obs-agent. The value is the base
 URL; the client posts to `/retrieve`. In Docker, use an address reachable from the container
 instead of its loopback address. Unset the variable to disable outbound RAG requests.
+When the server uses `RAG_API_KEY`, set the same value in obs-agent's `OBS_AGENT_RAG_API_KEY`;
+it is sent only as an Authorization bearer header. The client refuses redirects so credentials
+and questions are not forwarded to another URL.
 
 Ask a policy question such as "What tags does the documentation require?" The tool sends only
-its explicit question and result count, with a 30-second timeout. It returns validated JSON
-containing document excerpts and their source/section references, distances and indexed corpus
-identity. Unknown provenance stays explicit; an indexed timestamp does not establish that a
-policy is current. No matches is an empty chunk list. Service, timeout, malformed-response and
+its explicit question and `k` result count, with a 30-second timeout. Questions are limited to
+2,000 characters with no NUL, and `k` to 1–20, matching the server. It returns validated JSON
+with `hits` (including `chunk_id`, source/section, distance and exact-term-match flag),
+`corpus.provenance` and indexed corpus identity, source `freshness`, and the server's
+`content_trust: "untrusted"` / `generated: false` markers. Unknown provenance stays explicit;
+stale or unavailable freshness must be disclosed rather than presented as current policy.
+No matches is an empty hit list. Service, timeout, malformed-response and
 oversized-response errors return an explanatory tool result without exposing remote error bodies.
+RAG follows index switches automatically after ingestion; the caller does not cache responses.
 
 Only enable this for questions and documents approved for the retrieval service and selected LLM.
 The model may include details from the conversation in its search question. Retrieved text is sent

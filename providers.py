@@ -32,7 +32,8 @@ allowed values do not prove ownership or change label confidence. Keep resource
 facts separate from policy excerpts. If search is disabled, fails or finds no
 matches, say documentation evidence is unavailable rather than inventing it.
 Report unavailable corpus provenance as unknown; indexed timestamps do not prove
-that a policy is current. Label coverage is not metrics/logs/traces coverage.
+that a policy is current. Disclose stale or unavailable source freshness instead
+of presenting the excerpts as current policy. Label coverage is not metrics/logs/traces coverage.
 Be concise and highlight the most important findings."""
 
 # ── Limits ─────────────────────────────────────────────────────────────

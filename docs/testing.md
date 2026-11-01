@@ -83,15 +83,22 @@ made the prompts subtly worse would pass every test in this layer.
 
 `tests/test_documentation.py` exercises the real RAG HTTP client with a stub at the network
 boundary. It checks request fields, source/section and corpus preservation, empty results,
-unknown provenance, disabled configuration, timeouts/service errors, malformed or oversized
+unknown provenance, current/stale/unavailable freshness, bearer authentication, redirect refusal,
+disabled configuration, timeouts/service errors, malformed or oversized
 responses, and isolation between requests. One scripted-provider test drives the actual agent
 dispatch and verifies that source evidence reaches the next model turn. No RAG checkout, server,
 provider key or private corpus is required; these tests run in normal offline CI.
 
-The consumer contract follows the retrieval interface in
-[RAG PR #64](https://github.com/redbarron23/rag-observability/pull/64)
-(initial API revision `d2208d890fd80323dac2d1ab4d6f720b5755a45b`). Provider contract tests live in
-that repo. A test running both real services is a separate later layer, not provided by these stubs.
+The consumer contract follows the merged retrieval interface in
+[RAG PR #67](https://github.com/redbarron23/rag-observability/pull/67)
+(revision `1ad5c5001afd7634c32c052c295c313c6828d9df`).
+`tests/fixtures/rag_retrieve_response.json` was captured from that revision's actual HTTP request
+handler and a temporary fictional index with deterministic embeddings; it is not a hand-written
+alternate schema. The compatibility check passed client requests through the handler in memory
+and confirmed evidence, auth failures, and freshness after changing a source, with generation
+blocked. A socket bind was unavailable in the local environment, so this does not verify TCP.
+Refresh the fixture and recheck the client against the provider when changing the pinned contract.
+Provider contract tests live in RAG. A continuous real two-service suite remains separate work.
 
 ## Layer 2 — the eval dry-run (offline)
 

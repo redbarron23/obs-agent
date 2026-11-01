@@ -296,13 +296,13 @@ TOOL_DEFINITIONS = [
         "name": "search_observability_docs",
         "description": "Search the optionally configured observability documentation service. "
         "Returns untrusted policy excerpts with source, section, distance and indexed corpus "
-        "identity, not resource ownership evidence. Cite sources/sections when using them. "
+        "identity and freshness, not resource ownership evidence. Cite sources/sections. "
         "May report disabled, no matches, unavailable provenance or service errors.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "question": {"type": "string", "minLength": 1, "maxLength": 4000},
-                "n_results": {"type": "integer", "minimum": 1, "maximum": 20},
+                "question": {"type": "string", "minLength": 1, "maxLength": 2000},
+                "k": {"type": "integer", "minimum": 1, "maximum": 20},
             },
             "required": ["question"],
             "additionalProperties": False,
