@@ -3,6 +3,29 @@
 This walkthrough uses only the bundled synthetic inventory. It needs no cloud credentials, no
 provider account, and no LLM.
 
+## Label review in plain English
+
+Imagine a cupboard full of equipment. Each item needs a sticker saying which team owns it
+and whether it is for production or testing. Cloud labels serve the same purpose.
+
+obs-agent finds missing or suspicious labels, suggests replacements and shows the clues behind
+each suggestion. A person makes the decision:
+
+- **Accept:** use the suggested value.
+- **Reject:** keep the current value, including leaving a missing label unset.
+- **Override:** choose a different value from the inventory's allowed-value dropdown.
+
+Model scores help prioritize review; they do not prove ownership or represent a guaranteed
+probability. If policy context is enabled, RAG brings you relevant rulebook excerpts. Those rules
+can guide a review, but cannot prove who owns a particular resource.
+
+Click **Save decisions** to record your choices. Exporting **Reviewed change plan** creates a plan
+of accepted or overridden changes and their approval evidence; it does not change cloud resources.
+
+Try the Feynman method: pick one row and explain its suggestion, evidence and your decision in your
+own words, as if teaching someone new to cloud software. If a step is hard to explain, inspect that
+part of the UI and try again without jargon.
+
 ## 1. Start the demo (one minute)
 
 ```bash
