@@ -85,6 +85,26 @@ Open `http://localhost:8501` for review and `http://localhost:8000/docs` for the
 Both bind to loopback. The named volume retains decisions and imported reviews. Ollama is needed
 only for optional cost chat; Compose reaches the host automatically. See [Interfaces](docs/api.md).
 
+### Run obs-agent and RAG together
+
+For a local simulation with the real retrieval service and bundled fictional policies/runbook:
+
+```bash
+docker compose -f compose.rag.yml up -d --build --wait --wait-timeout 600
+docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke
+```
+
+Open **http://127.0.0.1:8501**, choose a resource in Label review and press **Show policy context**.
+The stack includes the obs-agent API on port 8000 and RAG on port 8765. It needs no cloud credentials
+or paid LLM; the first start downloads the local embedding model. Ports bind to loopback, and
+reviews/index/model cache persist in dedicated volumes. Its fixed demo keys are for sanitized
+local simulation only. Generated chat needs a separately configured model/provider.
+
+Keep `--no-deps` on smoke commands so Compose leaves the running network owner intact.
+Use `docker compose -f compose.rag.yml down` to stop while preserving state. The
+[Compose simulation guide](docs/local-rag-stack.md) covers RAG outage/recovery, local source
+overrides, authentication and a disposable reset.
+
 ## How it works
 
 ```mermaid
@@ -126,6 +146,7 @@ thresholds. See [Evaluation](docs/evaluation.md).
 | Inference, review, and drift | [Label inference](docs/label-inference.md) |
 | Optional cost Q&A | [Agent guide](docs/agent.md) |
 | Optional cited tagging-policy context (RAG) | [Policy context](docs/policy-context.md) |
+| Run obs-agent and RAG together locally | [Compose simulation](docs/local-rag-stack.md) |
 | REST API, Docker, hosted demo | [Interfaces](docs/api.md) |
 | Quality and calibration | [Evaluation](docs/evaluation.md) |
 | Agent tracing and evaluation walkthrough | [MLflow guide](docs/mlflow.md) |

@@ -1,0 +1,105 @@
+name: obs-rag-local
+
+x-agent: &agent
+  image: obs-agent-rag-local:dev
+  pull_policy: never
+  environment: &agent-environment
+    OBS_AGENT_API_KEY: local-obs-simulation
+    OBS_AGENT_RAG_URL: http://127.0.0.1:8765
+    RAG_API_KEY: local-rag-simulation
+    OBS_AGENT_RAG_TIMEOUT: "3"
+  volumes:
+    - review-state:/app/state
+
+services:
+  api:
+    <<: *agent
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8501:8501"
+      - "127.0.0.1:8765:8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  rag:
+    network_mode: service:api
+    depends_on:
+      api:
+        condition: service_healthy
+    build:
+      context: ${RAG_REPO_PATH:-https://github.com/redbarron23/rag-observability.git#c3124a043fbdfa4540b2597ea6cdd0783a2d87ac}
+      dockerfile_inline: |
+        FROM python:3.12-slim
+        COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
+        ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false
+        WORKDIR /app
+        RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+        COPY requirements.txt ./
+        RUN uv pip install --system torch --index-url https://download.pytorch.org/whl/cpu
+        RUN uv pip install --system -r requirements.txt
+        COPY api.py query.py ingest.py policy.py ./
+        COPY data/reference/tagging-standard.md data/reference/coverage-targets.md data/reference/gcp-azure-metrics-comparison.md /corpus/reference/
+        COPY data/architecture/observability_framework.md data/architecture/observability_tracing_use_cases.md /corpus/architecture/
+        COPY data/data-first-approach.md data/observability-setup-primer.md /corpus/
+        COPY data/programme/COST_SMOOTHING.md /corpus/programme/
+        COPY data/runbooks/logging-cost-spike.md /corpus/runbooks/
+        RUN useradd --create-home appuser && mkdir -p /state /home/appuser/.cache/huggingface && chown -R appuser:appuser /state /home/appuser/.cache
+        USER appuser
+    environment:
+      RAG_API_KEY: local-rag-simulation
+    volumes:
+      - rag-state:/state
+      - model-cache:/home/appuser/.cache/huggingface
+    command:
+      - sh
+      - -c
+      - >-
+        python ingest.py --data-dir /corpus --persist-dir /state/index &&
+        exec python api.py --host 0.0.0.0 --persist-dir /state/index --data-dir /corpus --retrieval hybrid
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8765/health', headers={'Authorization': 'Bearer ' + os.environ['RAG_API_KEY']}), timeout=3)"
+      interval: 5s
+      timeout: 5s
+      start_period: 180s
+      retries: 60
+
+  ui:
+    <<: *agent
+    network_mode: service:api
+    depends_on:
+      rag:
+        condition: service_healthy
+    command: ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  smoke:
+    <<: *agent
+    profiles: [checks]
+    network_mode: service:api
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      <<: *agent-environment
+      PYTHONPATH: /app
+    volumes:
+      - ./scripts/local_stack_smoke.py:/checks/smoke.py:ro
+    entrypoint: ["python", "/checks/smoke.py"]
+    command: []
+
+volumes:
+  review-state:
+  rag-state:
+  model-cache:

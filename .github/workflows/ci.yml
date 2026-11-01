@@ -63,6 +63,38 @@ jobs:
           MLFLOW_DISABLE_AGENT_HINT: "1"
         run: uv run pytest tests/test_observability.py -v --tb=short
 
+  local-rag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Record the consumer revision and pinned RAG source
+        run: |
+          git rev-parse HEAD
+          docker compose -f compose.rag.yml config --format json | python -c 'import json,sys; print(json.load(sys.stdin)["services"]["rag"]["build"]["context"])'
+
+      - name: Build and start the simulation
+        run: docker compose -f compose.rag.yml up -d --build --wait --wait-timeout 600
+
+      - name: Check real retrieval and authentication without an LLM
+        run: docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke
+
+      - name: Check graceful failure when RAG stops
+        run: |
+          docker compose -f compose.rag.yml stop rag
+          docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke --rag-down
+
+      - name: Show service diagnostics
+        if: always()
+        run: docker compose -f compose.rag.yml logs --no-color api ui rag
+
+      - name: Remove the disposable simulation
+        if: always()
+        run: docker compose -f compose.rag.yml down -v
+
   docker:
     runs-on: ubuntu-latest
     steps:
