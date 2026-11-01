@@ -175,6 +175,39 @@ uv run evals.py --dry-run
 
 Follow the [open-source roadmap](https://github.com/users/redbarron23/projects/2).
 
+### Testing the RAG integration
+
+Put a test in the repo that owns the behavior it checks and normally fixes its failures.
+For the planned [rag-observability integration](https://github.com/redbarron23/obs-agent/issues/90),
+obs-agent is the caller and RAG provides the documentation API:
+
+| Behavior being checked | Test owner |
+| --- | --- |
+| API request validation, response fields, provenance, and retrieval without generation | rag-observability: provider contract tests |
+| Finding the policy section that supports a question | rag-observability: retrieval evaluations |
+| Handling RAG responses, source references, no matches, timeouts, and errors | obs-agent: consumer tests with a stub RAG service |
+| A real obs-agent tool retrieves evidence from a real RAG service | obs-agent: cross-repo smoke test |
+
+Build the checks alongside the integration, in this order:
+
+1. Add provider contract tests with the [RAG HTTP API](https://github.com/redbarron23/rag-observability/issues/13).
+2. Add offline consumer tests when implementing the documentation tool in obs-agent. Keep these
+   in ordinary CI; assert source attribution, safe failure handling, and selected-review isolation.
+3. Once both sides exist, add one real-service smoke test here: ingest a tiny fictional Markdown
+   corpus, start RAG, call it through the obs-agent tool, and verify the supporting source/section
+   and corpus identity survive. This retrieval check needs no paid generation call.
+
+Pin the other repo to an explicit commit or release and record both revisions in test output.
+Run the real-service check separately from each repo's normal independent suite, initially on
+manual request and before integration releases. A scheduled check against the provider's latest
+revision can detect upcoming incompatibilities, but should remain separate from the pinned check.
+Generate the test's index from its fixture; do not depend on a developer's private corpus or index.
+
+The existing pytest `integration` marker is reserved for opt-in live LLM tests; do not reuse it
+for offline consumer tests. Keep any paid generation evaluation explicitly opt-in. Avoid duplicating
+the same end-to-end suite in both repos. A separate integration repo is unnecessary unless a team
+starts owning a shared deployment across several services.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
