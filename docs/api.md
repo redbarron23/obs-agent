@@ -108,6 +108,8 @@ uv run python review_cli.py queue "$ID" --label team --hide-reviewed
 uv run python review_cli.py decide "$ID" gcp-demo-003 team accept --reviewer finops-reviewer
 uv run python review_cli.py export "$ID" --format plan --output approved-label-change-plan.json
 uv run python plan_validation.py approved-label-change-plan.json fresh.csv --review-id "$ID"
+# after the delivery system applied it, against a newly exported inventory:
+uv run python plan_reconciliation.py approved-label-change-plan.json after.csv --review-id "$ID"
 ```
 
 `undo REVIEW_ID RESOURCE LABEL [--reviewer R] [--reason TEXT]` revokes a decision and records a

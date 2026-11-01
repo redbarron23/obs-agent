@@ -25,6 +25,7 @@ needs no LLM, while cost Q&A uses an LLM only to choose and summarise determinis
 | `review_workspaces.py` / `review_context.py` | Saved snapshots and approval fingerprints |
 | `review_cli.py` | Command-line access to saved reviews (import, queue, decide, export) |
 | `plan_validation.py` | Read-only pre-delivery check of a reviewed plan against a fresh inventory |
+| `plan_reconciliation.py` | Read-only post-delivery reconciliation of an applied plan against a fresh inventory |
 | `inventory.py` | Seeded synthetic inventory with true and observed labels |
 | `labeling.py` | Cleaning, rules, logistic regression, explanations, and scoring |
 | `label_review.py` | Review decisions, append-only feedback, change plans, and exports |
