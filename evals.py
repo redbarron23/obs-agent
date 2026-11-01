@@ -12,10 +12,13 @@ Dry-run mode checks tool outputs directly — fully deterministic, no API key.
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
+import policy_docs
 from agent import run
-from tools import TOOL_DISPATCH
+from tools import TOOL_DISPATCH, search_observability_docs
 
 # Ground-truth expected identifiers.  These are stable because data.py
 # uses a fixed random seed.
@@ -121,6 +124,44 @@ EVALS = [
 ]
 
 
+# Documentation-retrieval cases: dry run only, against a stub of the rag-observability
+# retrieval API (fixtures/), never the real service. Kept apart from EVALS so the live
+# evals and evals_mlflow.py are unchanged when OBS_AGENT_RAG_URL is unset.
+RAG_FIXTURE = Path(__file__).with_name("fixtures") / "rag_retrieve_tagging_standard.json"
+RAG_DRY_RUN_EVALS = [
+    {
+        "id": "policy-env-values-cited",
+        "question": "Which environment values does our tagging standard allow?",
+        "must_contain": [
+            "reference/tagging-standard.md",
+            "Allowed values",
+            "sandbox",
+            "corpus_sha256=0a50d302",
+            "freshness=current",
+            "untrusted",
+        ],
+        "stub": (200, "fixture"),
+    },
+    {
+        "id": "policy-docs-unavailable",
+        "question": "What does our standard require for the owner tag?",
+        "must_contain": ["status: index_unavailable", "policy guidance is unavailable"],
+        "stub": (503, {"error": {"code": "index_unavailable", "message": "no index"}}),
+    },
+]
+
+
+def _rag_dry_run_case(eval_case: dict) -> str:
+    status, payload = eval_case["stub"]
+    if payload == "fixture":
+        payload = json.loads(RAG_FIXTURE.read_text())
+    with policy_docs.override(
+        policy_docs.RagConfig(url="http://127.0.0.1:8765"),
+        policy_docs.stub_transport(status, payload),
+    ):
+        return search_observability_docs(eval_case["question"])
+
+
 def _normalise(text: str) -> str:
     """Lowercase and treat '-', '_' and whitespace as the same separator.
 
@@ -186,6 +227,14 @@ def run_evals(
             passed += 1
         else:
             failed += 1
+
+    if dry_run:
+        for eval_case in RAG_DRY_RUN_EVALS:
+            ok, missing = _check_eval(_rag_dry_run_case(eval_case), eval_case["must_contain"])
+            print(f"[{'PASS' if ok else 'FAIL'}] [DRY] {eval_case['id']} (stub retrieval)")
+            if missing:
+                print(f"       Missing: {missing}")
+            passed, failed = passed + ok, failed + (not ok)
 
     print(f"\nResults: {passed}/{passed + failed} passed")
     return passed, failed

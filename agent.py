@@ -59,7 +59,7 @@ from providers import (  # noqa: F401  (re-exported for callers and tests)
     model_warning,
     served_by,
 )
-from tools import TOOL_DISPATCH
+from tools import TOOL_DISPATCH, optional_tool_dispatch
 
 MAX_TURNS = 10
 MAX_HISTORY = 20
@@ -89,14 +89,16 @@ def _execute_tool(block, *, verbose: bool) -> str:
 def _dispatch_tool(block, *, verbose: bool) -> str:
     """Dispatch a tool call, returning an error string on failure."""
     name = block.name
-    if name not in TOOL_DISPATCH:
-        available = ", ".join(sorted(TOOL_DISPATCH))
+    # Optional tools (search_observability_docs) join only when configured.
+    dispatch = {**TOOL_DISPATCH, **optional_tool_dispatch()}
+    if name not in dispatch:
+        available = ", ".join(sorted(dispatch))
         msg = f"Error: unknown tool '{name}'. Available tools: {available}"
         if verbose:
             print(f"  [tool error: {msg}]", file=sys.stderr, flush=True)
         return msg
     try:
-        return TOOL_DISPATCH[name](block.input)
+        return dispatch[name](block.input)
     except Exception as exc:
         msg = f"Error executing tool '{name}': {exc}"
         if verbose:

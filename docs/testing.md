@@ -9,7 +9,7 @@ written**, not that **the model answers well**.
 | Layer | Count | Question it answers | Runs in CI? | Needs an API key? |
 |---|---|---|---|---|
 | Unit + integration tests | See pytest collection | Does the code do what it says? | Yes | No |
-| Eval dry-run | 12 | Do the tool outputs still contain the facts the answers depend on? | Yes | No |
+| Eval dry-run | 12 + 2 stub-retrieval | Do the tool outputs still contain the facts the answers depend on? | Yes | No |
 | Live evals | 12 | Does the model actually use those facts to answer correctly? | **No** | Yes |
 
 The offline unit and integration tests run in CI on every push and need no provider. The 12 live evals do not run in CI,
@@ -85,12 +85,18 @@ made the prompts subtly worse would pass every test in this layer.
 contain. In dry-run mode the **tools** are called for real and the model's job is stubbed:
 
 ```bash
-uv run evals.py --dry-run     # 12/12 must pass; this is what CI runs
+uv run evals.py --dry-run     # 14/14 must pass (12 + 2 stub-retrieval); this is what CI runs
 ```
 
 So a dry-run case catches a genuine class of regression — a tool that stops returning the fact an
 answer depends on, a renamed field, a changed sort order — without needing a model. `test_evals.py`
 runs the whole dry-run and each case individually.
+
+Two further dry-run cases (`RAG_DRY_RUN_EVALS`) exercise `search_observability_docs` against a
+stubbed retrieval response (`fixtures/rag_retrieve_tagging_standard.json`): a cited, supported
+answer and an unavailable index. They never reach the real rag-observability service and are not
+part of the live evals. `tests/test_policy_docs.py` covers the client and the review-page action
+against a stub HTTP server; see [Policy context](policy-context.md#tests).
 
 It does **not** catch a model that ignores the tool output. That is the whole reason layer 3 exists.
 
