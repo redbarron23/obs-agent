@@ -46,6 +46,8 @@ The backup, verify and restore procedure, with its operator checklist, is in
   Terraform file, or shell script through the normal delivery system.
 - [ ] Immediately before delivery, check the plan against a freshly exported inventory (see
   [Pre-delivery plan validation](#pre-delivery-plan-validation)). Deliver only on `pass`.
+- [ ] After delivery, reconcile the plan against a newly exported inventory (see
+  [Post-delivery reconciliation](#post-delivery-reconciliation)) and keep the report with the plan.
 - [ ] Store exports in an access-controlled audit location. Retain them for the period required by
   the organisation's finance, security, and records policies; assign an owner for deletion when
   that period expires.
@@ -83,6 +85,44 @@ Unrelated changes elsewhere in the estate do not fail the check. Without `--revi
 only tag before-values are compared, and the report warns about it. The check never changes tags,
 decisions, snapshots or plans, and never moves an approval to the fresh inventory: on `fail`, import
 the fresh inventory, review the flagged resources again, and export a new plan.
+
+## Post-delivery reconciliation
+
+A reviewed plan and a successful delivery job do not show which label changes reached the estate.
+After the delivery system has applied a plan, export the inventory again and run the read-only
+reconciliation:
+
+```bash
+uv run python plan_reconciliation.py plan.json after.csv --review-id <saved-review-id> --output reconciliation.json
+# or: --source reviewed.csv [--vocabulary vocab.json]; in the image: docker compose exec api python plan_reconciliation.py ...
+```
+
+The plan is first checked exactly as in [pre-delivery validation](#pre-delivery-plan-validation)
+(schema, reviewed-only, approval provenance); with `--review-id`/`--source` it must also match the
+reviewed snapshot. Each planned tag then gets one outcome, compared as the executable exports write
+values (GCP lowercased):
+
+| Tag outcome | Observed value |
+| --- | --- |
+| `applied` | The approved value |
+| `not_applied` | Still the reviewed before-value |
+| `conflicting` | Neither the before-value nor the approved value |
+| `unavailable` | The resource is absent, or listed under another cloud |
+
+Each resource is `applied`, `partially_applied`, `not_applied`, `conflicting` or `unavailable`.
+With the reviewed snapshot, the report also lists `unplanned_changes`: other tags on planned
+resources that differ from review. Tags and resources outside the plan are otherwise ignored.
+
+The JSON report (`report_version` 1) records the reconciliation time, the plan's identity (canonical
+SHA-256, `inventory_id`, `model_version`, generation time, reviewers), the observed inventory's
+`inventory_id`, and from the CLI the SHA-256 of both input files and the review ID. Given the same
+inputs it is identical apart from `reconciled_at`. Exit status is 0 for `complete` (every planned
+tag applied), 1 for `incomplete`, and 2 for an invalid plan or unreadable input.
+
+A snapshot shows values, not causes: the report never says why a change is missing or who set a
+conflicting value; use the delivery system's logs for that. Reconciliation never changes tags,
+decisions, approvals, snapshots or plans, and never retries delivery. To deliver missing changes,
+review the affected resources again on a fresh snapshot and export a new plan.
 
 ## Confidence-threshold changes
 
