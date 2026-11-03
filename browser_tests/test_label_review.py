@@ -136,9 +136,10 @@ def choose(page, resource, column, value):
     expect(cell(page, resource, column)).to_have_text(value)
 
 
-def save(page):
+def save(page, reviewed):
     page.get_by_role("button", name=re.compile("Save decisions")).click()
-    expect(page.get_by_test_id("stToast")).to_contain_text("Saved 1 decision(s)")
+    metric = page.get_by_test_id("stMetric").filter(has=page.get_by_text("Reviewed", exact=True))
+    expect(metric.get_by_test_id("stMetricValue")).to_have_text(str(reviewed))
 
 
 def download_plan(page):
@@ -159,9 +160,9 @@ def test_review_decisions_reload_and_export(app):
         try:
             review_page(page, app)
             choose(page, "gcp-demo-003", "Decision", "accept")
-            save(page)
+            save(page, 1)
             choose(page, "az-demo-001", "Decision", "reject")
-            save(page)
+            save(page, 2)
             page.get_by_role("radio", name="env", exact=True).check()
             choose(page, "gcp-demo-003", "Decision", "override")
             invalid = dropdown(page, "gcp-demo-003", "Override value")
@@ -177,7 +178,7 @@ def test_review_decisions_reload_and_export(app):
             assert "not-an-allowed-environment" not in json.dumps(invalid_plan)
             assert all("env" not in change["tags"] for change in invalid_plan["changes"])
             choose(page, "gcp-demo-003", "Override value", "prod")
-            save(page)
+            save(page, 3)
             original_plan = download_plan(page)
             page.screenshot(path=str(ARTIFACTS / "saved-review.png"), full_page=True)
             context.tracing.stop(path=str(ARTIFACTS / "editing-trace.zip"))
