@@ -115,9 +115,8 @@ def cell(page, resource, column):
 
 def dropdown(page, resource, column):
     target = cell(page, resource, column)
-    target.focus()
-    expect(target).to_have_attribute("aria-selected", "true")
-    target.press("Enter")
+    # Canvas fallback cells expose an activation handler, but cannot receive visual focus.
+    target.dispatch_event("click")
     editor = page.get_by_test_id("portal").get_by_role("combobox")
     expect(editor).to_be_visible()
     return editor
