@@ -81,7 +81,7 @@ def app(tmp_path):
 def review_page(page, url, *, reopen=False):
     page.goto(url)
     page.get_by_test_id("stSidebar").get_by_role(
-        "link", name=re.compile("Import / reopen inventory")
+        "link", name="Import / reopen inventory", exact=True
     ).click()
     if reopen:
         page.get_by_role("button", name="Open saved review", exact=True).click()
