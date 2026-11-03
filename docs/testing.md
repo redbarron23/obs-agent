@@ -17,6 +17,26 @@ and that gap is deliberate — see [What the mocks cannot catch](#what-the-mocks
 
 ## Layer 1 — unit and integration tests (offline)
 
+### Browser review workflow
+
+The optional Chromium check exercises the production UI: import the fictional persistence
+fixture, select accept/reject/override in the table, reject an out-of-vocabulary override, save,
+reopen in a fresh browser context, and download/validate the reviewed change plan.
+
+```bash
+uv sync --locked --group browser
+uv run --group browser playwright install chromium
+uv run --group browser pytest browser_tests -v
+```
+
+On Linux, use `playwright install --with-deps chromium` when browser system libraries are missing.
+The test starts its own loopback Streamlit process on a free port and uses temporary decision
+and review databases. It needs no Docker, RAG download, cloud credentials or paid LLM, and does
+not connect to a developer's running stack. Ordinary pytest collection excludes `browser_tests`.
+The `browser-review` CI job runs it separately and retains screenshots, traces and server logs
+under `output/playwright/` for seven days. These artifacts contain only the fictional test data.
+The Compose restart check covers container/volume persistence separately.
+
 ```bash
 uv run pytest tests/ -v                    # everything except live evals
 uv run pytest tests/ -v -m "not integration"   # same thing, explicit
