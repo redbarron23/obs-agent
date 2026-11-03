@@ -102,6 +102,7 @@ def cell(page, resource, column):
     search.fill(resource)
     search.press("Enter")
     editor = page.locator('[class*="st-key-editor-"]').get_by_test_id("stDataFrame")
+    expect(editor.get_by_role("grid", include_hidden=True)).to_have_attribute("aria-rowcount", "2")
     # Glide exposes its canvas cells through an accessibility table, including column indexes.
     row = editor.get_by_role("row", include_hidden=True).filter(
         has=page.get_by_role("gridcell", name=resource, exact=True, include_hidden=True)
@@ -115,9 +116,11 @@ def cell(page, resource, column):
 
 def dropdown(page, resource, column):
     target = cell(page, resource, column)
-    canvas = page.locator('[class*="st-key-editor-"]').get_by_test_id("data-grid-canvas")
-    # The canvas needs a real pointer focus; filtering above leaves exactly one resource row.
-    canvas.click(position={"x": 10, "y": 50})
+    grid = page.locator('[class*="st-key-editor-"]').get_by_test_id("stDataFrame")
+    canvas = grid.get_by_test_id("data-grid-canvas")
+    # Glide routes pointer input through its scroller above the canvas; one filtered row remains.
+    grid.evaluate("el => el.scrollIntoView({block: 'center'})")
+    grid.click(position={"x": 10, "y": 50})
     for _ in range(int(target.get_attribute("aria-colindex")) - 1):
         canvas.press("ArrowRight")
     expect(target).to_have_attribute("aria-selected", "true")
