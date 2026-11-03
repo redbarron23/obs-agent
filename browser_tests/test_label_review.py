@@ -115,8 +115,13 @@ def cell(page, resource, column):
 
 def dropdown(page, resource, column):
     target = cell(page, resource, column)
-    # Canvas fallback cells expose an activation handler, but cannot receive visual focus.
-    target.dispatch_event("click")
+    canvas = page.locator('[class*="st-key-editor-"]').get_by_test_id("data-grid-canvas")
+    # The canvas needs a real pointer focus; filtering above leaves exactly one resource row.
+    canvas.click(position={"x": 10, "y": 50})
+    for _ in range(int(target.get_attribute("aria-colindex")) - 1):
+        canvas.press("ArrowRight")
+    expect(target).to_have_attribute("aria-selected", "true")
+    canvas.press("Enter")
     editor = page.get_by_test_id("portal").get_by_role("combobox")
     expect(editor).to_be_visible()
     return editor
