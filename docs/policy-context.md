@@ -103,8 +103,13 @@ the facts and `search_observability_docs` for the cited policy.
 | Retrieval service | A fixed question chosen by label (`team` / `env`) and status (`untagged` / `suspect`), `k`, and the fixed "not evaluated" question. No resource ID, name, owner, parent, tag value, score, decision, reviewer or note | The `question` the model writes, and `k`. The tool description tells the model not to include resource IDs or owners; resource facts in chat are synthetic |
 | LLM provider | Nothing: the page makes no LLM call | The tool result: framed excerpts, corpus identity and freshness, plus the synthetic inventory fingerprint |
 | Workflow metrics and logs | Nothing is recorded; a failure logs only its status at INFO, never the question | Same |
+| OpenTelemetry / Jaeger (optional, off by default) | Caller outcome, HTTP status and duration; the RAG child also records source paths/distances. W3C trace context is sent for correlation. No question, excerpt, inventory, reviewer or credential text | Same content-free client/provider metadata; no prompts, tool results or answers |
 | MLflow tracing (optional, off by default) | Nothing | When tracing is on, the tool span records the model-written question as input and the framed result as output, like every other tool |
 | Bearer key | Sent only to the configured retrieval URL, never logged or shown | Same |
+
+The content-free OTel spans and MLflow tool tracing are separate opt-ins. Enabling Jaeger does
+not enable MLflow or its content capture. If you enable MLflow for chat as well, its tool spans
+still have the input/output boundary described above. See [distributed tracing setup](local-rag-stack.md#follow-one-policy-request-across-services).
 
 The retrieval service itself logs only method, path and status, not the question (see its
 `docs/http-api.md`). It has no per-document access control, so index only documents every caller may

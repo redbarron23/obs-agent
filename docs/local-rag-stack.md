@@ -29,7 +29,7 @@ This is a local simulation with fixed demo keys: `local-obs-simulation` for obs-
 and `local-rag-simulation` for RAG's bearer header. Use only fictional/sanitized data in this stack;
 these public demo values are not deployment credentials.
 
-By default the RAG build uses the pinned Git source `fb7ee91` (retrieval contract 1.1.0). obs-agent
+By default the RAG build uses the pinned Git source `19ebcdd` (retrieval contract 1.1.0). obs-agent
 builds from this checkout. The RAG image copies application modules and the nine bundled sample
 documents explicitly; it never copies `data/uploads/`. To iterate on your local RAG checkout:
 
@@ -81,8 +81,8 @@ docker compose -f compose.rag.yml -f compose.telemetry.yml up -d --build --wait 
 docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps --entrypoint python smoke /checks/telemetry.py
 ```
 
-Open <http://127.0.0.1:16686> and select **obs-rag-retrieval**. The check makes one request through
-obs-agent's production client and verifies a new `rag.question` → `rag.retrieve` trace, parentage,
+Open <http://127.0.0.1:16686> and select **obs-agent-policy**. The check makes one request through
+obs-agent's production client and verifies a new `obs.policy.retrieve` → `rag.question` → `rag.retrieve` trace, parentage,
 tagging-policy source and distances, and absence of question/excerpt text and credentials.
 Avoid other policy requests during the check. No generation span or paid provider call is expected.
 The image installs the optional HTTP exporter; a `RAG_REPO_PATH` override must include
@@ -102,12 +102,13 @@ spans can be dropped and replay is not guaranteed. CI runs these same checks. Ja
 in memory, separately from saved reviews. Its UI binds to loopback; OTLP stays inside the Compose
 network at `http://jaeger:4318/v1/traces`. Exported metadata includes source paths, distances and
 configured service information. Use only the bundled fictional corpus in this simulation.
-`OBS_JAEGER_UI_PORT` changes the UI port; `OBS_RAG_TRACE_SERVICE` changes the service name.
+`OBS_JAEGER_UI_PORT` changes the UI port; `OBS_RAG_TRACE_SERVICE` and `OBS_POLICY_TRACE_SERVICE`
+change the distinct provider and caller service names.
 
 To turn tracing off, run `docker compose -f compose.rag.yml -f compose.telemetry.yml down`, then
 start with `compose.rag.yml` alone. Do not add `-v` if you want to keep reviews and the index.
 See the [RAG telemetry guide](https://github.com/redbarron23/rag-observability/blob/main/docs/telemetry.md)
-for span interpretation. Cross-repository trace propagation is tracked separately in
+for span interpretation. Cross-repository trace propagation is coordinated in
 [#112](https://github.com/redbarron23/obs-agent/issues/112).
 
 ## Check review persistence automatically
@@ -129,8 +130,8 @@ The check uses a generated project/image name, no published ports and its own re
 It does not stop or change your running simulation. No RAG download, cloud credentials or LLM
 are needed. On success or failure it prints service diagnostics and removes its disposable
 containers, volumes and image. Command/startup waits are bounded. The `review-persistence` CI job
-runs the same command; this checks storage across container recreation, while browser editing
-is tracked separately in [#107](https://github.com/redbarron23/obs-agent/issues/107).
+runs the same command; this checks storage across container recreation. The separate
+`browser-review` job checks browser editing, reopening and exports through Chromium.
 
 ## Simulate a RAG outage
 
@@ -175,9 +176,8 @@ docker compose -f compose.rag.yml down -v
 
 For failures, use `docker compose -f compose.rag.yml logs api ui rag`. If startup fails during a
 download, correct the network access and start again. Kubernetes and paid generation evaluations
-are separate follow-ups. This stack and its pinned CI job support
-[#102](https://github.com/redbarron23/obs-agent/issues/102); scheduled checks against future RAG
-revisions and contract-upgrade scenarios can extend it later.
+are separate follow-ups. The pinned and weekly/manual provider jobs share the contract, freshness and outage checks
+described below.
 
 ## Contract, stale-source and latest-provider checks
 
@@ -224,3 +224,30 @@ A newer provider failure should be reproduced at its recorded SHA, fixed or repo
 and checked again. Promote a passing SHA by editing the Compose pin in a normal PR, reviewing
 the provider's contract policy and passing the pinned suite. Never bypass a failing compatibility
 check by treating incompatible data as an empty retrieval.
+
+## Follow one policy request across services
+
+With `compose.telemetry.yml`, API, UI and smoke clients export metadata-only caller spans and send
+W3C `traceparent`/`tracestate` to RAG. The provider validates context after authentication and joins
+the same trace. Select **obs-agent-policy** in Jaeger or open the exact ID printed by the smoke
+check. You should see the caller with a RAG question child and retrieval grandchild, served by
+**obs-rag-retrieval**. No generation is requested by this workflow.
+
+The caller records only outcome, HTTP status and duration. It never records question, excerpt,
+reviewer, inventory, auth header, endpoint URL or exception text. Only W3C trace context is
+propagated; baggage is excluded. Trace headers cannot authenticate a request, approve a label,
+or enter saved approval records/exports. Invalid context starts an independent provider trace.
+
+The caller duration includes network waiting and the provider's work. The question includes
+retrieval. Do not add all three as separate elapsed time. A caller timeout, RAG outage or rejected
+bearer key can leave only the caller span; inspect its `rag.client.outcome` and HTTP status first.
+Collector problems leave ordinary retrieval/review results unchanged. Tracing remains off in the
+base stack, uses a private OTel provider and does not enable MLflow content capture.
+
+For CLI/local development install `uv sync --group telemetry` and set standard OTel exporter
+variables before the process starts; `OTEL_TRACES_EXPORTER=none`, an unset value or
+`OTEL_SDK_DISABLED=true` disables these spans. Only OTLP HTTP/protobuf and console are supported.
+The Docker image includes the optional exporter but activates it only through explicit configuration.
+Configuration is cached per process; restart after changes. The
+[RAG learning guide](https://github.com/redbarron23/rag-observability/blob/main/docs/telemetry.md#incoming-distributed-trace-context)
+explains parentage, absent children, sampling and interpretation limits.

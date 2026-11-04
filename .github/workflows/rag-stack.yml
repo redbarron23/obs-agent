@@ -16,6 +16,7 @@ jobs:
       contents: read
     env:
       COMPOSE_PROJECT_NAME: obs-rag-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      OBS_POLICY_TRACE_SERVICE: obs-policy-ci-${{ github.run_id }}-${{ github.run_attempt }}
       OBS_RAG_TRACE_SERVICE: obs-rag-ci-${{ github.run_id }}-${{ github.run_attempt }}
       OBS_JAEGER_UI_PORT: "0"
       RAG_REPO_PATH: ${{ inputs.provider_sha != '' && format('https://github.com/redbarron23/rag-observability.git#{0}', inputs.provider_sha) || '' }}
