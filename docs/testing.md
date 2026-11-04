@@ -189,6 +189,7 @@ the clean estate stays byte-identical so the published metrics keep meaning the 
 | REST API (`test_api.py`) | `/ask`, `/ask/stream` (SSE + errors), sessions, API-key auth, OpenAPI contents |
 | Model config (`test_model_config.py`) | Env defaults and fail-fast, CLI/API/UI wiring, Claude adaptive-thinking request, thinking-block replay, refusal and fallback reporting, answer-token budget and truncation reporting |
 | Evals (`test_evals.py`) | 12 deterministic dry-run cases, the full dry-run, matcher checks and an opt-in live run |
+| Policy tracing (`test_policy_tracing.py`, `test_telemetry_stack_smoke.py`) | W3C headers, concurrency, success/error outcomes, missing/disabled SDK, content exclusion and exact cross-service graph validation |
 | Observability (`test_observability.py`) | Span recording, MLflow wiring when the `mlops` group is installed, no-op behaviour when it is absent, degraded tracing when the tracking store is down |
 
 ## CI
@@ -200,6 +201,13 @@ across Python 3.11 and 3.12, alongside a Docker job that builds the image and sm
 A separate `mlops` job installs the optional MLflow dependency group and runs the mocked tracing
 and scorer integration tests in `tests/test_observability.py`. For an offline exercise that leaves
 a trace you can inspect in the UI, see the [MLflow guide](mlflow.md).
+
+The `local-rag / stack` job builds the pinned real provider and exercises HTTP contract rejection,
+source freshness, RAG outage, and optional Jaeger delivery/recovery through the production client.
+Its distributed check requires exactly three linked spans across distinct caller/provider services,
+with no generation or request/excerpt/key text. The weekly/manual latest-provider workflow reuses
+that stack job with a separately resolved SHA. See the [Compose guide](local-rag-stack.md) for
+commands, recorded revisions, cleanup and failure diagnosis. Ordinary tests do not need Jaeger.
 
 ## Running things
 

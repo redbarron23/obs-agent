@@ -130,8 +130,8 @@ The check uses a generated project/image name, no published ports and its own re
 It does not stop or change your running simulation. No RAG download, cloud credentials or LLM
 are needed. On success or failure it prints service diagnostics and removes its disposable
 containers, volumes and image. Command/startup waits are bounded. The `review-persistence` CI job
-runs the same command; this checks storage across container recreation, while browser editing
-is tracked separately in [#107](https://github.com/redbarron23/obs-agent/issues/107).
+runs the same command; this checks storage across container recreation. The separate
+`browser-review` job checks browser editing, reopening and exports through Chromium.
 
 ## Simulate a RAG outage
 
@@ -176,9 +176,8 @@ docker compose -f compose.rag.yml down -v
 
 For failures, use `docker compose -f compose.rag.yml logs api ui rag`. If startup fails during a
 download, correct the network access and start again. Kubernetes and paid generation evaluations
-are separate follow-ups. This stack and its pinned CI job support
-[#102](https://github.com/redbarron23/obs-agent/issues/102); scheduled checks against future RAG
-revisions and contract-upgrade scenarios can extend it later.
+are separate follow-ups. The pinned and weekly/manual provider jobs share the contract, freshness and outage checks
+described below.
 
 ## Contract, stale-source and latest-provider checks
 
