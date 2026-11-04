@@ -142,6 +142,14 @@ def save(page, reviewed):
     expect(metric.get_by_test_id("stMetricValue")).to_have_text(str(reviewed))
 
 
+def select_label(page, label):
+    page.get_by_role("radiogroup", name="Label", exact=True).get_by_text(label, exact=True).click()
+    expect(page.get_by_role("radio", name=label, exact=True)).to_be_checked()
+    expect(
+        page.get_by_role("heading", name=re.compile("resources to review for " + label))
+    ).to_be_visible()
+
+
 def download_plan(page):
     with page.expect_download() as pending:
         page.get_by_role("button", name=re.compile("Reviewed change plan")).click()
@@ -163,7 +171,7 @@ def test_review_decisions_reload_and_export(app):
             save(page, 1)
             choose(page, "az-demo-001", "Decision", "reject")
             save(page, 2)
-            page.get_by_role("radio", name="env", exact=True).check()
+            select_label(page, "env")
             choose(page, "gcp-demo-003", "Decision", "override")
             invalid = dropdown(page, "gcp-demo-003", "Override value")
             invalid.fill("not-an-allowed-environment")
@@ -191,7 +199,7 @@ def test_review_decisions_reload_and_export(app):
             review_page(page, app, reopen=True)
             expect(cell(page, "gcp-demo-003", "Decision")).to_have_text("accept")
             expect(cell(page, "az-demo-001", "Decision")).to_have_text("reject")
-            page.get_by_role("radio", name="env", exact=True).check()
+            select_label(page, "env")
             expect(cell(page, "gcp-demo-003", "Decision")).to_have_text("override")
             expect(cell(page, "gcp-demo-003", "Override value")).to_have_text("prod")
             plan = download_plan(page)
