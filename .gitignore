@@ -33,3 +33,4 @@ mlruns/
 
 # Private imported inventories and approvals
 review-workspaces/
+output/playwright/
