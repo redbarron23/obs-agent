@@ -4,7 +4,7 @@ import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -69,7 +69,7 @@ def check():
         try:
             baseline = set(read())
             break
-        except URLError:
+        except OSError:
             assert time.monotonic() < deadline, "Jaeger query API did not become ready"
             time.sleep(0.2)
     question = "Which tags are required on Azure and GCP resources?"
