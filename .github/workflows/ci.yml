@@ -68,6 +68,10 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
+    env:
+      COMPOSE_PROJECT_NAME: obs-rag-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      OBS_RAG_TRACE_SERVICE: obs-rag-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      OBS_JAEGER_UI_PORT: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -87,13 +91,26 @@ jobs:
           docker compose -f compose.rag.yml stop rag
           docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke --rag-down
 
+      - name: Enable Jaeger and verify the real consumer's retrieval trace
+        run: |
+          docker compose -f compose.rag.yml down
+          docker compose -f compose.rag.yml -f compose.telemetry.yml up -d --build --wait --wait-timeout 600
+          docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps --entrypoint python smoke /checks/telemetry.py
+
+      - name: Verify collector outage and fresh trace recovery
+        run: |
+          docker compose -f compose.rag.yml -f compose.telemetry.yml stop jaeger
+          docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps smoke
+          docker compose -f compose.rag.yml -f compose.telemetry.yml start jaeger
+          docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps --entrypoint python smoke /checks/telemetry.py
+
       - name: Show service diagnostics
         if: always()
-        run: docker compose -f compose.rag.yml logs --no-color api ui rag
+        run: docker compose -f compose.rag.yml -f compose.telemetry.yml logs --no-color api ui rag jaeger
 
       - name: Remove the disposable simulation
         if: always()
-        run: docker compose -f compose.rag.yml down -v
+        run: docker compose -f compose.rag.yml -f compose.telemetry.yml down -v
 
   review-persistence:
     runs-on: ubuntu-latest

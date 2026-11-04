@@ -102,7 +102,7 @@ local simulation only. Generated chat needs a separately configured model/provid
 
 Keep `--no-deps` on smoke commands so Compose leaves the running network owner intact.
 Use `docker compose -f compose.rag.yml down` to stop while preserving state. The
-[Compose simulation guide](docs/local-rag-stack.md) covers RAG outage/recovery, local source
+[Compose simulation guide](docs/local-rag-stack.md) covers optional Jaeger tracing, RAG outage/recovery, local source
 overrides, authentication and a disposable reset.
 
 ## How it works
