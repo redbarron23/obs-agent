@@ -1,0 +1,41 @@
+name: RAG latest-provider compatibility
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      provider_sha:
+        description: Full RAG commit SHA to reproduce; empty resolves the latest default branch
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      provider_sha: ${{ steps.provider.outputs.sha }}
+    steps:
+      - name: Resolve the provider exactly once
+        id: provider
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.provider_sha }}
+        run: |
+          sha="$REQUESTED_SHA"
+          if [ -z "$sha" ]; then
+            branch=$(gh api repos/redbarron23/rag-observability --jq .default_branch)
+            sha=$(gh api "repos/redbarron23/rag-observability/commits/$branch" --jq .sha)
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected a full provider commit SHA'; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Consumer: $GITHUB_SHA; provider: $sha" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  latest-provider:
+    needs: resolve
+    uses: ./.github/workflows/rag-stack.yml
+    with:
+      provider_sha: ${{ needs.resolve.outputs.provider_sha }}
