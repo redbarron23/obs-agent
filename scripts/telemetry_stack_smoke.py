@@ -1,14 +1,12 @@
-"""Verify one production-client retrieval in the opt-in local Jaeger collector."""
+"""Verify the real caller/provider trace graph in the opt-in local Jaeger collector."""
 
 import json
 import os
 import time
-from datetime import UTC, datetime, timedelta
-from urllib.error import HTTPError
-from urllib.parse import urlencode
 from urllib.request import urlopen
 
 import policy_docs
+import policy_tracing
 
 
 def attributes(span):
@@ -18,84 +16,84 @@ def attributes(span):
 def traces(payload):
     result = {}
     for resource in payload.get("result", {}).get("resourceSpans", []):
+        service = attributes(resource.get("resource", {})).get("service.name")
         for scope in resource.get("scopeSpans", []):
             for span in scope.get("spans", []):
-                result.setdefault(span["traceId"], []).append(span)
+                result.setdefault(span["traceId"], []).append({**span, "service.name": service})
     return result
 
 
 def verify(spans):
-    assert len(spans) == 2, "expected exactly question/retrieve spans"
+    assert len(spans) == 3, "expected exactly caller/question/retrieve spans"
     named = {s["name"]: s for s in spans}
-    assert set(named) == {"rag.question", "rag.retrieve"}, "wrong span names"
-    root, retrieval = named["rag.question"], named["rag.retrieve"]
-    assert retrieval.get("parentSpanId") == root["spanId"], "retrieval parent is not the question"
-    assert attributes(root)["rag.generation.called"] is False, "retrieval invoked generation"
+    assert set(named) == {"obs.policy.retrieve", "rag.question", "rag.retrieve"}
+    caller, root, retrieval = (
+        named[n] for n in ("obs.policy.retrieve", "rag.question", "rag.retrieve")
+    )
+    assert len({s["traceId"] for s in spans}) == 1
+    assert not caller.get("parentSpanId")
+    assert root.get("parentSpanId") == caller["spanId"], "question has no caller parent"
+    assert retrieval.get("parentSpanId") == root["spanId"], "retrieval has no question parent"
+    assert caller["service.name"] == os.environ.get(
+        "JAEGER_CALLER_SERVICE_NAME", "obs-agent-policy"
+    )
+    rag_service = os.environ.get("JAEGER_SERVICE_NAME", "obs-rag-retrieval")
+    assert root["service.name"] == retrieval["service.name"] == rag_service
+    assert caller["service.name"] != rag_service
+    assert attributes(caller)["rag.client.outcome"] == "ok"
+    assert attributes(root)["rag.generation.called"] is False
     values = attributes(retrieval)
-    assert int(values["rag.retrieval.hit_count"]) > 0, "trace has no retrieval hits"
+    assert int(values["rag.retrieval.hit_count"]) > 0
     assert values["rag.retrieval.mode"] == "hybrid"
     assert int(values["rag.retrieval.k"]) == 4
     assert "reference/tagging-standard.md" in [
-        value for key, value in values.items() if key.endswith(".source")
-    ], "trace is missing the retrieved tagging-policy source"
-    assert any(key.endswith(".distance") for key in values), "trace distances are missing"
+        v for k, v in values.items() if k.endswith(".source")
+    ]
+    assert any(k.endswith(".distance") for k in values)
 
 
 def check():
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import format_trace_id
+
     jaeger = os.environ["JAEGER_URL"].rstrip("/")
-    service = os.environ["JAEGER_SERVICE_NAME"]
-    start = datetime.now(UTC)
-    params = urlencode(
-        {
-            "query.service_name": service,
-            "query.start_time_min": start.isoformat(),
-            "query.start_time_max": (start + timedelta(minutes=2)).isoformat(),
-            "query.search_depth": "20",
-        }
-    )
-    endpoint = jaeger + "/api/v3/traces?" + params
-
-    def read():
-        try:
-            with urlopen(endpoint, timeout=2) as response:
-                return traces(json.load(response))
-        except HTTPError as exc:
-            if exc.code == 404:
-                return {}
-            raise
-
     deadline = time.monotonic() + 30
     while True:
         try:
-            baseline = set(read())
-            break
+            with urlopen(jaeger + "/api/v3/services", timeout=2):
+                break
         except OSError:
             assert time.monotonic() < deadline, "Jaeger query API did not become ready"
             time.sleep(0.2)
+    provider = policy_tracing.provider()
+    assert provider is not None, "caller tracing is disabled"
+    recorded = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(recorded))
     question = "Which tags are required on Azure and GCP resources?"
     result = policy_docs.retrieve(question, k=4)
     assert result["status"] == "ok", result["status"]
+    (caller,) = recorded.get_finished_spans()
+    trace_id = format_trace_id(caller.context.trace_id)
+    assert provider.force_flush(timeout_millis=5000), "caller export did not flush"
     deadline = time.monotonic() + 30
     while True:
-        found = read()
-        new = set(found) - baseline
-        assert len(new) <= 1, "concurrent queries found; rerun without other policy requests"
-        if new:
-            trace_id = new.pop()
-            spans = found[trace_id]
-            # A batch can be visible before the complete question trace is stored.
-            if len(spans) == 2:
-                verify(spans)
-                serialized = json.dumps(spans)
-                for text in (
-                    question,
-                    os.environ["RAG_API_KEY"],
-                    *[h["text"] for h in result["hits"]],
-                ):
-                    assert text not in serialized, "trace contains request content or credentials"
-                print(f"PASS: real obs-agent retrieval verified in Jaeger trace {trace_id}")
-                return
-        assert time.monotonic() < deadline, "new complete retrieval trace not found in Jaeger"
+        try:
+            with urlopen(jaeger + "/api/v3/traces/" + trace_id, timeout=2) as response:
+                found = traces(json.load(response)).get(trace_id, [])
+        except OSError:
+            found = []
+        if len(found) == 3:
+            verify(found)
+            serialized = json.dumps(found)
+            for text in (question, os.environ["RAG_API_KEY"], *[h["text"] for h in result["hits"]]):
+                assert text not in serialized, "trace contains content or credentials"
+            print(
+                f"PASS: distributed obs-agent/RAG trace {trace_id}; "
+                "three linked spans, two services"
+            )
+            return
+        assert time.monotonic() < deadline, "complete distributed trace not found in Jaeger"
         time.sleep(0.2)
 
 

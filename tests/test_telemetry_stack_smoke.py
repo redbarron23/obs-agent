@@ -12,9 +12,18 @@ def spans():
     def attrs(**values):
         return [{"key": key, "value": {"stringValue": value}} for key, value in values.items()]
 
+    caller = {
+        "name": "obs.policy.retrieve",
+        "spanId": "caller",
+        "traceId": "trace",
+        "service.name": "obs-agent-policy",
+        "attributes": attrs(**{"rag.client.outcome": "ok"}),
+    }
     root = {
         "name": "rag.question",
         "spanId": "root",
+        "parentSpanId": "caller",
+        "service.name": "obs-rag-retrieval",
         "traceId": "trace",
         "attributes": [
             {"key": "rag.generation.called", "value": {"boolValue": False}},
@@ -23,6 +32,7 @@ def spans():
     child = {
         "name": "rag.retrieve",
         "spanId": "child",
+        "service.name": "obs-rag-retrieval",
         "parentSpanId": "root",
         "traceId": "trace",
         "attributes": attrs(
@@ -35,16 +45,32 @@ def spans():
             }
         ),
     }
-    return [root, child]
+    return [root, child, caller]
 
 
 def test_complete_retrieval_trace(spans):
     verify(spans)
-    payload = {"result": {"resourceSpans": [{"scopeSpans": [{"spans": spans}]}]}}
+    payload = {
+        "result": {
+            "resourceSpans": [
+                {
+                    "resource": {
+                        "attributes": [
+                            {"key": "service.name", "value": {"stringValue": s["service.name"]}}
+                        ]
+                    },
+                    "scopeSpans": [{"spans": [s]}],
+                }
+                for s in spans
+            ]
+        }
+    }
     assert traces(payload) == {"trace": spans}
 
 
-@pytest.mark.parametrize("damage", ["parent", "source", "generation", "missing"])
+@pytest.mark.parametrize(
+    "damage", ["parent", "source", "generation", "missing", "caller_parent", "service", "trace_id"]
+)
 def test_wrong_trace_is_rejected(spans, damage):
     broken = deepcopy(spans)
     if damage == "parent":
@@ -53,6 +79,12 @@ def test_wrong_trace_is_rejected(spans, damage):
         broken[1]["attributes"][-2]["value"] = {"stringValue": "unrelated.md"}
     elif damage == "generation":
         broken[0]["attributes"][0]["value"] = {"boolValue": True}
+    elif damage == "caller_parent":
+        broken[0]["parentSpanId"] = "unrelated"
+    elif damage == "service":
+        broken[-1]["service.name"] = "obs-rag-retrieval"
+    elif damage == "trace_id":
+        broken[-1]["traceId"] = "unrelated"
     else:
         broken.pop()
     with pytest.raises(AssertionError):

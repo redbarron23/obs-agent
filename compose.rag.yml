@@ -31,7 +31,7 @@ services:
       api:
         condition: service_healthy
     build:
-      context: ${RAG_REPO_PATH:-https://github.com/redbarron23/rag-observability.git#fb7ee91e9bcb4c7d912c600a6ca2e704e7a279fc}
+      context: ${RAG_REPO_PATH:-https://github.com/redbarron23/rag-observability.git#4efa35728a935acf6d9163e7cffb97c9f8a9ca19}
       dockerfile_inline: |
         FROM python:3.12-slim
         COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv

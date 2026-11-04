@@ -42,6 +42,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+import policy_tracing
+
 DEFAULT_TIMEOUT_S = 5.0
 MAX_TIMEOUT_S = 30.0
 DEFAULT_K = 4
@@ -314,6 +316,7 @@ def _parse_hits(payload: dict) -> list[dict]:
     return out
 
 
+@policy_tracing.retrieval
 def retrieve(
     question: str,
     k: int = DEFAULT_K,
@@ -344,6 +347,7 @@ def retrieve(
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
+    policy_tracing.inject(headers)
     try:
         code, raw = _transport()(endpoint, json.dumps(body).encode(), headers, config.timeout)
     except TimeoutError:
@@ -360,6 +364,7 @@ def retrieve(
             question=question,
         )
 
+    policy_tracing.attributes({"http.response.status_code": code})
     if code != 200:
         status, detail, freshness = _error_status(code, raw)
         _log.info("policy docs retrieval failed: %s", status)
