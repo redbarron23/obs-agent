@@ -185,6 +185,11 @@ def test_review_decisions_reload_and_export(app):
             invalid_plan = download_plan(page)
             assert "not-an-allowed-environment" not in json.dumps(invalid_plan)
             assert all("env" not in change["tags"] for change in invalid_plan["changes"])
+            # Reopen persisted state after the rejected draft; also discard Glide's invalid editor.
+            review_page(page, app, reopen=True)
+            select_label(page, "env")
+            expect(cell(page, "gcp-demo-003", "Decision")).not_to_have_text("override")
+            choose(page, "gcp-demo-003", "Decision", "override")
             choose(page, "gcp-demo-003", "Override value", "prod")
             save(page, 3)
             original_plan = download_plan(page)
