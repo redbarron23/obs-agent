@@ -29,7 +29,7 @@ This is a local simulation with fixed demo keys: `local-obs-simulation` for obs-
 and `local-rag-simulation` for RAG's bearer header. Use only fictional/sanitized data in this stack;
 these public demo values are not deployment credentials.
 
-By default the RAG build uses the pinned Git source `4efa357` (retrieval contract 1.1.0). obs-agent
+By default the RAG build uses the pinned Git source `19ebcdd` (retrieval contract 1.1.0). obs-agent
 builds from this checkout. The RAG image copies application modules and the nine bundled sample
 documents explicitly; it never copies `data/uploads/`. To iterate on your local RAG checkout:
 
