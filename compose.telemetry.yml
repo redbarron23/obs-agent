@@ -1,0 +1,24 @@
+# Explicit opt-in: docker compose -f compose.rag.yml -f compose.telemetry.yml up ...
+services:
+  rag:
+    depends_on:
+      jaeger:
+        condition: service_started
+    environment:
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: ${OBS_RAG_TRACE_SERVICE:-obs-rag-retrieval}
+      OTEL_TRACES_SAMPLER: always_on
+
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.22.0
+    ports:
+      - "127.0.0.1:${OBS_JAEGER_UI_PORT:-16686}:16686"
+
+  smoke:
+    environment:
+      JAEGER_URL: http://jaeger:16686
+      JAEGER_SERVICE_NAME: ${OBS_RAG_TRACE_SERVICE:-obs-rag-retrieval}
+    volumes:
+      - ./scripts/telemetry_stack_smoke.py:/checks/telemetry.py:ro

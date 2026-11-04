@@ -29,7 +29,7 @@ This is a local simulation with fixed demo keys: `local-obs-simulation` for obs-
 and `local-rag-simulation` for RAG's bearer header. Use only fictional/sanitized data in this stack;
 these public demo values are not deployment credentials.
 
-By default the RAG build uses the pinned Git source `c3124a0` (retrieval contract 1.1.0). obs-agent
+By default the RAG build uses the pinned Git source `fb7ee91` (retrieval contract 1.1.0). obs-agent
 builds from this checkout. The RAG image copies application modules and the nine bundled sample
 documents explicitly; it never copies `data/uploads/`. To iterate on your local RAG checkout:
 
@@ -69,6 +69,46 @@ API container while the other services still share its network namespace.
 The `local-rag` CI job builds this same stack, runs the normal check, stops RAG and runs the outage
 check, then removes the disposable containers/volumes. It records the obs-agent revision and pinned
 RAG source. Normal unit tests remain independent of Docker and the second repository.
+
+## Opt in to Jaeger tracing
+
+The default stack leaves tracing off. To inspect retrieval, stop the existing stack without
+removing volumes, then start it with both files (the full cycle preserves the shared network):
+
+```bash
+docker compose -f compose.rag.yml down
+docker compose -f compose.rag.yml -f compose.telemetry.yml up -d --build --wait --wait-timeout 600
+docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps --entrypoint python smoke /checks/telemetry.py
+```
+
+Open <http://127.0.0.1:16686> and select **obs-rag-retrieval**. The check makes one request through
+obs-agent's production client and verifies a new `rag.question` → `rag.retrieve` trace, parentage,
+tagging-policy source and distances, and absence of question/excerpt text and credentials.
+Avoid other policy requests during the check. No generation span or paid provider call is expected.
+The image installs the optional HTTP exporter; a `RAG_REPO_PATH` override must include
+`requirements-otel.txt` and the tracing implementation.
+
+Keep both `-f` arguments on commands while tracing is enabled. Test collector failure and recovery:
+
+```bash
+docker compose -f compose.rag.yml -f compose.telemetry.yml stop jaeger
+docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps smoke
+docker compose -f compose.rag.yml -f compose.telemetry.yml start jaeger
+docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps --entrypoint python smoke /checks/telemetry.py
+```
+
+Retrieval must still work during the collector outage. Recovery verifies a fresh trace; buffered
+spans can be dropped and replay is not guaranteed. CI runs these same checks. Jaeger keeps traces
+in memory, separately from saved reviews. Its UI binds to loopback; OTLP stays inside the Compose
+network at `http://jaeger:4318/v1/traces`. Exported metadata includes source paths, distances and
+configured service information. Use only the bundled fictional corpus in this simulation.
+`OBS_JAEGER_UI_PORT` changes the UI port; `OBS_RAG_TRACE_SERVICE` changes the service name.
+
+To turn tracing off, run `docker compose -f compose.rag.yml -f compose.telemetry.yml down`, then
+start with `compose.rag.yml` alone. Do not add `-v` if you want to keep reviews and the index.
+See the [RAG telemetry guide](https://github.com/redbarron23/rag-observability/blob/main/docs/telemetry.md)
+for span interpretation. Cross-repository trace propagation is tracked separately in
+[#112](https://github.com/redbarron23/obs-agent/issues/112).
 
 ## Check review persistence automatically
 
