@@ -178,3 +178,49 @@ download, correct the network access and start again. Kubernetes and paid genera
 are separate follow-ups. This stack and its pinned CI job support
 [#102](https://github.com/redbarron23/obs-agent/issues/102); scheduled checks against future RAG
 revisions and contract-upgrade scenarios can extend it later.
+
+## Contract, stale-source and latest-provider checks
+
+The pinned PR job and the separately named **RAG latest-provider compatibility** workflow call
+one reusable stack job. Both run real retrieval/authentication, a controlled contract break,
+stale-source propagation/restoration, RAG outage and optional Jaeger recovery checks. Every run
+owns a disposable Compose project. The default provider pin is never advanced automatically.
+
+The contract check forwards a real provider response over a temporary loopback HTTP server and
+removes its required `hits` field. The production client must return `invalid_response` with no
+accepted hits. The unchanged normal smoke command must exit nonzero on that response, while
+obs-agent health/inventory still respond. Run against your already started fictional stack:
+
+```bash
+docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke --contract-break
+```
+
+For freshness, CI edits only the disposable container's tagging-standard source after indexing.
+`smoke --stale` waits up to 20 seconds for the provider's brief freshness cache, then requires
+`stale` on an otherwise successful retrieval. It restores the exact original bytes and verifies
+`current` again. No checkout or user corpus is edited. A failed job still removes its project and
+volumes. The mutation/restoration commands live in `.github/workflows/rag-stack.yml`; run them
+only in a disposable simulation, since a failed interrupted manual check can leave its source changed.
+
+The latest-provider workflow runs weekly on Monday at 07:00 UTC and accepts manual dispatch.
+A blank `provider_sha` resolves the provider's default branch once; an explicit value must be a
+full 40-character SHA. The job summary and logs record consumer and exact provider revisions.
+Its result is separate from the required pinned PR job; regressions fail visibly.
+
+```bash
+gh workflow run rag-latest.yml --repo redbarron23/obs-agent
+# Reproduce a failing provider revision:
+gh workflow run rag-latest.yml --repo redbarron23/obs-agent -f provider_sha=<full-sha>
+# Locally, in a separate checkout/project with no other stack on the fixed ports:
+RAG_REPO_PATH=https://github.com/redbarron23/rag-observability.git#<full-sha> COMPOSE_PROJECT_NAME=obs-rag-repro docker compose -f compose.rag.yml up -d --build --wait --wait-timeout 600
+COMPOSE_PROJECT_NAME=obs-rag-repro docker compose -f compose.rag.yml --profile checks run --rm --no-deps smoke
+COMPOSE_PROJECT_NAME=obs-rag-repro docker compose -f compose.rag.yml down -v
+```
+
+Replace `<full-sha>` before running. A build/model-download/startup failure occurs before the
+smoke checks; inspect those step logs and service health first. A contract failure occurs after
+startup and reports `invalid_response`, missing source/provenance or an unexpected outcome.
+A newer provider failure should be reproduced at its recorded SHA, fixed or reported upstream,
+and checked again. Promote a passing SHA by editing the Compose pin in a normal PR, reviewing
+the provider's contract policy and passing the pinned suite. Never bypass a failing compatibility
+check by treating incompatible data as an empty retrieval.
