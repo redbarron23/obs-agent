@@ -11,7 +11,10 @@ services:
       OTEL_SERVICE_NAME: ${OBS_RAG_TRACE_SERVICE:-obs-rag-retrieval}
       OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
-      OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: "2"
+      OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: ${OTEL_EXPORTER_OTLP_TRACES_TIMEOUT:-2}
+      OTEL_BSP_MAX_QUEUE_SIZE: ${OTEL_BSP_MAX_QUEUE_SIZE:-2048}
+      OTEL_BSP_MAX_EXPORT_BATCH_SIZE: ${OTEL_BSP_MAX_EXPORT_BATCH_SIZE:-512}
+      OTEL_BSP_SCHEDULE_DELAY: ${OTEL_BSP_SCHEDULE_DELAY:-5000}
 
   jaeger:
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.22.0
@@ -23,7 +26,10 @@ services:
       OTEL_TRACES_EXPORTER: otlp
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
       OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: http/protobuf
-      OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: "2"
+      OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: ${OTEL_EXPORTER_OTLP_TRACES_TIMEOUT:-2}
+      OTEL_BSP_MAX_QUEUE_SIZE: ${OTEL_BSP_MAX_QUEUE_SIZE:-2048}
+      OTEL_BSP_MAX_EXPORT_BATCH_SIZE: ${OTEL_BSP_MAX_EXPORT_BATCH_SIZE:-512}
+      OTEL_BSP_SCHEDULE_DELAY: ${OTEL_BSP_SCHEDULE_DELAY:-5000}
       OTEL_SERVICE_NAME: ${OBS_POLICY_TRACE_SERVICE:-obs-agent-policy}
       OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
@@ -40,3 +46,4 @@ services:
       JAEGER_SERVICE_NAME: ${OBS_RAG_TRACE_SERVICE:-obs-rag-retrieval}
     volumes:
       - ./scripts/telemetry_stack_smoke.py:/checks/telemetry.py:ro
+      - ./scripts/telemetry_load_check.py:/checks/telemetry-load.py:ro

@@ -42,6 +42,18 @@ jobs:
       - name: Run eval dry-run (deterministic)
         run: uv run evals.py --dry-run
 
+      - name: Check caller tracing backpressure with fictional retrieval
+        if: matrix.python-version == '3.12'
+        run: uv run python -m scripts.telemetry_load_check > telemetry-load-results.json
+
+      - name: Retain caller tracing measurements
+        if: always() && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: telemetry-load-fixture
+          path: telemetry-load-results.json
+          retention-days: 7
+
   mlops:
     # Optional MLflow tracing/eval integration (dependency group "mlops").
     runs-on: ubuntu-latest

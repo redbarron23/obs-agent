@@ -29,6 +29,14 @@ def test_effective_sampler_and_loopback_ports(settings, sampler, ratio):
         pytest.skip("Docker Compose CLI required; no daemon needed")
     env = {key: value for key, value in os.environ.items() if not key.startswith("OTEL_")}
     env.update(settings)
+    env.update(
+        {
+            "OTEL_BSP_MAX_QUEUE_SIZE": "64",
+            "OTEL_BSP_MAX_EXPORT_BATCH_SIZE": "16",
+            "OTEL_BSP_SCHEDULE_DELAY": "20",
+            "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT": "0.5",
+        }
+    )
     env["OBS_JAEGER_UI_PORT"] = "16686"
     result = subprocess.run(
         [
@@ -55,6 +63,13 @@ def test_effective_sampler_and_loopback_ports(settings, sampler, ratio):
     for name in ("api", "ui", "rag", "smoke"):
         assert services[name]["environment"]["OTEL_TRACES_SAMPLER"] == sampler
         assert services[name]["environment"]["OTEL_TRACES_SAMPLER_ARG"] == ratio
+        for key in (
+            "OTEL_BSP_MAX_QUEUE_SIZE",
+            "OTEL_BSP_MAX_EXPORT_BATCH_SIZE",
+            "OTEL_BSP_SCHEDULE_DELAY",
+            "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
+        ):
+            assert services[name]["environment"][key] == env[key]
     jaeger = services["jaeger"]
     assert not jaeger.get("volumes")
     assert {port["target"] for port in jaeger["ports"]} == {16686}

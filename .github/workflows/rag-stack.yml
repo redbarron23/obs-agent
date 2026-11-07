@@ -62,6 +62,17 @@ jobs:
           docker compose -f compose.rag.yml -f compose.telemetry.yml start jaeger
           docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps --entrypoint python smoke /checks/telemetry.py
 
+      - name: Measure caller backpressure during real RAG retrieval
+        run: docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps --entrypoint python smoke /checks/telemetry-load.py --live-rag > telemetry-stack-load-results.json
+
+      - name: Retain combined-stack caller measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: telemetry-load-stack
+          path: telemetry-stack-load-results.json
+          retention-days: 7
+
       - name: Show service diagnostics
         if: always()
         run: docker compose -f compose.rag.yml -f compose.telemetry.yml logs --no-color api ui rag jaeger
