@@ -26,6 +26,9 @@ Start with the bundled synthetic inventory; no API keys or Ollama setup are need
 For disposable demo decisions, run `OBS_AGENT_DEMO=1 uv run streamlit run app.py`.
 See the [five-minute walkthrough](docs/five-minute-demo.md).
 
+For a larger controlled exercise, [generate a fictional estate pack](docs/synthetic-estates.md)
+with separate evaluation truth and before/after snapshots.
+
 ## Use your own inventory
 
 1. Open **Import / reopen inventory** and download the CSV and vocabulary examples.
@@ -142,6 +145,7 @@ thresholds. See [Evaluation](docs/evaluation.md).
 | Topic | Guide |
 | --- | --- |
 | End-to-end synthetic workflow | [Five-minute demo](docs/five-minute-demo.md) |
+| Generated estates, hidden truth, before/after exercises | [Synthetic estate packs](docs/synthetic-estates.md) |
 | CSV schema, vocabulary, saved reviews | [Import inventory](docs/importing.md) |
 | Inference, review, and drift | [Label inference](docs/label-inference.md) |
 | Optional cost Q&A | [Agent guide](docs/agent.md) |

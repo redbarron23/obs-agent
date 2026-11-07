@@ -17,6 +17,21 @@ and that gap is deliberate — see [What the mocks cannot catch](#what-the-mocks
 
 ## Layer 1 — unit and integration tests (offline)
 
+### Generated estate fixtures
+
+[The estate-pack guide](synthetic-estates.md) covers reproducible inventory generation, separate
+hidden truth, file hashes and a before/after review exercise. Run its focused checks with:
+
+```bash
+uv run pytest tests/test_synthetic_estate.py -q
+```
+
+These tests exercise the real importer and saved-review comparison using temporary databases,
+with no cloud keys, hosted model, Docker or collector. They verify data construction, truth
+separation, safe output paths and unchanged demo/RNG state. They do not certify label accuracy,
+production-like distributions, calibrated confidence or customer benefit. Retain per-scenario
+manual observations separately from the generator test verdict.
+
 ### Browser review workflow
 
 The optional Chromium check exercises the production UI: import the fictional persistence
