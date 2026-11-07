@@ -191,3 +191,74 @@ def test_span_finish_failure_does_not_replace_answer(monkeypatch, caplog):
     monkeypatch.setattr(policy_docs, "_transport", lambda: policy_docs.stub_transport(200, FIXTURE))
     assert policy_docs.retrieve("question")["status"] == "ok"
     assert "PRIVATE" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "sampler,ratio,parent_sampled,expected",
+    [
+        ("parentbased_always_on", "1.0", None, True),
+        ("parentbased_always_on", "1.0", False, False),
+        ("parentbased_always_on", "1.0", True, True),
+        ("always_off", "1.0", True, False),
+        ("parentbased_traceidratio", "0.0", None, False),
+        ("parentbased_traceidratio", "1.0", None, True),
+        ("parentbased_traceidratio", "0.0", True, True),
+        ("parentbased_traceidratio", "1.0", False, False),
+    ],
+)
+def test_sampler_controls_export_and_propagated_decision(
+    monkeypatch, sampler, ratio, parent_sampled, expected
+):
+    from opentelemetry import context, trace
+    from opentelemetry.sdk.trace import export
+
+    exporter = InMemorySpanExporter()
+    monkeypatch.setattr(export, "BatchSpanProcessor", lambda _: SimpleSpanProcessor(exporter))
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "console")
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "false")
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", sampler)
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER_ARG", ratio)
+    monkeypatch.setattr(
+        policy_docs, "load_config", lambda: policy_docs.RagConfig("http://127.0.0.1:8765")
+    )
+
+    def transport(url, body, headers, timeout):
+        propagated = trace.get_current_span(
+            TraceContextTextMapPropagator().extract(headers)
+        ).get_span_context()
+        assert propagated.is_valid
+        assert propagated.trace_flags.sampled == expected
+        if parent_sampled is not None:
+            assert propagated.trace_id == 123
+        return 200, json.dumps(FIXTURE).encode()
+
+    monkeypatch.setattr(policy_docs, "_transport", lambda: transport)
+    parent_context = context.Context()
+    if parent_sampled is not None:
+        parent_context = trace.set_span_in_context(
+            trace.NonRecordingSpan(
+                trace.SpanContext(
+                    trace_id=123,
+                    span_id=456,
+                    is_remote=True,
+                    trace_flags=trace.TraceFlags(int(parent_sampled)),
+                )
+            ),
+            parent_context,
+        )
+    policy_tracing.provider.cache_clear()
+    token = context.attach(parent_context)
+    configured = None
+    try:
+        configured = policy_tracing.provider()
+        assert configured is not None
+        assert policy_docs.retrieve("fictional question")["status"] == "ok"
+        spans = exporter.get_finished_spans()
+        assert len(spans) == int(expected)
+        if spans and parent_sampled is not None:
+            assert spans[0].parent.span_id == 456
+    finally:
+        context.detach(token)
+        if configured is not None:
+            configured.shutdown()
+        policy_tracing.provider.cache_clear()
