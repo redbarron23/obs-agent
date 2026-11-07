@@ -6,7 +6,9 @@ No live LLM calls: Provider.create is patched.
 """
 
 import contextlib
+import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -116,6 +118,29 @@ def fake_mlflow(monkeypatch):
 
 
 class TestDegraded:
+    @pytest.mark.parametrize("configured,expected", [(None, "false"), ("true", "true")])
+    def test_mlflow_otlp_requires_explicit_opt_in(
+        self, fake_mlflow, monkeypatch, configured, expected
+    ):
+        import os
+
+        monkeypatch.delenv("MLFLOW_ENABLE_OTLP_EXPORTER", raising=False)
+        if configured is not None:
+            monkeypatch.setenv("MLFLOW_ENABLE_OTLP_EXPORTER", configured)
+        fake_mlflow.recover()
+        assert observability.setup()
+        assert os.environ["MLFLOW_ENABLE_OTLP_EXPORTER"] == expected
+
+    def test_autolog_failure_diagnostics_omit_exception_content(
+        self, fake_mlflow, monkeypatch, caplog
+    ):
+        fake_mlflow.recover()
+        fake_mlflow.openai.autolog.side_effect = RuntimeError("SENTINEL API KEY")
+        with caplog.at_level("DEBUG", logger="observability"):
+            assert observability.setup()
+        assert "RuntimeError" in caplog.text
+        assert "SENTINEL" not in caplog.text
+
     def test_unavailable_store_does_not_fail_request(self, fake_mlflow, clock, caplog):
         answer, _ = _ask()
         assert answer == "sub-a is top"
@@ -348,3 +373,193 @@ class TestEvalRunner:
             ]
         )
         assert evals_mlflow.tools_called(trace=two, expectations=either).value
+
+
+@needs_mlflow
+class TestTracingCoexistence:
+    @pytest.mark.parametrize(
+        "mlflow_on,otel_on,export_fails",
+        [
+            (False, False, False),
+            (True, False, False),
+            (False, True, False),
+            (True, True, False),
+            (True, True, True),
+        ],
+    )
+    def test_agent_sdk_and_policy_spans_keep_separate_destinations(
+        self, tmp_path, monkeypatch, caplog, mlflow_on, otel_on, export_fails
+    ):
+        import httpx
+        import openai
+        from mlflow.tracing import provider as mlflow_provider
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http import trace_exporter
+        from opentelemetry.sdk.trace.export import SpanExportResult
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        import agent
+        import policy_docs
+        import policy_tracing
+
+        for key in (
+            "MLFLOW_ENABLE_OTLP_EXPORTER",
+            "MLFLOW_TRACE_ENABLE_OTLP_DUAL_EXPORT",
+            "MLFLOW_USE_DEFAULT_TRACER_PROVIDER",
+            "MLFLOW_TRACE_PROPAGATE_TO_OTEL_CONTEXT",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("MLFLOW_ENABLE_ASYNC_TRACE_LOGGING", "false")
+        monkeypatch.setenv("MLFLOW_DISABLE_AGENT_HINT", "1")
+        monkeypatch.setenv("OTEL_TRACES_EXPORTER", "otlp" if otel_on else "none")
+        monkeypatch.setenv(
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://collector.invalid/v1/traces"
+        )
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "http/protobuf")
+        monkeypatch.setenv("OTEL_SDK_DISABLED", "false")
+        monkeypatch.setenv("OTEL_TRACES_SAMPLER", "parentbased_always_on")
+        monkeypatch.setenv("OBS_AGENT_MLFLOW_EXPERIMENT", "coexistence")
+        if mlflow_on:
+            monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path / 'traces.db'}")
+        collector = InMemorySpanExporter()
+        failed_batch = []
+        if export_fails:
+
+            def fail_export(spans):
+                failed_batch.extend(spans)
+                return SpanExportResult.FAILURE
+
+            monkeypatch.setattr(collector, "export", fail_export)
+        monkeypatch.setattr(trace_exporter, "OTLPSpanExporter", lambda: collector)
+        global_provider = trace.get_tracer_provider()
+        mlflow_provider.reset()
+        mlflow.openai.autolog(disable=True, silent=True)
+        mlflow.anthropic.autolog(disable=True, silent=True)
+        policy_tracing.provider.cache_clear()
+
+        payload = json.loads(
+            (Path(__file__).parents[1] / "fixtures/rag_retrieve_tagging_standard.json").read_text()
+        )
+        payload["hits"][0]["text"] = "SENTINEL DOCUMENT EXCERPT / SENTINEL REVIEWER"
+        monkeypatch.setattr(
+            policy_docs,
+            "load_config",
+            lambda: policy_docs.RagConfig("http://127.0.0.1:8765", api_key="SENTINEL RAG KEY"),
+        )
+        headers = []
+
+        def retrieval(url, body, carrier, timeout):
+            headers.append(carrier)
+            return 200, json.dumps(payload).encode()
+
+        monkeypatch.setattr(policy_docs, "_transport", lambda: retrieval)
+        calls = []
+
+        def completion(request):
+            assert request.headers["authorization"] == "Bearer SENTINEL SDK KEY"
+            calls.append(json.loads(request.content))
+            message = {"role": "assistant", "content": "SENTINEL ANSWER"}
+            if len(calls) == 1:
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "policy-call",
+                            "type": "function",
+                            "function": {
+                                "name": "search_observability_docs",
+                                "arguments": json.dumps({"question": "SENTINEL QUESTION"}),
+                            },
+                        }
+                    ],
+                }
+            return httpx.Response(
+                200,
+                json={
+                    "id": f"completion-{len(calls)}",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "fixture-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": message,
+                            "finish_reason": "tool_calls" if len(calls) == 1 else "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                },
+            )
+
+        client = openai.OpenAI(
+            api_key="SENTINEL SDK KEY",
+            http_client=httpx.Client(transport=httpx.MockTransport(completion)),
+        )
+        monkeypatch.setattr(openai, "OpenAI", lambda: client)
+        try:
+            answer, _ = agent.run("SENTINEL QUESTION", provider="openai", model="fixture-model")
+            assert answer == "SENTINEL ANSWER"
+            assert len(calls) == 2 and len(headers) == 1
+            assert ("traceparent" in headers[0]) == otel_on
+            configured = policy_tracing.provider()
+            if configured:
+                assert configured.force_flush(timeout_millis=5000)
+            exported = collector.get_finished_spans()
+            if export_fails:
+                assert not exported
+            spans = failed_batch if export_fails else exported
+            assert [s.name for s in spans] == (["obs.policy.retrieve"] if otel_on else [])
+            for span in spans:
+                assert span.parent is None
+                assert "SENTINEL" not in span.to_json()
+                assert not span.events
+            assert trace.get_tracer_provider() is global_provider
+            assert not trace.get_current_span().get_span_context().is_valid
+            if mlflow_on:
+                mlflow.flush_trace_async_logging()
+                recorded = mlflow.get_trace(observability.last_trace_id())
+                names = [s.name for s in recorded.data.spans]
+                assert names.count("agent") == 1
+                assert names.count("llm: openai/fixture-model") == 2
+                assert names.count("search_observability_docs") == 1
+                assert "obs.policy.retrieve" not in names
+                root = next(s for s in recorded.data.spans if s.name == "agent")
+                assert root.parent_id is None
+                application = [
+                    s
+                    for s in recorded.data.spans
+                    if s.name.startswith("llm:") or s.name == "search_observability_docs"
+                ]
+                assert all(s.parent_id == root.span_id for s in application)
+                # Two additional nested SDK spans are intentional request/response detail.
+                assert len(names) == 6
+                content = recorded.to_json()
+                for sentinel in (
+                    "SENTINEL QUESTION",
+                    "SENTINEL ANSWER",
+                    "SENTINEL DOCUMENT EXCERPT",
+                    "SENTINEL REVIEWER",
+                ):
+                    assert sentinel in content
+                for secret in ("SENTINEL SDK KEY", "SENTINEL RAG KEY"):
+                    assert secret not in content
+            else:
+                assert not observability.active()
+            boom = RuntimeError("SENTINEL APPLICATION ERROR")
+            with (
+                patch("agent.Provider.create", side_effect=boom),
+                pytest.raises(RuntimeError) as exc,
+            ):
+                agent.run("SENTINEL QUESTION", provider="openai", model="fixture-model")
+            assert exc.value is boom
+            assert "SENTINEL" not in caplog.text
+        finally:
+            configured = policy_tracing.provider()
+            if configured:
+                configured.shutdown()
+            policy_tracing.provider.cache_clear()
+            mlflow.openai.autolog(disable=True, silent=True)
+            mlflow.anthropic.autolog(disable=True, silent=True)
+            mlflow_provider.reset()
+            client.close()

@@ -113,6 +113,10 @@ for span interpretation. Cross-repository trace propagation is coordinated in
 
 ### Sampling, storage and local access
 
+For agent tracing alongside Jaeger, read the
+[MLflow/Jaeger mode and content-capture guide](mlflow.md#7-choose-mlflow-jaeger-or-both).
+Enabling metadata-only policy traces does not enable MLflow content capture.
+
 The telemetry override uses `parentbased_always_on`: new root traces are recorded, while a valid
 parent's sampled flag is respected. Caller and RAG services receive the same standard SDK settings.
 An unsampled caller still propagates trace context, so RAG does not start recording its children
