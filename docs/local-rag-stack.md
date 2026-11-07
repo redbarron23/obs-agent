@@ -111,6 +111,71 @@ See the [RAG telemetry guide](https://github.com/redbarron23/rag-observability/b
 for span interpretation. Cross-repository trace propagation is coordinated in
 [#112](https://github.com/redbarron23/obs-agent/issues/112).
 
+### Sampling, storage and local access
+
+The telemetry override uses `parentbased_always_on`: new root traces are recorded, while a valid
+parent's sampled flag is respected. Caller and RAG services receive the same standard SDK settings.
+An unsampled caller still propagates trace context, so RAG does not start recording its children
+independently. Sampling chooses what to record; Jaeger's storage policy chooses what to retain.
+
+| Experiment | `OTEL_TRACES_SAMPLER` | `OTEL_TRACES_SAMPLER_ARG` |
+| --- | --- | --- |
+| Small local exercise (default) | `parentbased_always_on` | `1.0` (unused) |
+| Export no spans, including sampled-parent requests | `always_off` | `1.0` (unused) |
+| Sample about 10% of new roots; respect existing parent decisions | `parentbased_traceidratio` | `0.1` |
+
+For the ratio experiment, set these in the shell before starting the stack:
+
+```bash
+export OTEL_TRACES_SAMPLER=parentbased_traceidratio
+export OTEL_TRACES_SAMPLER_ARG=0.1
+docker compose -f compose.rag.yml -f compose.telemetry.yml up -d --build --wait --wait-timeout 600
+```
+
+Compose recreates services whose environment changed; SDK configuration is read once per process.
+Ratio sampling is not a promise of exactly one trace per ten requests. A sampled parent keeps its
+children even at ratio zero; `always_off` drops spans regardless of the parent. Unset both variables
+to restore the default, then repeat the startup command. The exact-trace telemetry smoke check
+requires the default sampling settings; a sampled-out trace is intentionally absent, not a
+retrieval failure.
+
+Jaeger 2.22.0 uses its embedded all-in-one configuration with one disposable in-memory store,
+capped at **100,000 traces**; older traces are evicted as the store fills. The Compose override
+does not replace this configuration. A trace-count limit is not a byte limit: span count and
+attribute sizes also affect memory. No persistent trace volume is configured, and stopping,
+restarting or recreating Jaeger loses its
+traces. Saved reviews, the RAG index and model cache live in separate volumes and survive.
+See the [pinned embedded configuration](https://github.com/jaegertracing/jaeger/blob/v2.22.0/cmd/jaeger/internal/all-in-one.yaml)
+and [memory storage documentation](https://www.jaegertracing.io/docs/2.22/storage/memory/).
+
+Local policy: use fictional data, limit an exercise to 1,000 requests or one hour (whichever comes
+first), and clear trace state at the end. This is an operator cleanup policy, not an automatic TTL.
+The memory backend does not provide a time-based retention guarantee; do not use this setup as a
+long-lived archive. For larger workloads, establish a memory budget and storage/retention policy;
+[#117](https://github.com/redbarron23/obs-agent/issues/117) tracks measured overhead and backpressure.
+
+Inspect effective sampler settings, Jaeger command arguments and host bindings without starting
+services (the output also contains the stack's public demo keys):
+
+```bash
+docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks config
+```
+
+Only the Jaeger UI is published, at `127.0.0.1:16686` by default. OTLP remains on the internal
+Compose network; no ingestion port is published to the host. Loopback is a local development
+boundary, not user authentication. Exported source paths and service metadata can identify private
+documents even without their contents; private use needs an approved access and storage policy.
+
+To clear only trace state while keeping the application and review/index/cache volumes:
+
+```bash
+docker compose -f compose.rag.yml -f compose.telemetry.yml restart jaeger
+```
+
+This discards in-memory traces, but ongoing application traffic or queued exports can immediately
+create new ones. For a whole-stack shutdown, use both Compose files with `down` **without `-v`**.
+Never remove application volumes just to clear traces.
+
 ## Check review persistence automatically
 
 From the checkout, run:
