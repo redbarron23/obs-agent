@@ -14,6 +14,15 @@ uv run streamlit run app.py
 4. Open **Label review**, enter your reviewer name or ID, and accept, reject, or override suggestions.
 5. Download **Reviewed change plan** and inspect it before handing changes to your delivery system.
 
+## Practice with a fictional estate
+
+For a larger exercise than the five-row example, use the
+[synthetic estate pack](synthetic-estates.md). Import `inventory-before.csv` with its
+`vocabulary.json`, then import `inventory-after.csv` with the same vocabulary and open
+**Compare snapshots**. The guide gives commands for an isolated review directory/UI on port 8502.
+Keep `truth.csv` and the scenario manifest for evaluation only; never map their hidden labels or
+expected outcomes into input columns. The generated ZIP itself is not a CSV upload.
+
 ## CSV schema
 
 Each row is an Azure subscription or GCP project. These columns are required:

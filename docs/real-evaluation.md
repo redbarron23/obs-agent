@@ -4,6 +4,18 @@ Synthetic metrics show that the pipeline works on the deliberately constructed i
 not establish production performance. This pack measures agreement between suggestions and
 human-resolved labels on a representative, approved sample of **50–100 real resources**.
 
+## Practice before collecting real evidence
+
+Use [fictional estate packs](synthetic-estates.md) to rehearse import, review, abstention and
+snapshot comparison without customer data. Their hidden truth and scenario expectations are
+simulation artifacts, not independently reviewed production outcomes. Keep those results separate
+from the real pilot below; new random seeds do not turn the exercise into real-world validation.
+
+`real_evaluation.py` takes reviewer-feedback JSON, not a generated inventory or `truth.csv`.
+Do not convert simulator truth into purported real-review feedback or use synthetic agreement to
+justify production confidence thresholds. The fictional exercise can expose software/workflow
+problems and help prepare the pilot; it does not satisfy the pilot's approved-sample requirement.
+
 ## 1. Build an approved anonymous sample
 
 Sample resources across Azure and GCP, teams, environments, age, cost bands, and both easy and
