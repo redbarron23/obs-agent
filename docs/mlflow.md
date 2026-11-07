@@ -4,7 +4,7 @@ MLflow helps answer two questions in this project: what happened inside an agent
 how a provider/model performed across the evaluation questions. This guide starts with those
 concepts, follows the implementation, and includes an offline exercise you can inspect in the UI.
 
-The repository currently locks MLflow to **3.17.0** in the optional `mlops` dependency group.
+The repository currently locks MLflow to **3.17.2** in the optional `mlops` dependency group.
 This integration covers the optional cost agent and its evaluations. The local label-inference
 models, review decisions, and approval fingerprints use the separate workflows described in
 [Architecture](architecture.md) and [Decision storage](decision-storage.md).
@@ -197,3 +197,79 @@ The current cost agent uses synthetic data, but a question can still contain sen
 
 A trace shows recorded execution. Scorers assess particular properties of that execution. Neither
 replaces representative production validation or monitoring of the primary label-review service.
+
+## 7. Choose MLflow, Jaeger, or both
+
+| Mode | Enablement before process startup | Recorded data and destination |
+| --- | --- | --- |
+| Both off (default) | Unset `OBS_AGENT_MLFLOW`, `MLFLOW_TRACKING_URI`, and `OTEL_TRACES_EXPORTER` | Neither application tracing path records spans |
+| MLflow only | Set `OBS_AGENT_MLFLOW=1` or `MLFLOW_TRACKING_URI`; leave `OTEL_TRACES_EXPORTER` unset | Agent/model/tool content and SDK detail go to the MLflow tracking store |
+| Jaeger only | Set `OTEL_TRACES_EXPORTER=otlp` and the HTTP/protobuf endpoint; leave both MLflow enablement settings unset | Metadata-only policy caller spans go to Jaeger; RAG exports its own spans |
+| Both | Enable both paths and install both optional groups | Separate MLflow agent traces and Jaeger policy-request traces; no content forwarding from MLflow to Jaeger by default |
+
+For both paths in a local Python process, install with
+`uv sync --locked --group mlops --group telemetry`. The combined Docker simulation includes
+OpenTelemetry but does not install or enable MLflow. Follow the
+[Jaeger setup](local-rag-stack.md#opt-in-to-jaeger-tracing) for the actual endpoint and startup
+commands; starting a collector alone does not activate tracing.
+
+### Content capture and export routing
+
+**Enabling MLflow opts into content capture.** Manual spans retain questions, last-message content,
+tool arguments/results and final answers; SDK autologging can retain complete model requests and
+responses, including policy excerpts returned to the model. Exception messages may also be
+recorded by MLflow. This is not a metadata-only or automatically redacted mode. Use fictional or
+sanitized inputs unless content capture, access and retention are explicitly approved for the
+selected MLflow store. Do not put secrets or reviewer identities into questions or tool data.
+The default remains off, and enabling Jaeger alone does not enable MLflow.
+
+Jaeger caller spans retain only operation/outcome, HTTP status and timing. RAG additionally permits
+configured service/model metadata, usage, source paths and retrieval distances. They exclude raw
+questions, documents, answers, reviewer data, authorization headers and exception text. Source
+paths can still identify private documents; see the
+[local data boundary](local-rag-stack.md#sampling-storage-and-local-access).
+
+MLflow 3.17.2 recognizes standard OTLP endpoint variables independently of the policy exporter.
+Without a guard, setting a Jaeger endpoint can reroute content-bearing MLflow spans there, even
+when the policy exporter's `OTEL_TRACES_EXPORTER` is `none`. `observability.setup()` therefore
+defaults **`MLFLOW_ENABLE_OTLP_EXPORTER=false`** before configuring tracing. MLflow keeps its
+tracking destination, and the policy exporter still uses its own OTLP endpoint. This is a routing
+boundary, not a content-redaction filter.
+
+An explicit `MLFLOW_ENABLE_OTLP_EXPORTER=true` is preserved as an advanced opt-in to exporting
+MLflow content to OTLP. It can replace MLflow tracking export; MLflow's separate dual-export option
+can send to both destinations. These routing overrides are outside the tested separate-backend
+mode: review data approval and destination behavior before using them. Keep the setting false
+for the metadata-only Jaeger experiment, and restart after changing configuration. Agent evaluation
+runs/metrics retain their existing MLflow destination and scorer behavior.
+
+### Context, duplicate spans and failure behavior
+
+The supported separate-backend mode keeps MLflow's default isolated provider/context:
+`MLFLOW_USE_DEFAULT_TRACER_PROVIDER=true` and
+`MLFLOW_TRACE_PROPAGATE_TO_OTEL_CONTEXT=false` (the SDK defaults). The policy client owns a private
+OpenTelemetry provider and does not replace the process-global provider. Do not switch MLflow to
+the global provider or enable context propagation and expect the same isolation guarantees.
+
+The offline coexistence test runs the real agent, OpenAI SDK autologging and production policy
+client with a temporary MLflow database and in-process HTTP/export substitutes. It verifies all
+four modes, unchanged answers, no duplicate application operations, provider/context isolation,
+and content exclusion from policy exports and captured diagnostics. It deliberately confirms that
+MLflow does contain fictional question, answer and excerpt sentinels, while credential sentinels
+remain absent. This validates the content boundary; it does not certify arbitrary third-party
+autologging integrations or private workloads.
+
+One agent/model/tool span per operation is intentional. A nested SDK span adds request/response
+detail and is not a second application model call. The Jaeger caller and RAG server spans likewise
+measure different boundaries. In separate-backend mode, the policy caller starts its own trace;
+its W3C context connects it to RAG, not to the isolated MLflow agent trace. Do not assume that the
+two UIs share trace IDs or add parent and child durations as separate elapsed time.
+
+Existing failure tests cover missing optional packages, disabled tracing, unavailable MLflow
+configuration/span recording and policy SDK/export failures. Requests continue without those trace
+records, while application exceptions remain failures. Backend downtime does not guarantee replay
+of dropped spans. Run the offline checks with:
+
+```bash
+MLFLOW_DISABLE_AGENT_HINT=1 uv run --group mlops pytest tests/test_observability.py tests/test_policy_tracing.py -q
+```

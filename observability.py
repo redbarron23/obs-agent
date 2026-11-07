@@ -78,6 +78,8 @@ def _redacted_uri(uri: str) -> str:
 
 
 def _configure(mlflow) -> None:
+    # A shared Jaeger endpoint must not silently receive MLflow's content-bearing spans.
+    os.environ.setdefault("MLFLOW_ENABLE_OTLP_EXPORTER", "false")
     if not os.environ.get("MLFLOW_TRACKING_URI"):
         mlflow.set_tracking_uri(DEFAULT_TRACKING_URI)
     mlflow.set_experiment(os.environ.get("OBS_AGENT_MLFLOW_EXPERIMENT", DEFAULT_EXPERIMENT))
@@ -86,7 +88,7 @@ def _configure(mlflow) -> None:
         try:
             getattr(mlflow, flavor).autolog(silent=True)
         except Exception as exc:  # optional extra; the agent's own spans still work
-            _log.debug("mlflow.%s.autolog unavailable: %s", flavor, exc)
+            _log.debug("mlflow.%s.autolog unavailable (%s)", flavor, type(exc).__name__)
 
 
 def _disable(reason: str) -> bool:
