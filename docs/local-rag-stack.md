@@ -180,6 +180,108 @@ This discards in-memory traces, but ongoing application traffic or queued export
 create new ones. For a whole-stack shutdown, use both Compose files with `down` **without `-v`**.
 Never remove application volumes just to clear traces.
 
+### Measure caller export backpressure
+
+Run the controlled check without Docker, an embedding model or an LLM:
+
+```bash
+uv run --group telemetry python -m scripts.telemetry_load_check > telemetry-load-results.json
+```
+
+It runs tracing-disabled, healthy-collector and slow-collector scenarios in separate processes.
+Each sends the same fictional question through the production policy client 256 times with four
+workers, after nine warm-up requests. Fixture retrieval injects a fixed **40 ms** delay in every
+mode; the local OTLP/HTTP sink injects **1 second per batch** only in slow mode, exceeding the
+**0.5-second** exporter deadline. Nothing is exported to a user's configured endpoint: each worker
+clears inherited OTLP configuration and binds its own sink on a random loopback port.
+
+The JSON report records Python/SDK versions, platform, request counts, p50/p95/max request latency,
+elapsed time, observed queue occupancy, accepted/undelivered spans, flush and shutdown durations,
+and fresh-span recovery. It excludes questions, documents, credentials and exception text.
+Warm-up spans are flushed before counters reset. Slow mode additionally primes export with 16
+requests, checks one original application exception, and generates 80 synthetic spans to test
+shutdown with a stalled exporter and a nonempty queue. These phases are reported separately from
+the timed 256-request workload.
+
+Pass criteria are explicit: identical retrieval evidence (apart from freshness check timestamps),
+every timed request below five seconds, workload below 60 seconds, flush/shutdown each below five
+seconds, queue capacity 64, and batches at most 16 spans. Healthy mode must deliver every generated
+span; disabled mode must issue no export requests. The fixture's slow mode must fill the queue,
+preserve the original application exception and deliver exactly one new span after recovery.
+Each worker has an outer **90-second process deadline**, including initialization and cleanup.
+These are generous controlled-check availability budgets, not production latency objectives or
+an assertion that tracing has zero overhead.
+
+Run against the existing **fictional** combined-stack corpus after starting the telemetry stack:
+
+```bash
+docker compose -f compose.rag.yml -f compose.telemetry.yml --profile checks run --rm --no-deps --entrypoint python smoke /checks/telemetry-load.py --live-rag > telemetry-stack-load-results.json
+```
+
+This reuses the smoke image and the production HTTP client/provider. It varies only the smoke
+caller's tracing; the RAG service keeps its configured tracing throughout. The sink confirms OTLP
+receipt, not Jaeger indexing; the existing distributed-trace smoke check verifies real Jaeger
+storage and parentage separately. The fixture check runs in the Python 3.12 CI job; the real-service
+version runs in the existing isolated combined-stack job. CI retains their sanitized JSON artifacts
+for seven days. The check never stops a user's collector or removes review/index/cache volumes.
+
+### SDK queue, timeout and shutdown limits
+
+The caller uses `BatchSpanProcessor` and the OTLP HTTP/protobuf exporter. The pinned RAG provider
+uses the same SDK pattern, but its workload/memory bounds are not measured by the caller probe.
+The telemetry override forwards these standard settings to API, UI, smoke and RAG:
+
+| Setting | Stack default | Controlled check |
+| --- | --- | --- |
+| `OTEL_BSP_MAX_QUEUE_SIZE` | 2048 spans | 64 spans |
+| `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` | 512 spans | 16 spans |
+| `OTEL_BSP_SCHEDULE_DELAY` | 5000 ms | 20 ms |
+| `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | 2 seconds | 0.5 seconds |
+
+Set queue and batch sizes together: the batch size must not exceed the queue capacity. Restart or
+recreate application processes after changing settings. On overflow, the SDK drops older queued
+spans instead of blocking application requests. One batch can be in flight outside the queue;
+this is a span-count bound, not a byte/RSS limit. Actual memory also depends on concurrent active
+spans, attribute sizes, serialization and the exporter/HTTP stack.
+
+In locked SDK **1.45.2**, `OTEL_BSP_EXPORT_TIMEOUT` is read but does not bound calls to the exporter,
+and `force_flush(timeout_millis=...)` does not enforce its supplied timeout. The OTLP HTTP exporter
+has its own deadline; do not confuse those controls. Provider shutdown uses the SDK's default
+30-second worker-join allowance, not an `OTEL_BSP_EXPORT_TIMEOUT` shutdown setting. The experiment
+measures actual flush/shutdown times and kills a worker exceeding its outer deadline rather than
+assuming those APIs enforce a shorter deadline. The queue probe inspects locked SDK internals and
+must be revisited on SDK upgrades. See the
+[locked batch processor](https://github.com/open-telemetry/opentelemetry-python/blob/v1.45.2/opentelemetry-sdk/src/opentelemetry/sdk/_shared_internal/__init__.py).
+
+`undelivered_spans` combines queue eviction and failed/timed-out exports; it does not assign an
+exact cause to each missing span. Recovery proves export of a fresh span, not replay of old batches.
+These short experiments do not certify RAG throughput, production memory budgets, long-running
+process leaks, model latency or general network/DNS failure behavior.
+
+Observed fixture run on 2026-11-07: macOS 26.6.2 arm64, Python 3.12.15, SDK/exporter 1.45.2,
+working tree based on `915f59c`. The fixed 40 ms retrieval delay is included in the timings below.
+All 256 requests per mode returned unchanged evidence, and the original exception was preserved.
+
+| Caller mode | p95 request latency | Observed queue occupancy | Accepted / generated spans | Shutdown |
+| --- | --- | --- | --- | --- |
+| Disabled | 45.49 ms | 0 | 0 / 0 | No provider |
+| Healthy sink | 46.08 ms | 4 / 64 | 257 / 257 | 0.0008 s |
+| Slow sink | 46.18 ms | 64 / 64 | 0 / 273 | 2.51 s with 64 queued spans |
+
+Slow-mode flush took 2.14 seconds; recovery exported exactly one fresh span. The 273 undelivered
+spans are from the main/priming/error phases, before recovery and the separate 80-span shutdown
+probe. Differences in a single short run are observations, not statistically established overhead
+or a real embedding/provider benchmark. CI artifacts retain subsequent runs with their environment.
+
+The real combined-stack run on the same date also passed: pinned RAG `19ebcdda`, Linux aarch64
+under Colima, Python 3.12.16 and caller SDK/exporter 1.45.2. All 256 requests per mode returned
+unchanged evidence. Disabled/healthy/slow caller p95 latencies were 107.22/62.63/54.86 ms; the
+healthy sink received all 257 spans, and slow mode reached 64 queued spans, flushed in 2.44 seconds
+and shut down in 2.52 seconds with 64 spans queued. Exactly one fresh span arrived after recovery.
+The ordinary Jaeger smoke check separately verified the three linked caller/question/retrieve
+spans. These modes ran sequentially against a warmed service, so the lower later timings do not
+show that tracing makes retrieval faster. Provider tracing remained enabled throughout.
+
 ## Check review persistence automatically
 
 From the checkout, run:
