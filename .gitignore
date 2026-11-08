@@ -37,3 +37,6 @@ output/playwright/
 
 # Generated fictional estate packs and isolated review exercises
 output/synthetic-estates/
+
+# Real-world pilot workspace (docs/pilot-kit.md): private data, never commit
+pilot-workspace/

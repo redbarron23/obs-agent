@@ -155,6 +155,7 @@ thresholds. See [Evaluation](docs/evaluation.md).
 | Quality and calibration | [Evaluation](docs/evaluation.md) |
 | Agent tracing and evaluation walkthrough | [MLflow guide](docs/mlflow.md) |
 | Evaluate a real reviewed sample | [Real-world evaluation pack](docs/real-evaluation.md) |
+| Run the 50–100-resource pilot end to end | [Pilot kit](docs/pilot-kit.md) |
 | Deployment and operations | [Deployment guardrails](docs/deployment.md) |
 | Workflow metrics, error correlation, alerts | [Operations](docs/operations.md) |
 | Components and data flow | [Architecture](docs/architecture.md) |
