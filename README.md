@@ -169,8 +169,9 @@ thresholds. See [Evaluation](docs/evaluation.md).
 [`skills/cloud-label-review/`](skills/cloud-label-review/SKILL.md) packages the label-review
 workflow as a `SKILL.md` for Claude Code and other agents that support the format. The agent
 builds the inventory CSV and vocabulary with you, runs a read-only triage, and summarises the
-suggestions; approvals still happen in the Label review page. It never applies tags or records
-decisions.
+suggestions, reporting labels withheld for insufficient evidence as unknowns. Approvals still
+come from a person, in the Label review page or their own CLI or API calls. It never applies
+tags or records decisions. `tests/test_skill.py` runs the triage script as the skill describes.
 
 ```bash
 # Claude Code: install for your user, then ask it to "review the labels in inventory.csv"
