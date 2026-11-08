@@ -91,3 +91,26 @@ def test_invalid_input_exits_2(tmp_path):
     bad.write_text("cloud,resource_id\nazure,sub-1\n")
     run = _triage("--csv", str(bad))
     assert run.returncode == 2 and run.stderr.startswith("error:")
+
+
+def test_repo_skill_link_points_at_the_packaged_skill():
+    """Claude Code discovers project skills under .claude/skills; the link keeps one source."""
+    link = ROOT / ".claude" / "skills" / "cloud-label-review"
+    assert link.is_symlink() and not Path(link.readlink()).is_absolute()
+    assert link.resolve() == SKILL.resolve()
+
+
+def test_runs_through_a_symlink_from_anywhere(tmp_path):
+    """Linked into ~/.claude/skills/, the script resolves back to this checkout."""
+    link = tmp_path / "skills" / "cloud-label-review"
+    link.parent.mkdir()
+    link.symlink_to(SKILL)
+    run = subprocess.run(
+        [sys.executable, str(link / "scripts" / "triage.py"), "--csv", str(SAMPLE)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout)["coverage"]["total"] == 5

@@ -173,9 +173,14 @@ suggestions, reporting labels withheld for insufficient evidence as unknowns. Ap
 come from a person, in the Label review page or their own CLI or API calls. It never applies
 tags or records decisions. `tests/test_skill.py` runs the triage script as the skill describes.
 
+Inside this repository Claude Code loads it automatically: `.claude/skills/cloud-label-review` is
+a symlink to `skills/cloud-label-review`. To use it from any directory, link it into your user
+skills rather than copying it. A link follows `git pull`, and `triage.py` finds this checkout
+through it; a copy goes stale and can only run from inside a checkout.
+
 ```bash
 # Claude Code: install for your user, then ask it to "review the labels in inventory.csv"
-cp -r skills/cloud-label-review ~/.claude/skills/
+ln -s "$PWD/skills/cloud-label-review" ~/.claude/skills/cloud-label-review
 
 # Or run the triage directly from this checkout
 uv run python skills/cloud-label-review/scripts/triage.py \
