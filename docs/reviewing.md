@@ -58,10 +58,13 @@ The README is deliberately explicit about this, but it bears repeating:
   while auto-apply precision holds at 100%. With insufficient-evidence abstention, the review flow
   suggests a team for 77% of harsh untagged resources at 94% accuracy; read accuracy with coverage.
 - **The synthetic-data ceiling is unresolved.** Whether the approach transfers to a real estate is
-  still open. The honest next step would be a small hand-labelled real sample (even ~50 resources)
-  — that is a known gap, not an oversight.
-- **Live LLM evals cost money** and are not run in CI. Offline: unit and integration tests plus a 12-case
-  deterministic dry-run. The live results in the testing guide (DeepSeek 12/12, Ollama 10/12) are
+  still open. The next step is a small hand-labelled real sample of 50–100 resources: the pilot in
+  [#49](https://github.com/redbarron23/obs-agent/issues/49), run with the [pilot kit](pilot-kit.md).
+  That is a known gap, not an oversight. Until it has run, treat any real-world claim as unproven,
+  and features that depend on it (#50, #92, #104) as deliberately blocked. `CLAUDE.md` lists what
+  counts as evidence that the pilot is done.
+- **Live LLM evals cost money** and are not run in CI. Offline: unit and integration tests plus an 18-case
+  deterministic dry-run (12 tool-fact cases and 6 stub-retrieval cases). The live results in the testing guide (DeepSeek 12/12, Ollama 10/12) are
   recorded runs, not a per-commit gate. See [docs/testing.md](testing.md) for what the mocks
   cannot catch.
 
@@ -83,7 +86,7 @@ Please do not spend your review budget on these — they are handled or delibera
 uv sync                                   # environment (uv only, never pip)
 uv run labeling.py                        # strategy comparison table
 uv run pytest -q -m "not integration"     # offline, no API key
-uv run evals.py --dry-run                 # 12 deterministic eval cases, no API key
+uv run evals.py --dry-run                 # 18 deterministic eval cases, no API key
 uv run streamlit run app.py               # the review UI
 ```
 

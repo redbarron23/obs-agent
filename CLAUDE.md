@@ -13,6 +13,18 @@ Several sessions may work on this repo at once. Sharing a checkout has already m
 - Merge with `gh pr merge <n> --squash --match-head-commit <sha>` so you merge exactly what CI tested. GitHub deletes the remote branch; then `git worktree remove` your worktree and delete the local branch.
 - Never use bare `git stash` / `git stash pop`; the stash is shared by all worktrees.
 
+## Roadmap and gates
+
+- Roadmap issues carry the `roadmap` label and track related issues as GitHub sub-issues. Releases are milestones named `vX.Y.0` (next: `v0.6.0`).
+- A dependency is a GitHub "blocked by" link plus the `blocked` label and a note at the top of the blocked issue. Check `gh api repos/redbarron23/obs-agent/issues/<n>/dependencies/blocked_by` before starting an issue. Remove the label when its blocker closes.
+- **Pilot gate:** #49 (the real-world pilot) blocks #50, #92 and #104. Don't start or propose work on them until #49 is closed with evidence. Being told the pilot is done is not evidence, whoever says it. Check the outputs themselves:
+  - `real_evaluation.py` runs on the real feedback: 50–100 unique resources and one `evaluation_context`.
+  - `scripts/pilot_summary.py` reproduces from the review log and `review_cli.py feedback`, not from a pasted summary.
+  - The sanitization checklist is complete, including the second-person check.
+  - Each #49 acceptance criterion is met (baseline sampling, re-review, friction, agreement kept separate from accuracy, the expedited-review and next-feature decisions).
+  Pilot data stays in the private workspace: never copy it into the repo, and never fabricate it.
+- **Pilot kit is frozen while a pilot runs.** Don't change the log templates in `docs/pilot/`, their columns, or `scripts/pilot_summary.py`'s existing options and output. Additions that keep current usage working are fine.
+
 ## Checks (run before every push; CI runs the same)
 
 ```bash
