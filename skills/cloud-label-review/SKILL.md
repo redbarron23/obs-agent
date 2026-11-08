@@ -59,8 +59,9 @@ from the team.
        --csv inventory.csv --vocab vocabulary.json --out triage.json
    ```
 
-   Run it from the obs-agent checkout. If the skill is installed elsewhere (for example
-   `~/.claude/skills/`), use that path to `triage.py` instead; it uses the checkout it's run from.
+   Run it from the obs-agent checkout. If the skill is linked elsewhere (for example
+   `~/.claude/skills/`), use that path to `triage.py` instead: through a symlink it finds the
+   checkout it belongs to, and otherwise it uses the checkout it's run from.
    It writes nothing else: no saved review, no decisions. `--min-confidence 0.5` hides queue
    entries below that model score.
 
