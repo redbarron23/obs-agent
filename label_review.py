@@ -751,20 +751,34 @@ class DecisionStore:
             return [dict(row) for row in conn.execute(query + " ORDER BY id", args)]
 
     def policy_evidence_review(
-        self, resource_id: str, label: str, current: dict | None = None
+        self,
+        resource_id: str | None = None,
+        label: str | None = None,
+        current: dict | list[dict] | None = None,
     ) -> list[dict]:
-        """Retained evidence for one label, each row with `active` (it supports the current
-        decision) and `inspect` (reasons to look at the decision again; see
-        policy_evidence.inspection_reasons). *current* is an optional fresh retrieval."""
-        active = self.decision_feedback_id(resource_id, label)
-        return [
-            row
-            | {
-                "active": row["feedback_id"] is not None and row["feedback_id"] == active,
-                "inspect": policy_evidence.inspection_reasons(row, active, current),
-            }
-            for row in self.policy_evidence(resource_id, label)
-        ]
+        """Retained evidence (all of it, or one label's), each row with `active` (it supports the
+        label's current decision) and `inspect` (reasons to look at the decision again; see
+        policy_evidence.inspection_reasons).
+
+        *current* is an optional fresh retrieval, or several: each row is compared with the one
+        that answered the row's own question, if any.
+        """
+        currents = [c for c in (current if isinstance(current, list) else [current]) if c]
+        active: dict[tuple[str, str], int | None] = {}
+        out = []
+        for row in self.policy_evidence(resource_id, label):
+            key = (row["resource_id"], row["label"])
+            if key not in active:
+                active[key] = self.decision_feedback_id(*key)
+            match = next((c for c in currents if c.get("question") == row["question"]), None)
+            out.append(
+                row
+                | {
+                    "active": row["feedback_id"] is not None and row["feedback_id"] == active[key],
+                    "inspect": policy_evidence.inspection_reasons(row, active[key], match),
+                }
+            )
+        return out
 
     # ── Collaboration: assignments, notes, unresolved questions (#46) ──────
     #

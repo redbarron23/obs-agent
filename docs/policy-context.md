@@ -131,6 +131,14 @@ the decision:
 These are only reasons to look again. Nothing changes a decision, approval, label confidence,
 plan or cloud tag automatically.
 
+**API and CLI.** The same evidence is available without the UI, for the synthetic estate and for
+each saved review ([routes](api.md#label-endpoints)). `GET …/policy-context` returns the excerpts
+and their ranks. `POST …/policy-evidence` attaches the ranks you consulted, and the server repeats
+the retrieval itself, so a client cannot supply excerpt text or corpus fields. `GET …/policy-evidence?compare=current`
+adds the comparison reasons above. `review_cli.py evidence` lists a saved review's evidence offline,
+with the reasons that need no fresh retrieval. Excerpt text is returned only on request
+(`include_text=true`, `--text`).
+
 ## Chat: `search_observability_docs`
 
 When `OBS_AGENT_RAG_URL` is set, the cost chat (UI, CLI and `POST /ask`) offers the model one more
@@ -202,7 +210,7 @@ unavailable freshness, untrusted-content framing (an injected instruction stays 
 conflict disclosure, that policy text never changes suggestions or model scores, tool registration
 on and off, the agent loop with the tool, and the review page in each state, including that context
 is not reused for another label. Policy applicability is covered for every status, legacy hits, metadata that tries to forge tags or lines, and the review page. `uv run evals.py --dry-run` adds six stub-retrieval cases (three policy, three cost runbook), and
-`tests/test_cost_runbooks.py` covers the cost-runbook rules. `tests/test_policy_evidence.py` covers retained evidence:
+`tests/test_cost_runbooks.py` covers the cost-runbook rules. `tests/test_policy_evidence_api.py` covers the evidence routes and CLI. `tests/test_policy_evidence.py` covers retained evidence:
 what is recorded, hash-only retention, policy metadata, refusals (no decision, another snapshot,
 unanswered or foreign excerpts), append-only storage, unchanged plans and exports, two snapshots,
 changed and unavailable corpus provenance, superseded policy, revoked and replaced decisions,

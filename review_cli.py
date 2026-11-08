@@ -8,6 +8,7 @@
     uv run python review_cli.py assign REVIEW_ID RESOURCE team bob --reviewer alice
     uv run python review_cli.py ask REVIEW_ID RESOURCE team "Who owns this?" --reviewer alice
     uv run python review_cli.py queue REVIEW_ID --mine --unresolved --reviewer bob
+    uv run python review_cli.py evidence REVIEW_ID [--resource RESOURCE --label team] [--text]
 
 It calls the same workspace, validation, inference, decision and export functions as the Label
 review UI and the REST API's /reviews routes, on the saved reviews in OBS_AGENT_REVIEW_DIR
@@ -131,6 +132,15 @@ def _parser() -> argparse.ArgumentParser:
     collab.add_argument("--history", action="store_true", help="the append-only event history")
     _collaboration_filters(collab)
 
+    evidence = review(
+        "evidence", "policy evidence retained with decisions, and reasons to inspect them"
+    )
+    evidence.add_argument("--resource", help="one resource's label (with --label)")
+    evidence.add_argument("--label", choices=LABELS)
+    evidence.add_argument(
+        "--text", action="store_true", help="include retained excerpt text (private)"
+    )
+
     export = review("export", "resolved label changes")
     export.add_argument("--format", choices=("csv", "sh", "tfvars", "plan"), default="plan")
     export.add_argument(
@@ -217,6 +227,26 @@ def _collaborate(args, inventory, store) -> dict:
     return store.collaboration_item(args.resource_id, args.label)
 
 
+def _evidence(args, inventory, store) -> list[dict]:
+    """Retained policy evidence with the stored reasons to inspect it. Offline: the current
+    index is never queried here (the REST API's `compare=current` does that)."""
+    import label_review
+
+    if (args.resource is None) != (args.label is None):
+        raise ValueError("Give --resource and --label together.")
+    if args.resource is not None and label_review.resource_report(args.resource, inventory) is None:
+        raise ValueError("Unknown resource in this saved review.")
+    return [
+        row
+        | {
+            "text_retained": row["excerpt_text"] is not None,
+            "excerpt_text": row["excerpt_text"] if args.text else None,
+            "policy": json.loads(row["policy"]) if row["policy"] else None,
+        }
+        for row in store.policy_evidence_review(args.resource, args.label)
+    ]
+
+
 def run(args) -> object:
     import label_review
     import review_workspaces as rw
@@ -272,6 +302,8 @@ def run(args) -> object:
         if args.history:
             return store.collaboration_history()
         return store.collaboration(**_filters(args))
+    if args.command == "evidence":
+        return _evidence(args, inventory, store)
     if args.command == "undo":
         with workflow_metrics.operation("decision_write", invalid=(label_review.DecisionError,)):
             event = store.revoke(
