@@ -6,6 +6,7 @@ Decisions are shared with the REST API through the same SQLite database
 """
 
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -485,6 +486,11 @@ def _plain(value: str) -> str:
     return " ".join(str(value).replace("`", "'").split()) or "-"
 
 
+def _md_escape(text: str) -> str:
+    """Service-supplied text inside a Markdown message: no links, emphasis or HTML."""
+    return re.sub(r"([\\`*_{}\[\]()<>#+!|~$-])", r"\\\1", " ".join(str(text).split()))
+
+
 def _show_excerpts(hits: list[dict]) -> None:
     for h in hits:
         distance = "unknown" if h["distance"] is None else f"{h['distance']:.3f}"
@@ -492,6 +498,16 @@ def _show_excerpts(hits: list[dict]) -> None:
             f"**{h['rank']}.** `{_plain(h['source'])}` § `{_plain(h['section'] or '(no heading)')}`"
             f" · distance {distance}"
         )
+        policy = h.get("policy")
+        # Unversioned documents (and pre-1.1 services) show nothing extra, as before.
+        if policy and policy["status"] not in ("unversioned", "unavailable"):
+            label = policy_docs.policy_label(h)
+            st.caption(
+                f"Policy `{_plain(label or 'unnamed')}` · status `{policy['status']}`"
+                + (f" · applicability as of {_plain(policy['as_of'])}" if policy["as_of"] else "")
+            )
+        for note in policy_docs.applicability_notes([h]):
+            st.warning(_md_escape(note), icon=":material/event_busy:")
         # Plain text, never Markdown or HTML: retrieved documents are untrusted.
         st.text(h["text"])
 

@@ -57,11 +57,38 @@ any of them never shows excerpts fetched for another one.
 | No matching section (`200`, empty hits) | "No documentation section matched" | No |
 | Index stale, or freshness/provenance unavailable | A warning naming the changed sources | No |
 | Same section from several documents | "Unresolved: ... may conflict"; obs-agent does not choose | No |
+| Policy superseded, expired, future, in conflict or invalid | The policy ID, version and status under the excerpt, and a warning naming the superseding or conflicting policy or the start/end date | No |
 | Timeout, connection failure | Warning: `timeout` / `unreachable` | No |
 | `401` / `403` | Warning: `unauthorized` (check `RAG_API_KEY`) / `forbidden` | No |
 | `503 index_unavailable`, `index_stale`, `index_freshness_unavailable` | Warning with that status | No |
 | Other HTTP error, unreadable response | Warning: `service error` / `invalid response` | No |
 | Invalid URL (non-loopback, bad timeout) | Error: `misconfigured` | No |
+
+## Policy applicability
+
+rag-observability's retrieval contract 1.1 labels each hit with the applicability of its document's
+policy (`policy.status`, from optional front matter: `policy_id`, `version`, effective dates and
+explicit `supersedes`). obs-agent shows and frames that label; it never filters or reorders hits,
+and the service, not obs-agent, decides the status.
+
+| `policy.status` | Review page | Chat framing |
+| --- | --- | --- |
+| `active` | Policy ID, version and status under the excerpt; a note if a future version will supersede it | Prefer it |
+| `superseded` | Warning naming the superseding policy | Quote only as history, never as current requirements |
+| `expired` | Warning with the `effective_until` date | Quote only as history |
+| `future` | Warning with the `effective_from` date | Say when it starts |
+| `conflict` | Warning naming the conflicting policies; obs-agent does not choose | Report both without choosing |
+| `invalid` (or an unrecognised status) | Warning: applicability unknown | Treat as unknown |
+| `unversioned`, `unavailable`, or no `policy` (a pre-1.1 service) | Nothing extra, as before | No extra attributes |
+
+In chat, each non-applicable excerpt also gets a `POLICY:` line above the excerpts, and a handling
+rule says a later date alone never makes one policy override another. Applicability is separate
+from index freshness: a `current` index can still return an `expired` policy, and a stale index can
+return an `active` one. Neither changes a suggestion, model score or owner. Policy metadata comes
+from the service, so it is treated like excerpt text: unknown fields are dropped, values are
+bounded and put on one line, and they are escaped in the framing and on the page. Applicability
+is also kept with [retained decision evidence](#retain-evidence-with-a-decision), which flags an
+excerpt whose policy has since become superseded.
 
 ## Retain evidence with a decision
 
@@ -130,7 +157,8 @@ The tool result is framed for the model as follows:
   conflicts; what obs-agent does and does not evaluate.
 - Each excerpt inside `<untrusted_document_excerpt rank source section distance>` tags, with `<`,
   `>` and `&` escaped so a document cannot close or forge the delimiters. A document saying
-  "ignore previous instructions" is quoted there, not obeyed.
+  "ignore previous instructions" is quoted there, not obeyed. When the service reports policy
+  applicability, the tag also carries `policy_status` and `policy="<policy_id>@<version>"`.
 
 On a failure or no match the result says that documentation guidance is unavailable and tells the
 model to answer from the other tools' facts. The answer comes from the existing provider loop, so a combined answer such
@@ -173,7 +201,7 @@ unsupported questions, source attribution, every failure status, timeouts, redir
 unavailable freshness, untrusted-content framing (an injected instruction stays quoted and escaped),
 conflict disclosure, that policy text never changes suggestions or model scores, tool registration
 on and off, the agent loop with the tool, and the review page in each state, including that context
-is not reused for another label. `uv run evals.py --dry-run` adds five stub-retrieval cases (two policy, three cost runbook), and
+is not reused for another label. Policy applicability is covered for every status, legacy hits, metadata that tries to forge tags or lines, and the review page. `uv run evals.py --dry-run` adds six stub-retrieval cases (three policy, three cost runbook), and
 `tests/test_cost_runbooks.py` covers the cost-runbook rules. `tests/test_policy_evidence.py` covers retained evidence:
 what is recorded, hash-only retention, policy metadata, refusals (no decision, another snapshot,
 unanswered or foreign excerpts), append-only storage, unchanged plans and exports, two snapshots,

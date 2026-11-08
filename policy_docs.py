@@ -88,6 +88,23 @@ STATUSES = (
 )
 ANSWERED = ("ok", "no_match")
 
+# Policy applicability of a hit's document (rag-observability contract 1.1, `hit.policy`).
+POLICY_STATUSES = (
+    "active",
+    "superseded",
+    "future",
+    "expired",
+    "conflict",
+    "invalid",
+    "unversioned",
+    "unavailable",
+)
+# Statuses meaning the excerpt must not be read as current, applicable guidance.
+NOT_APPLICABLE = ("superseded", "expired", "conflict", "invalid", "future")
+_POLICY_TEXT = ("as_of", "policy_id", "version", "effective_from", "effective_until")
+_POLICY_LISTS = ("supersedes", "superseded_by", "pending_superseded_by", "conflicts_with", "errors")
+_POLICY_MAX = 200
+
 _log = logging.getLogger(__name__)
 
 # (url, body, headers, timeout) -> (HTTP status, response body). Raises
@@ -314,10 +331,36 @@ def _parse_hits(payload: dict) -> list[dict]:
                 "exact_term_match": bool(h.get("exact_term_match")),
             }
         )
-        # Policy applicability (rag-observability contract 1.1): kept when present, so evidence
-        # attached to a decision records the policy ID, version and effective dates.
-        if isinstance(h.get("policy"), dict):
-            out[-1]["policy"] = h["policy"]
+        # Policy applicability (rag-observability contract 1.1): kept when present, so it can be
+        # shown, framed for the model and retained with decision evidence.
+        if (policy := _parse_policy(h.get("policy"))) is not None:
+            out[-1]["policy"] = policy
+    return out
+
+
+def _one_line(value: str) -> str:
+    """Service-supplied metadata on one bounded line: it is quoted outside the excerpt tags."""
+    return " ".join(value.split())[:_POLICY_MAX]
+
+
+def _parse_policy(raw) -> dict | None:
+    """A hit's `policy` block with only known fields, bounded strings and lists.
+
+    None when the service sent none (a pre-1.1 service). An unknown status becomes `invalid`:
+    applicability is then unknown rather than assumed.
+    """
+    if not isinstance(raw, dict):
+        return None
+    status = raw.get("status")
+    out: dict = {"status": status if status in POLICY_STATUSES else "invalid"}
+    for key in _POLICY_TEXT:
+        value = raw.get(key)
+        out[key] = _one_line(value) if isinstance(value, str) else None
+    for key in _POLICY_LISTS:
+        value = raw.get(key)
+        out[key] = [_one_line(str(v)) for v in value[:20]] if isinstance(value, list) else []
+    if status not in POLICY_STATUSES:
+        out["errors"].append("unrecognised policy status")
     return out
 
 
@@ -448,6 +491,60 @@ def possible_conflicts(hits: list[dict]) -> list[str]:
     return sorted(s for s, srcs in sources.items() if len(srcs) > 1)
 
 
+def policy_label(hit: dict) -> str | None:
+    """`<policy_id>@<version>` for a versioned hit, else None."""
+    policy = hit.get("policy") or {}
+    if not policy.get("policy_id"):
+        return None
+    return f"{policy['policy_id']}@{policy.get('version') or 'unversioned'}"
+
+
+def _refs(values: list[str]) -> str:
+    return ", ".join(values) if values else "an unnamed policy"
+
+
+def applicability_notes(hits: list[dict]) -> list[str]:
+    """One plain-language note per hit whose policy is not current applicable guidance (or is
+    active but due to be superseded). Empty for active, unversioned and pre-1.1 hits.
+
+    Applicability is independent of index freshness and never changes a suggestion or score.
+    """
+    notes = []
+    for h in hits:
+        policy = h.get("policy") or {}
+        status = policy.get("status")
+        name = policy_label(h) or "its policy"
+        where = f"Excerpt {h['rank']} ({citation(h)}): {name}"
+        if status == "superseded":
+            notes.append(
+                f"{where} is superseded by {_refs(policy['superseded_by'])}. Quote it only as "
+                "history, not as current guidance."
+            )
+        elif status == "expired":
+            notes.append(
+                f"{where} expired on {policy.get('effective_until') or 'an unstated date'} "
+                "and no longer applies."
+            )
+        elif status == "future":
+            notes.append(
+                f"{where} is not yet in effect; it starts on "
+                f"{policy.get('effective_from') or 'an unstated date'}."
+            )
+        elif status == "conflict":
+            notes.append(
+                f"{where} conflicts with {_refs(policy['conflicts_with'])}. Unresolved: "
+                "obs-agent does not choose between them."
+            )
+        elif status == "invalid":
+            notes.append(f"{where} has malformed policy metadata, so its applicability is unknown.")
+        elif status == "active" and policy.get("pending_superseded_by"):
+            notes.append(
+                f"{where} is in effect but will be superseded by "
+                f"{_refs(policy['pending_superseded_by'])}."
+            )
+    return notes
+
+
 def corpus_line(result: dict) -> str:
     corpus = result.get("corpus") or {}
     freshness = result.get("freshness") or {}
@@ -493,6 +590,11 @@ _RULES = (
     "guaranteed to save money.\n"
     "- If excerpts disagree with each other or with a tool result, say so and leave the "
     "conflict unresolved; do not pick a winner.\n"
+    "- Policy applicability is the `policy_status` attribute, set by the documentation service: "
+    "prefer `active` guidance. Quote `superseded` or `expired` text only as history, never as "
+    "current requirements; for `future` guidance say when it starts; report a `conflict` and "
+    "both policies without choosing; treat `invalid` as unknown. A later date alone never makes "
+    "one policy override another, and a current index can still return an expired policy.\n"
     f"- {EVALUATED_FIELDS}"
 )
 
@@ -540,6 +642,8 @@ def format_for_llm(result: dict, *, scope_note: str | None = None) -> str:
             + ", ".join(conflicts)
             + ". Disclose any disagreement."
         )
+    for note in applicability_notes(result["hits"]):
+        lines.append(f"POLICY: {_escape(note)}")
     lines += ["", _RULES, ""]
     for h in result["hits"]:
         distance = "unknown" if h["distance"] is None else f"{h['distance']:.4f}"
@@ -548,6 +652,10 @@ def format_for_llm(result: dict, *, scope_note: str | None = None) -> str:
             f'rank="{h["rank"]}" source="{_escape_attr(h["source"])}" '
             f'section="{_escape_attr(h["section"])}" distance="{distance}"'
         )
+        if policy := h.get("policy"):
+            attrs += f' policy_status="{policy["status"]}"'
+            if label := policy_label(h):
+                attrs += f' policy="{_escape_attr(label)}"'
         lines += [f"<{EXCERPT_TAG} {attrs}>", _escape(h["text"]), f"</{EXCERPT_TAG}>"]
     return "\n".join(lines)
 
