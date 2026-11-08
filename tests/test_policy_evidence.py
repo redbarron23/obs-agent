@@ -13,6 +13,7 @@ import pytest
 import label_review as lr
 import policy_docs
 import policy_evidence
+import workflow_metrics
 from review_workspaces import load_review, save_review
 from tests.test_backup_restore import CONFIG, CSV
 from tests.test_policy_docs import FIXTURE, REVIEW_PAGE, rag  # noqa: F401  (pytest fixture)
@@ -259,6 +260,7 @@ class TestReviewPage:
         self.db = tmp_path / "decisions.db"
         monkeypatch.setenv("OBS_AGENT_DECISIONS", str(self.db))
         monkeypatch.setenv("OBS_AGENT_REVIEWER", "alice")
+        workflow_metrics.reset()
         return AppTest.from_file(str(REVIEW_PAGE), default_timeout=60)
 
     def _show(self, at, resource):
@@ -288,6 +290,13 @@ class TestReviewPage:
         assert any("Retained policy evidence" in m.value for m in at.markdown)
         (row,) = lr.DecisionStore(self.db).policy_evidence()
         assert (row["resource_id"], row["reviewer"]) == (resource, "alice")
+        # One evidence_write operation; nothing about the excerpt reaches the metrics.
+        ops = workflow_metrics.snapshot()["operations"]
+        evidence_ops = [o for o in ops if o["operation"] == "evidence_write"]
+        assert evidence_ops == [
+            {"operation": "evidence_write", "surface": "ui", "outcome": "success", "count": 1}
+        ]
+        assert FIXTURE["hits"][0]["source"] not in json.dumps(workflow_metrics.snapshot())
 
         # The service later changes its index, then goes away: the evidence stays readable.
         rag.payload["corpus"]["corpus_sha256"] = "f" * 64

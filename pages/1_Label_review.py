@@ -569,20 +569,24 @@ def _attach_evidence(shown: dict, target: str) -> None:
         disabled=not (reviewer and chosen),
         key="policy_attach",
     ):
+        write = workflow_metrics.operation("evidence_write", invalid=(DecisionError,))
         try:
-            rows = store.attach_policy_evidence(
-                target,
-                label,
-                result,
-                [options[c] for c in chosen],
-                imported_inventory,
-                question=shown["question"],
-                retrieved_at=shown.get("retrieved_at"),
-                reviewer=reviewer,
-                retain_text=retain_text,
-            )
+            with write:
+                rows = store.attach_policy_evidence(
+                    target,
+                    label,
+                    result,
+                    [options[c] for c in chosen],
+                    imported_inventory,
+                    question=shown["question"],
+                    retrieved_at=shown.get("retrieved_at"),
+                    reviewer=reviewer,
+                    retain_text=retain_text,
+                )
         except DecisionError as exc:
             st.error(str(exc))
+        except Exception:
+            st.error(f"Could not attach evidence. Reference: `{write.correlation_id}`")
         else:
             st.success(f"Attached {len(rows)} excerpt(s) to the {label} decision for {target}.")
 
