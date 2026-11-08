@@ -11,6 +11,8 @@ Human-in-the-loop label review on top of labeling.py.
                      revoking a decision appends an attributable 'revoke' event;
                      assignments, notes and unresolved questions go to a separate
                      append-only collaboration history that never approves anything
+                     policy excerpts a reviewer consulted can be attached to a decision
+                     (append-only policy_evidence table, #103); never an approval
   export_*()         resolved label changes as CSV, a shell script of
                      az / gcloud commands, or a Terraform tfvars map
 
@@ -36,6 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import policy_evidence
 import workflow_metrics
 from labeling import (
     AUTO_APPLY_THRESHOLD,
@@ -403,12 +406,16 @@ class DecisionStore:
                 )
                 """
             )
-            for action in ("UPDATE", "DELETE"):
-                conn.execute(
-                    f"CREATE TRIGGER IF NOT EXISTS review_collaboration_no_{action.lower()} "
-                    f"BEFORE {action} ON review_collaboration "
-                    "BEGIN SELECT RAISE(ABORT, 'review_collaboration is append-only'); END"
-                )
+            # Policy evidence retained with decisions (#103): also a new, append-only table.
+            schema = ", ".join(f"{n} {t}" for n, t in policy_evidence.COLUMNS.items())
+            conn.execute(f"CREATE TABLE IF NOT EXISTS policy_evidence ({schema})")
+            for table in ("review_collaboration", "policy_evidence"):
+                for action in ("UPDATE", "DELETE"):
+                    conn.execute(
+                        f"CREATE TRIGGER IF NOT EXISTS {table}_no_{action.lower()} "
+                        f"BEFORE {action} ON {table} "
+                        f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END"
+                    )
             if is_new and self._legacy_path.exists():
                 for entry in json.loads(self._legacy_path.read_text()):
                     conn.execute(
@@ -564,25 +571,7 @@ class DecisionStore:
             ).fetchone()
             if current is None:
                 return None
-            # The feedback row that recorded the decision being revoked (absent for decisions
-            # imported from legacy JSON files).
-            origin = conn.execute(
-                """
-                SELECT id FROM review_feedback
-                WHERE resource_id = ? AND label = ? AND decision = ? AND decided_at = ?
-                  AND reviewer IS ? AND inventory_id IS ? AND model_version IS ?
-                ORDER BY id DESC LIMIT 1
-                """,
-                (
-                    resource_id,
-                    label,
-                    current["decision"],
-                    current["decided_at"],
-                    current["reviewer"],
-                    current["inventory_id"],
-                    current["model_version"],
-                ),
-            ).fetchone()
+            origin = self._decision_feedback_id(conn, current)
             event = {
                 "resource_id": resource_id,
                 "label": label,
@@ -596,7 +585,7 @@ class DecisionStore:
                 "revoked_decision": current["decision"],
                 "revoked_reviewer": current["reviewer"],
                 "revoked_decided_at": current["decided_at"],
-                "revoked_feedback_id": origin["id"] if origin else None,
+                "revoked_feedback_id": origin,
                 # Who revoked it, when and (optionally) why.
                 "reviewer": reviewer,
                 "decided_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -623,6 +612,37 @@ class DecisionStore:
             ).fetchone()
             return dict(row)
 
+    @staticmethod
+    def _decision_feedback_id(conn: sqlite3.Connection, decision) -> int | None:
+        """The review_feedback row that recorded an active *decision* (None for decisions
+        imported from legacy JSON files)."""
+        row = conn.execute(
+            """
+            SELECT id FROM review_feedback
+            WHERE resource_id = ? AND label = ? AND decision = ? AND decided_at = ?
+              AND reviewer IS ? AND inventory_id IS ? AND model_version IS ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (
+                decision["resource_id"],
+                decision["label"],
+                decision["decision"],
+                decision["decided_at"],
+                decision["reviewer"],
+                decision["inventory_id"],
+                decision["model_version"],
+            ),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def decision_feedback_id(self, resource_id: str, label: str) -> int | None:
+        """The review_feedback row of the label's active decision, or None."""
+        with self._connect() as conn:
+            current = conn.execute(
+                "SELECT * FROM decisions WHERE resource_id = ? AND label = ?", (resource_id, label)
+            ).fetchone()
+            return self._decision_feedback_id(conn, current) if current else None
+
     def delete(
         self,
         resource_id: str,
@@ -633,6 +653,118 @@ class DecisionStore:
     ) -> bool:
         """Revoke the decision (see revoke()); True if there was one."""
         return self.revoke(resource_id, label, reviewer=reviewer, reason=reason) is not None
+
+    # ── Policy evidence retained with a decision (#103) ─────────────────────
+    #
+    # Append-only (triggers refuse UPDATE and DELETE). Like collaboration, it is never read by
+    # resolve(), pending_changes(), approved_change_plan() or export(): attaching evidence cannot
+    # approve, change or export anything.
+
+    def attach_policy_evidence(
+        self,
+        resource_id: str,
+        label: str,
+        result: dict,
+        selected: list[dict],
+        inventory: pd.DataFrame | None = None,
+        *,
+        question: str,
+        retrieved_at: str | None = None,
+        reviewer: str | None = None,
+        retain_text: bool = True,
+    ) -> list[dict]:
+        """Record the *selected* hits of a policy retrieval *result* as evidence consulted for
+        the label's active decision. *retain_text* False keeps only each excerpt's SHA-256.
+
+        The decision must exist and be bound to this inventory snapshot and inference version;
+        otherwise DecisionError, writing nothing.
+        """
+        reviewer = _reviewer(reviewer)
+        if label not in LABELS:
+            raise DecisionError(f"Unknown label '{label}'. Choose from {list(LABELS)}.")
+        try:
+            rows = policy_evidence.evidence_rows(
+                result,
+                selected,
+                question=question,
+                retrieved_at=retrieved_at,
+                retain_text=retain_text,
+            )
+        except policy_evidence.EvidenceError as exc:
+            raise DecisionError(str(exc)) from None
+        context = review_context(inventory)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT * FROM decisions WHERE resource_id = ? AND label = ?", (resource_id, label)
+            ).fetchone()
+            if current is None:
+                raise DecisionError(
+                    f"{resource_id} has no {label} decision. Save a decision first; evidence is "
+                    "attached to a decision, never in place of one."
+                )
+            if (current["inventory_id"], current["model_version"]) != (
+                context["inventory_id"],
+                context["model_version"],
+            ):
+                raise DecisionError(
+                    f"The {label} decision for {resource_id} was made against another inventory "
+                    "snapshot or inference version. Review it again before attaching evidence."
+                )
+            decision = {
+                "resource_id": resource_id,
+                "label": label,
+                "feedback_id": self._decision_feedback_id(conn, current),
+                "decision": current["decision"],
+                "decision_value": current["value"],
+                "decision_reviewer": current["reviewer"],
+                "decided_at": current["decided_at"],
+                "inventory_id": current["inventory_id"],
+                "model_version": current["model_version"],
+                "reviewer": reviewer,
+                "attached_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            }
+            names = [n for n in policy_evidence.COLUMNS if n != "id"]
+            ids = []
+            for row in rows:
+                cursor = conn.execute(
+                    f"INSERT INTO policy_evidence ({', '.join(names)}) "
+                    f"VALUES ({', '.join(':' + n for n in names)})",
+                    decision | row,
+                )
+                ids.append(cursor.lastrowid)
+            marks = ", ".join("?" * len(ids))
+            stored = conn.execute(
+                f"SELECT * FROM policy_evidence WHERE id IN ({marks}) ORDER BY id", ids
+            )
+            return [dict(r) for r in stored]
+
+    def policy_evidence(
+        self, resource_id: str | None = None, label: str | None = None
+    ) -> list[dict]:
+        """Retained policy evidence, oldest first (optionally for one resource and label)."""
+        query, args = "SELECT * FROM policy_evidence", []
+        if resource_id is not None:
+            query += " WHERE resource_id = ? AND label = ?"
+            args = [resource_id, label]
+        with self._connect() as conn:
+            return [dict(row) for row in conn.execute(query + " ORDER BY id", args)]
+
+    def policy_evidence_review(
+        self, resource_id: str, label: str, current: dict | None = None
+    ) -> list[dict]:
+        """Retained evidence for one label, each row with `active` (it supports the current
+        decision) and `inspect` (reasons to look at the decision again; see
+        policy_evidence.inspection_reasons). *current* is an optional fresh retrieval."""
+        active = self.decision_feedback_id(resource_id, label)
+        return [
+            row
+            | {
+                "active": row["feedback_id"] is not None and row["feedback_id"] == active,
+                "inspect": policy_evidence.inspection_reasons(row, active, current),
+            }
+            for row in self.policy_evidence(resource_id, label)
+        ]
 
     # ── Collaboration: assignments, notes, unresolved questions (#46) ──────
     #

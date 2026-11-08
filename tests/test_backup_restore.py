@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 import label_review as lr
+import policy_docs
 from review_context import review_context
 from review_workspaces import load_review, save_review
 from scripts import review_backup
@@ -53,7 +54,29 @@ def live(tmp_path, monkeypatch):
     store.assign("gcp-demo-003", "env", "carol", inventory, reviewer="bob")
     question = store.ask_question("gcp-demo-003", "env", "prod or dev?", inventory, reviewer="bob")
     store.answer_question(question["id"], "development", reviewer="carol")
+    # Policy evidence retained with the team override (#103): backed up, never part of the plan.
+    result = policy_docs._result("ok", "1 excerpt(s) retrieved.", **_retrieval())
+    store.attach_policy_evidence(
+        "gcp-demo-003",
+        "team",
+        result,
+        result["hits"],
+        inventory,
+        question=result["question"],
+        retrieved_at="2026-11-01T12:00:00+00:00",
+        reviewer="bob",
+    )
     return decisions, review_dir, review_id
+
+
+def _retrieval() -> dict:
+    fixture = json.loads((ROOT / "fixtures/rag_retrieve_tagging_standard.json").read_text())
+    return {
+        "question": policy_docs.review_question("team"),
+        "hits": policy_docs._parse_hits(fixture)[:1],
+        "corpus": fixture["corpus"],
+        "freshness": fixture["freshness"],
+    }
 
 
 def _state(decisions: Path, review_dir: Path, review_id: str, monkeypatch) -> dict:
@@ -68,6 +91,7 @@ def _state(decisions: Path, review_dir: Path, review_id: str, monkeypatch) -> di
         "main_decisions": main.all(),
         "main_feedback": main.feedback(),
         "collaboration": store.collaboration_history(),
+        "evidence": store.policy_evidence(),
         "plans": review_backup.plans(decisions, review_dir),
     }
 
@@ -82,6 +106,7 @@ def test_round_trip_restores_review_vocabulary_decisions_and_plan(live, tmp_path
         "decisions": 1,
         "review_feedback": 4,
         "review_collaboration": 3,
+        "policy_evidence": 1,
         "workspace": 1,
     }
     assert manifest["files"]["label_decisions.db"]["rows"]["review_collaboration"] == 0
@@ -97,9 +122,21 @@ def test_round_trip_restores_review_vocabulary_decisions_and_plan(live, tmp_path
     assert after["inventory"].attrs == before["inventory"].attrs  # vocabulary
     assert after["inventory"].attrs["label_config"]["team"]["values"] == CONFIG["team"]["values"]
     pd.testing.assert_frame_equal(after["inventory"], before["inventory"])
-    for key in ("decisions", "feedback", "main_decisions", "main_feedback", "collaboration"):
+    for key in (
+        "decisions",
+        "feedback",
+        "main_decisions",
+        "main_feedback",
+        "collaboration",
+        "evidence",
+    ):
         assert after[key] == before[key]
     assert [e["event"] for e in after["collaboration"]] == ["assign", "question", "answer"]
+    # The restored evidence still names the corpus revision and the decision it supported.
+    (evidence,) = after["evidence"]
+    assert evidence["corpus_sha256"].startswith("0a50d302")
+    assert (evidence["decision"], evidence["decision_reviewer"]) == ("override", "bob")
+    assert evidence["excerpt_text"] and evidence["feedback_id"] == after["feedback"][1]["id"]
     revocation = after["feedback"][-1]  # the revocation event survives the round trip
     assert (revocation["decision"], revocation["reviewer"]) == ("revoke", "bob")
     assert revocation["revocation_reason"] == "wrong env"

@@ -63,6 +63,47 @@ any of them never shows excerpts fetched for another one.
 | Other HTTP error, unreadable response | Warning: `service error` / `invalid response` | No |
 | Invalid URL (non-loopback, bad timeout) | Error: `misconfigured` | No |
 
+## Retain evidence with a decision
+
+A reviewer can record which excerpts they consulted when they made a decision, so a later audit
+can see what evidence was available at the time ([#103](https://github.com/redbarron23/obs-agent/issues/103)).
+After **Show policy context**, and once the label has a saved decision, **Retain with decision**
+lists the excerpts. Select the ones you consulted and press **Attach to decision**. It is optional
+and explicit: nothing is attached automatically, and attaching is not an approval.
+
+Each attached excerpt is stored with the decision it supported, the fixed question and retrieval
+time, the chunk ID, source and section, and the corpus revision (`corpus_sha256`, `ingested_at`,
+embedding model, collection, provenance and freshness). When the service reports policy
+applicability metadata (rag-observability contract 1.1: `policy_id`, version, effective dates,
+supersession), that is kept too; documents without it are attached as before. Columns are listed
+in [Decision storage](decision-storage.md#policy-evidence-retained-with-a-decision).
+
+**Excerpt text.** By default the exact text is kept with its SHA-256, so a reopened review shows
+what the reviewer read even after the index changes. Clear **Keep the exact excerpt text** to keep
+only the hash: the revision stays identifiable, but the review then states that the historical
+text is unavailable. Either way the text stays in the private decision database and its
+[backups](backup-restore.md). It never goes into exports, change plans, logs, workflow metrics,
+public fixtures, or any request to the retrieval service or an LLM.
+
+**Reopening.** **Retained policy evidence** lists every excerpt attached for the selected resource
+and label, including evidence for decisions that were later revoked or replaced (marked as history).
+It is shown even with `OBS_AGENT_RAG_URL` unset. When policy context has been fetched again for the
+same question, each excerpt is compared with the current index, and the page lists reasons to inspect
+the decision:
+
+| Reason | When |
+| --- | --- |
+| Decision revoked or replaced | The decision the evidence supported is no longer active |
+| Revision cannot be identified | Corpus provenance was unavailable when the excerpt was attached |
+| Historical text unavailable | Only the hash was kept |
+| Policy was not applicable | When attached, its policy status was `superseded`, `expired`, `conflict`, `invalid` or `future` |
+| Index changed | The current `corpus_sha256` differs from the attached one |
+| Excerpt changed or missing | The same chunk now has different text, or the same question no longer returns it |
+| Policy now not applicable | The chunk's current policy status has become `superseded`, `expired`, `conflict`, `invalid` or `future` |
+
+These are only reasons to look again. Nothing changes a decision, approval, label confidence,
+plan or cloud tag automatically.
+
 ## Chat: `search_observability_docs`
 
 When `OBS_AGENT_RAG_URL` is set, the cost chat (UI, CLI and `POST /ask`) offers the model one more
@@ -133,4 +174,8 @@ unavailable freshness, untrusted-content framing (an injected instruction stays 
 conflict disclosure, that policy text never changes suggestions or model scores, tool registration
 on and off, the agent loop with the tool, and the review page in each state, including that context
 is not reused for another label. `uv run evals.py --dry-run` adds five stub-retrieval cases (two policy, three cost runbook), and
-`tests/test_cost_runbooks.py` covers the cost-runbook rules.
+`tests/test_cost_runbooks.py` covers the cost-runbook rules. `tests/test_policy_evidence.py` covers retained evidence:
+what is recorded, hash-only retention, policy metadata, refusals (no decision, another snapshot,
+unanswered or foreign excerpts), append-only storage, unchanged plans and exports, two snapshots,
+changed and unavailable corpus provenance, superseded policy, revoked and replaced decisions,
+and the review page; `tests/test_backup_restore.py` restores the evidence.

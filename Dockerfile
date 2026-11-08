@@ -14,7 +14,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --group telemetry
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY agent.py api.py app.py data.py drift.py inventory.py inventory_import.py labeling.py label_review.py label_config.py review_cli.py review_context.py review_workspaces.py observability.py plan_reconciliation.py plan_validation.py policy_docs.py policy_tracing.py providers.py real_evaluation.py tools.py workflow_metrics.py ./
+COPY agent.py api.py app.py data.py drift.py inventory.py inventory_import.py labeling.py label_review.py label_config.py review_cli.py review_context.py review_workspaces.py observability.py plan_reconciliation.py plan_validation.py policy_docs.py policy_evidence.py policy_tracing.py providers.py real_evaluation.py tools.py workflow_metrics.py ./
 COPY pages/ pages/
 COPY fixtures/ fixtures/
 

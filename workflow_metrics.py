@@ -32,7 +32,14 @@ import time
 import uuid
 from datetime import UTC, datetime
 
-OPERATIONS = ("import", "inference", "decision_write", "collaboration_write", "export")
+OPERATIONS = (
+    "import",
+    "inference",
+    "decision_write",
+    "collaboration_write",
+    "evidence_write",
+    "export",
+)
 SURFACES = ("api", "ui", "other")
 # success: completed. invalid: rejected user input (bad CSV, bad decision
 # value); expected, not an alert. error: anything else; investigate.

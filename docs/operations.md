@@ -15,7 +15,7 @@ Labels are fixed sets. Nothing from the inventory, reviewer or request becomes a
 
 | Label | Values |
 | --- | --- |
-| `operation` | `import`, `inference`, `decision_write`, `collaboration_write`, `export` |
+| `operation` | `import`, `inference`, `decision_write`, `collaboration_write`, `evidence_write`, `export` |
 | `surface` | `api` (REST API), `ui` (Streamlit pages), `other` (CLI, agent tool, tests) |
 | `outcome` | `success`, `invalid` (input was rejected: bad CSV or vocabulary, bad decision value, invalid export value), `error` (anything else; investigate) |
 
@@ -25,6 +25,7 @@ Labels are fixed sets. Nothing from the inventory, reviewer or request becomes a
 | `inference` | Fitting suggestions for a snapshot (`label_review`), once per snapshot and inference version. Cache hits are not counted. Includes the abstention checks. |
 | `decision_write` | `PUT`/`DELETE …/decision` and the review page's Save and Accept-all buttons, one per decision |
 | `collaboration_write` | Assigning, unassigning, notes and questions (API, review page, CLI). Note and question text is never logged or a label. |
+| `evidence_write` | Attaching policy evidence to a decision on the review page, one per attach (any number of excerpts). Excerpt text, sources and questions are never logged or a label. |
 | `export` | `GET /labels/export` per request. The review page prepares every download on each render, so `ui` export counts are renders, not downloads. |
 
 `obs_agent_workflow_telemetry_errors_total` counts measurements that could not be recorded.

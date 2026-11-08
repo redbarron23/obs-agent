@@ -40,6 +40,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import policy_tracing
@@ -313,6 +314,10 @@ def _parse_hits(payload: dict) -> list[dict]:
                 "exact_term_match": bool(h.get("exact_term_match")),
             }
         )
+        # Policy applicability (rag-observability contract 1.1): kept when present, so evidence
+        # attached to a decision records the policy ID, version and effective dates.
+        if isinstance(h.get("policy"), dict):
+            out[-1]["policy"] = h["policy"]
     return out
 
 
@@ -574,10 +579,11 @@ def review_question(label: str, status: str | None = None) -> str:
 def review_policy_context(label: str, status: str | None = None) -> dict:
     """Policy excerpts for one label of a selected resource, plus the out-of-scope list.
 
-    Returns {"question", "result", "not_evaluated", "not_evaluated_result"}. The
+    Returns {"question", "retrieved_at", "result", "not_evaluated", "not_evaluated_result"}. The
     resource itself is never sent; the caller shows its facts separately.
     """
     question = review_question(label, status)
+    retrieved_at = datetime.now(UTC).isoformat(timespec="seconds")
     result = retrieve(question)
     not_evaluated: list[dict] = []
     scope = None
@@ -590,6 +596,7 @@ def review_policy_context(label: str, status: str | None = None) -> dict:
         ]
     return {
         "question": question,
+        "retrieved_at": retrieved_at,
         "result": result,
         "not_evaluated": not_evaluated,
         "not_evaluated_result": scope,
