@@ -77,6 +77,92 @@ The 12 cases cover rankings, trends, spikes, cross-cloud summaries, label covera
 and suspected wrong labels. They use fact-presence checks rather than exact text because correct
 agent answers can be phrased differently.
 
+## Jaeger and distributed tracing
+
+Jaeger is a tool for distributed tracing: it helps follow a request across services and inspect
+where time is spent or errors occur. For example, a RAG request might travel through
+`API → RAG service → vector database → LLM`.
+
+Each timed operation is a **span**; related spans for one request form a **trace**. Jaeger displays
+them as a timeline, making slow operations and failed calls easier to locate.
+
+The three common observability signals answer different questions:
+
+| Signal | Example |
+| --- | --- |
+| Metrics | Requests are getting slower. |
+| Logs | A database query timed out. |
+| Traces | The database call consumed most of this request's time. |
+
+Applications commonly use OpenTelemetry to instrument operations and send traces to Jaeger for
+storage and viewing. Jaeger needs trace instrumentation and export configured in the application.
+
+This project currently documents optional MLflow tracing below; these Jaeger notes explain the
+concept and do not add a Jaeger integration.
+
+### Defining spans for a local experiment
+
+Define spans around operations worth measuring. Each span records a name, start/end time,
+status, and useful attributes. A proposed RAG trace could look like this:
+
+```text
+HTTP request                     ← root span
+└── Retrieve policy context
+    ├── Embed query
+    ├── Search vector database
+    └── Build cited results
+```
+
+For a request that also generates an answer, add an LLM generation span. Useful attributes include
+service name, model, result count, and response status. Do not record API keys, private documents,
+or raw user questions by default.
+
+OpenTelemetry creates and exports spans; Jaeger stores and displays them. Propagate trace context
+through HTTP headers to connect spans across the API and RAG service. The existing MLflow agent,
+model, and tool spans provide operation boundaries to consider when planning this instrumentation.
+These are proposed boundaries; the exact instrumentation points still need to be checked.
+
+### Proposed request and trace flow
+
+Solid arrows show the request path. Dotted arrows show telemetry export and viewing; each service
+creates spans using OpenTelemetry, while HTTP trace context connects them into one trace.
+
+```mermaid
+flowchart TD
+    Client[Client] --> API["obs-agent API<br/>HTTP request span"]
+    API -->|"HTTP request + trace context"| RAG["RAG service<br/>Retrieval span"]
+    RAG --> Embed[Embed query span]
+    Embed --> Search[Search vector database span]
+    Search --> Results[Build cited results span]
+    API -.->|"Optional generation path"| LLM[LLM generation span]
+    API -.->|"Export spans via OTLP"| Jaeger["Jaeger<br/>Trace storage and UI"]
+    RAG -.->|"Export spans via OTLP"| Jaeger
+    Jaeger -.->|"Optional trace viewing"| Grafana[Grafana]
+```
+
+Embedding, search, and result-building spans are children of the retrieval span, as shown in the
+span tree above; their arrows here show operation order. The optional LLM span belongs to the
+request's generation path, and its export follows the instrumentation of its owning service.
+Grafana is optional because Jaeger has its own UI. This is a proposed experiment, not a diagram
+of instrumentation already running in this project.
+
+### Experiment considerations
+
+| Consideration | Initial approach |
+| --- | --- |
+| Learning goal | Ask where retrieval spends time; instrument operations that answer that question. |
+| Cross-service context | Propagate HTTP trace context and confirm API and RAG spans share a trace ID with the correct parents. |
+| Privacy | Start with timings, counts, and status; exclude API keys, questions, document excerpts, and model responses by default. |
+| Sampling and retention | Capture every request in the small local demo; set a short retention period and limit sampling/storage before increasing traffic. |
+| Failures and overhead | Exercise slow retrieval, a RAG outage, and an unavailable tracing backend; exporting traces must not break application requests or cause unbounded buffering. |
+| MLflow overlap | Use Jaeger to investigate service latency and request flow; retain MLflow for existing agent traces and evaluations, and check for duplicate instrumentation. |
+| Local exposure | Bind experimental tracing interfaces to loopback and use fictional or sanitized data. |
+
+Start with one successful retrieval and one failed retrieval. Verify the span hierarchy, timings,
+error status, and cross-service trace continuity in Jaeger. Then check a deliberately slow request
+and tracing-backend downtime. Exporter configuration and MLflow interoperability still need to be
+checked before implementation; the first experiment needs no Grafana deployment.
+
 ## MLflow
 
 MLflow is an optional dependency group for traces and comparable live-evaluation runs. The
