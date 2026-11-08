@@ -89,7 +89,10 @@ class TestAttach:
         meta = {"status": "active", "policy_id": "tagging", "version": "3", "supersedes": []}
         payload["hits"][0]["policy"] = meta
         (row,) = _attach(store, _result(payload))
-        assert row["policy_status"] == "active" and json.loads(row["policy"]) == meta
+        assert row["policy_status"] == "active"
+        # Stored as the client validated it: known fields only, bounded and on one line.
+        assert json.loads(row["policy"]) == policy_docs._parse_policy(meta)
+        assert json.loads(row["policy"])["policy_id"] == "tagging"
 
     def test_needs_an_active_decision(self, store):
         store.revoke("svc-ingest", "team", reviewer="alice")

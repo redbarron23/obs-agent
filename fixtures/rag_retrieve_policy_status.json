@@ -1,0 +1,111 @@
+{
+  "contract_version": "1.1.0",
+  "query": {
+    "question": "How long does the retention policy keep logs?",
+    "k": 3,
+    "max_distance": 0.6,
+    "retrieval": "vector"
+  },
+  "hits": [
+    {
+      "rank": 1,
+      "chunk_id": "policies/log-retention-v1.md#0",
+      "text": "Log Retention Policy v1 > Retention period\n\nExample Org keeps application logs for 30 days under this retention policy.",
+      "source": "policies/log-retention-v1.md",
+      "file": "log-retention-v1.md",
+      "section": "Retention period",
+      "distance": 0.0,
+      "exact_term_match": false,
+      "expanded_from": null,
+      "policy": {
+        "status": "superseded",
+        "as_of": "2026-11-01",
+        "policy_id": "example-log-retention",
+        "version": "1",
+        "effective_from": "2020-01-01",
+        "effective_until": null,
+        "supersedes": [],
+        "superseded_by": [
+          "example-log-retention@2"
+        ],
+        "pending_superseded_by": [],
+        "conflicts_with": [],
+        "errors": []
+      }
+    },
+    {
+      "rank": 2,
+      "chunk_id": "policies/log-retention-v2.md#0",
+      "text": "Log Retention Policy v2 > Retention period\n\nExample Org keeps application logs for 90 days under this retention policy.",
+      "source": "policies/log-retention-v2.md",
+      "file": "log-retention-v2.md",
+      "section": "Retention period",
+      "distance": 0.0,
+      "exact_term_match": false,
+      "expanded_from": null,
+      "policy": {
+        "status": "active",
+        "as_of": "2026-11-01",
+        "policy_id": "example-log-retention",
+        "version": "2",
+        "effective_from": "2021-01-01",
+        "effective_until": null,
+        "supersedes": [
+          "example-log-retention@1"
+        ],
+        "superseded_by": [],
+        "pending_superseded_by": [
+          "example-log-retention@3"
+        ],
+        "conflicts_with": [],
+        "errors": []
+      }
+    },
+    {
+      "rank": 3,
+      "chunk_id": "policies/log-retention-v3.md#0",
+      "text": "Log Retention Policy v3 > Retention period\n\nExample Org will keep application logs for 180 days under this retention policy.",
+      "source": "policies/log-retention-v3.md",
+      "file": "log-retention-v3.md",
+      "section": "Retention period",
+      "distance": 0.0,
+      "exact_term_match": false,
+      "expanded_from": null,
+      "policy": {
+        "status": "future",
+        "as_of": "2026-11-01",
+        "policy_id": "example-log-retention",
+        "version": "3",
+        "effective_from": "2099-01-01",
+        "effective_until": null,
+        "supersedes": [
+          "example-log-retention@2"
+        ],
+        "superseded_by": [],
+        "pending_superseded_by": [],
+        "conflicts_with": [],
+        "errors": []
+      }
+    }
+  ],
+  "corpus": {
+    "provenance": "available",
+    "corpus_sha256": "ff7a397b2b7b46a151762452a06854a641efafda2c2d95fed03319a41d9957df",
+    "ingested_at": "2026-01-15T09:30:00+00:00",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "embedding_revision": "0000000000000000000000000000000000000000",
+    "chunk_size": 500,
+    "document_count": 5,
+    "collection": "observability-docs-00000000000000000000000000000000",
+    "chunk_count": 7
+  },
+  "freshness": {
+    "status": "current",
+    "checked_at": "2026-01-15T09:31:00+00:00",
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "content_trust": "untrusted",
+  "generated": false
+}

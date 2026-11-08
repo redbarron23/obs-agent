@@ -155,6 +155,23 @@ RAG_DRY_RUN_EVALS = [
         "must_contain": ["status: index_unavailable", "documentation guidance is unavailable"],
         "stub": (503, {"error": {"code": "index_unavailable", "message": "no index"}}),
     },
+    # Policy applicability (issue #126): rag-observability's contract example of a superseded,
+    # an active and a future-effective version of one fictional policy.
+    {
+        "id": "policy-superseded-history",
+        "question": "How long does our log retention policy keep application logs?",
+        "must_contain": [
+            'policy_status="superseded" policy="example-log-retention@1"',
+            'policy_status="active" policy="example-log-retention@2"',
+            'policy_status="future" policy="example-log-retention@3"',
+            "is superseded by example-log-retention@2. Quote it only as history",
+            "it starts on 2099-01-01",
+            "will be superseded by example-log-retention@3",
+            "prefer `active` guidance",
+            "corpus_sha256=ff7a397b",
+        ],
+        "stub": (200, "rag_retrieve_policy_status.json"),
+    },
     # Cost findings plus cited runbook steps (issue #91).
     {
         "id": "cost-runbook-supported",

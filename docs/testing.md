@@ -120,16 +120,18 @@ made the prompts subtly worse would pass every test in this layer.
 contain. In dry-run mode the **tools** are called for real and the model's job is stubbed:
 
 ```bash
-uv run evals.py --dry-run     # 17/17 must pass (12 + 5 stub-retrieval); this is what CI runs
+uv run evals.py --dry-run     # 18/18 must pass (12 + 6 stub-retrieval); this is what CI runs
 ```
 
 So a dry-run case catches a genuine class of regression — a tool that stops returning the fact an
 answer depends on, a renamed field, a changed sort order — without needing a model. `test_evals.py`
 runs the whole dry-run and each case individually.
 
-Five further dry-run cases (`RAG_DRY_RUN_EVALS`) exercise `search_observability_docs` against a
+Six further dry-run cases (`RAG_DRY_RUN_EVALS`) exercise `search_observability_docs` against a
 stubbed retrieval response. Two use `fixtures/rag_retrieve_tagging_standard.json`: a cited, supported
-answer and an unavailable index. Three more combine a real cost tool with stubbed runbook retrieval
+answer and an unavailable index. One uses `fixtures/rag_retrieve_policy_status.json`
+(rag-observability's contract example) to check that superseded and future-effective policy is
+labelled and framed as history or not yet in effect. Three more combine a real cost tool with stubbed runbook retrieval
 (supported runbook, no match, conflicting guidance) and check the billing facts, the stated period
 and the cited sources; see the [cost runbook walkthrough](cost-runbook-walkthrough.md#tests-and-evals).
 They never reach the real rag-observability service and are not part of the live evals.

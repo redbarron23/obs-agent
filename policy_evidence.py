@@ -34,7 +34,7 @@ import policy_docs
 
 # Policy applicability statuses (rag-observability contract 1.1) that mean the excerpt should not
 # be read as current, applicable guidance.
-NOT_APPLICABLE = ("superseded", "expired", "conflict", "invalid", "future")
+NOT_APPLICABLE = policy_docs.NOT_APPLICABLE
 
 # Columns of the policy_evidence table, in order. Created by DecisionStore._initialise().
 COLUMNS = {
