@@ -4,6 +4,10 @@ Synthetic metrics show that the pipeline works on the deliberately constructed i
 not establish production performance. This pack measures agreement between suggestions and
 human-resolved labels on a representative, approved sample of **50–100 real resources**.
 
+The [pilot kit](pilot-kit.md) is the step-by-step runbook around this pack. It covers the private
+workspace, review and timing logs, a manual baseline, an independent re-review, and the sanitized
+summary.
+
 ## Practice before collecting real evidence
 
 Use [fictional estate packs](synthetic-estates.md) to rehearse import, review, abstention and
