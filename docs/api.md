@@ -51,6 +51,10 @@ own routes, [below](#saved-reviews-api-and-cli). The UI calls the same Python fu
 | `PUT` / `DELETE /resources/{id}/labels/{label}/assignment` | `{"assignee", "reviewer"}`: assign or reassign; `DELETE` unassigns (`404` if unassigned) |
 | `POST /resources/{id}/labels/{label}/notes`, `/questions` | `{"text", "reviewer"}`: add a note, or open an unresolved question |
 | `POST /resources/{id}/labels/{label}/questions/{qid}/answer`, `/resolve` | Answer (`text` required) or resolve (`text` optional) a question |
+| `GET /resources/{id}/labels/{label}/policy-context` | Cited tagging-policy excerpts for the label, retrieved with its fixed question; `status` says why when documentation is off or unavailable ([policy context](policy-context.md)) |
+| `GET /labels/policy-evidence[?include_text=true]` | Policy evidence retained with decisions, with `active` and `inspect` reasons |
+| `GET /resources/{id}/labels/{label}/policy-evidence[?compare=current&include_text=true]` | One label's retained evidence; `compare=current` also compares it with the current index |
+| `POST /resources/{id}/labels/{label}/policy-evidence` | `{"ranks", "reviewer", "retain_text"?, "corpus_sha256"?}`: attach excerpts from a fresh server-side retrieval to the label's active decision |
 | `GET /ops/metrics[?format=prometheus]` | Workflow counters, durations and backlog ([operations](operations.md)) |
 
 Decisions need a `reviewer` name or ID (1–128 characters), or a configured
@@ -65,6 +69,16 @@ Assignments, notes and questions are collaboration metadata ([storage](decision-
 They use the same self-reported `reviewer` and never approve anything: they don't change
 suggestions, decisions, plans or exports. `PUT …/decision` also accepts an optional `rationale`
 (why a suggestion was overridden), kept in the collaboration history and linked to the decision.
+
+Policy evidence ([how it works](policy-context.md#retain-evidence-with-a-decision)) is the same
+kind of history. Attach takes only the `ranks` of excerpts returned by `…/policy-context`: the server
+runs the fixed retrieval again and records those hits, so excerpt text and corpus fields never come
+from the request (any extra field is a `422`). Pass the `corpus_sha256` you viewed to get a `409` if
+the index changed in between. It returns `422` without an active decision for the current snapshot
+and inference version, or for an unknown rank, and `503` when policy context is off or unavailable.
+Excerpt text is returned only with `include_text=true`. `compare=current` re-sends only
+obs-agent's fixed questions; when the service is down, the stored evidence is still returned, with
+the retrieval status in `compared_with`.
 
 ### Saved reviews: API and CLI
 
@@ -84,6 +98,7 @@ is a `422`, so an ID cannot name a path).
 | `GET /reviews/{review_id}/decisions[?current=true]`, `/feedback`, `/feedback/metrics`, `/backlog` | Decisions (`current` keeps only exportable ones), history, agreement, pending work |
 | `GET /reviews/{review_id}/export?format=csv\|sh\|tfvars\|plan` | As `/labels/export`; approvals bound to another snapshot or inference version are excluded |
 | `GET /reviews/{review_id}/collaboration[/history]` and `…/resources/{id}/labels/{label}/collaboration`, `/assignment`, `/notes`, `/questions[/{qid}/answer\|resolve]` | As the synthetic collaboration routes, stored in the saved review's database |
+| `GET /reviews/{review_id}/policy-evidence` and `…/resources/{id}/labels/{label}/policy-context`, `/policy-evidence` | As the synthetic policy routes, stored in the saved review's database |
 
 `GET /ops/metrics?review_id=...` reports that review's backlog. With `OBS_AGENT_DEMO=1` every
 `/reviews` route returns `403` and the CLI refuses to run, as the Import page does.
@@ -118,6 +133,9 @@ Collaboration: `assign REVIEW_ID RESOURCE LABEL ASSIGNEE`, `unassign`, `note …
 `ask … TEXT`, `answer REVIEW_ID QUESTION_ID TEXT`, `resolve REVIEW_ID QUESTION_ID [--text]` (each
 takes `--reviewer`), `collaboration REVIEW_ID [--assignee A | --mine] [--unresolved]
 [--resource R --label L] [--history]`, and `queue … [--assignee A | --mine] [--unresolved]`.
+Policy evidence: `evidence REVIEW_ID [--resource R --label L] [--text]` lists retained evidence with
+`active` and the stored reasons to inspect it. It works offline and never queries the retrieval
+service; use the API's `compare=current` for that. Excerpt text is included only with `--text`.
 Other commands: `list`, `show`, `coverage`, `resource`, `decisions [--current]`,
 `feedback`, `backlog`; `--help` on each lists its options.
 

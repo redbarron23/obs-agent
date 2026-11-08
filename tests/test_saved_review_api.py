@@ -371,7 +371,7 @@ def _review_routes(review_id: str) -> list[tuple[str, str]]:
 class TestAuthAndDemo:
     def test_every_review_route_requires_the_api_key(self, review_id):
         calls = _review_routes(review_id)
-        assert len(calls) == 22  # 13 review routes + 9 collaboration routes (#46)
+        assert len(calls) == 26  # 13 review + 9 collaboration (#46) + 4 policy evidence (#127)
         for headers in ({}, {"X-API-Key": "wrong"}):
             anonymous = TestClient(api.app, headers=headers)
             for method, path in calls:
