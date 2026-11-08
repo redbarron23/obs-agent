@@ -51,7 +51,8 @@ directory must be writable by `appuser`.
 ## What is stored
 
 Two tables are created on first use, plus `review_collaboration`
-([below](#assignments-notes-and-questions)).
+([below](#assignments-notes-and-questions)) and `policy_evidence`
+([below](#policy-evidence-retained-with-a-decision)).
 
 **`decisions`** holds the current decision for each `(resource_id, label)` pair, which is the
 table's primary key:
@@ -149,6 +150,32 @@ and kept in backups, but never written to logs, workflow metrics or plans.
 
 Databases from earlier versions gain the empty table (and its triggers) when the store opens; no
 assignment, note or question is invented for past decisions.
+
+## Policy evidence retained with a decision
+
+`policy_evidence` holds the policy excerpts a reviewer chose to attach to a label's active
+decision ([Policy context](policy-context.md#retain-evidence-with-a-decision)). It is append-only
+(triggers refuse `UPDATE` and `DELETE`), one row per attached excerpt:
+
+| Columns | Meaning |
+| --- | --- |
+| `feedback_id`, `decision`, `decision_value`, `decision_reviewer`, `decided_at`, `inventory_id`, `model_version` | The decision the evidence was consulted for: its `review_feedback` row and its inventory and inference context |
+| `reviewer`, `attached_at` | Who attached it, and when |
+| `question`, `retrieval_status`, `retrieved_at` | The fixed question that retrieved it, and when |
+| `rank`, `chunk_id`, `source`, `section`, `distance` | Which excerpt |
+| `excerpt_sha256`, `excerpt_text` | The excerpt's SHA-256, and its exact text (`NULL` when the reviewer kept only the hash) |
+| `corpus_provenance`, `corpus_sha256`, `ingested_at`, `embedding_model`, `collection`, `document_count`, `freshness_status`, `freshness_checked_at` | The corpus revision it came from, as the retrieval service reported it (`NULL` when unavailable) |
+| `policy_status`, `policy` | Policy applicability metadata (status, `policy_id`, version, effective dates, supersession) as JSON, when the service reports it (rag-observability contract 1.1); otherwise `NULL` |
+
+Evidence can only be attached to an existing decision that is bound to the current inventory
+snapshot and inference version, and only from an answered retrieval. Revoking or replacing the
+decision keeps its evidence as history. Like collaboration, the table is never read by
+`resolve()`, exports, the approved change plan or `current_decisions()`: attaching evidence is
+not approval, and an attached policy cannot establish an owner. Excerpt text is kept in the
+private decision database and its backups, and never written to exports, plans, logs or
+workflow metrics.
+
+Databases from earlier versions gain the empty table (and its triggers) when the store opens.
 
 ## Legacy JSON files
 

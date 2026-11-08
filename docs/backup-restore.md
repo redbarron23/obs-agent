@@ -11,8 +11,8 @@ Where the files live and what their tables hold is described in [Decision storag
 
 | File | Path setting | Contains |
 | --- | --- | --- |
-| Main decision database | `OBS_AGENT_DECISIONS` (default `./label_decisions.db`; Docker `/app/state/label_decisions.db`) | `decisions`, `review_feedback` and `review_collaboration` for the synthetic estate and the REST API |
-| One database per saved review | `OBS_AGENT_REVIEW_DIR/<64 hex>.db` (default `./review-workspaces/`; Docker `/app/state/reviews/`) | `workspace` (uploaded inventory CSV, vocabulary JSON, name, creation time), `decisions`, `review_feedback`, `review_collaboration` |
+| Main decision database | `OBS_AGENT_DECISIONS` (default `./label_decisions.db`; Docker `/app/state/label_decisions.db`) | `decisions`, `review_feedback`, `review_collaboration` and `policy_evidence` for the synthetic estate and the REST API |
+| One database per saved review | `OBS_AGENT_REVIEW_DIR/<64 hex>.db` (default `./review-workspaces/`; Docker `/app/state/reviews/`) | `workspace` (uploaded inventory CSV, vocabulary JSON, name, creation time), `decisions`, `review_feedback`, `review_collaboration`, `policy_evidence` |
 
 Back up every file together so that inventories, vocabularies, active decisions and the append-only
 feedback history come from the same point in time. Revoked decisions are absent from `decisions`
@@ -22,8 +22,9 @@ Not included, by design: the public demo's per-session temp databases, exported 
 tfvars, plans), `.env` secrets and API keys, MLflow data, and the in-memory review cache, which is
 rebuilt on first use.
 
-The saved-review databases contain uploaded inventories and reviewer identifiers. Treat each
-backup as being as sensitive as the live review directory.
+The saved-review databases contain uploaded inventories, reviewer identifiers and any policy
+excerpt text retained with decisions. Treat each backup as being as sensitive as the live review
+directory.
 
 ## Back up a running installation
 
@@ -43,7 +44,8 @@ an existing backup directory. It writes:
 
 - `label_decisions.db` and `reviews/<id>.db`, each with mode `0600`, in a directory with mode `0700`;
 - `manifest.json`, with each file's SHA-256, `PRAGMA integrity_check` result, source path and row counts
-  for `decisions`, `review_feedback`, `review_collaboration` (when present) and `workspace`.
+  for `decisions`, `review_feedback`, `review_collaboration` and `policy_evidence` (when present) and
+  `workspace`.
 
 Each database is copied as one consistent snapshot, but the files are copied one after another. A
 decision recorded during the backup can therefore appear in a later file and not an earlier one.

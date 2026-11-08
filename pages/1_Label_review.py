@@ -536,6 +536,86 @@ def _show_policy_context(shown: dict, facts: dict) -> None:
         )
 
 
+def _attach_evidence(shown: dict, target: str) -> None:
+    """Let the reviewer retain the excerpts they consulted with the label's saved decision."""
+    result = shown["result"]
+    if result["status"] != "ok" or not result["hits"]:
+        return
+    st.markdown("**Retain with decision**")
+    if store.get(target, label) is None:
+        st.caption(
+            "Save a decision for this label to attach the excerpts you consulted. Attaching "
+            "evidence never approves, changes or exports a label."
+        )
+        return
+    options = {
+        f"{h['rank']}. {_plain(h['source'])} § {_plain(h['section'] or '(no heading)')}": h
+        for h in result["hits"]
+    }
+    chosen = st.multiselect(
+        "Excerpts you consulted for this decision",
+        list(options),
+        key=f"policy_attach_{target}_{label}",
+    )
+    retain_text = st.checkbox(
+        "Keep the exact excerpt text (otherwise only its SHA-256)",
+        value=True,
+        key=f"policy_attach_text_{target}_{label}",
+        help="Text is kept only in this private review database and its backups.",
+    )
+    if st.button(
+        "Attach to decision",
+        icon=":material/attach_file:",
+        disabled=not (reviewer and chosen),
+        key="policy_attach",
+    ):
+        try:
+            rows = store.attach_policy_evidence(
+                target,
+                label,
+                result,
+                [options[c] for c in chosen],
+                imported_inventory,
+                question=shown["question"],
+                retrieved_at=shown.get("retrieved_at"),
+                reviewer=reviewer,
+                retain_text=retain_text,
+            )
+        except DecisionError as exc:
+            st.error(str(exc))
+        else:
+            st.success(f"Attached {len(rows)} excerpt(s) to the {label} decision for {target}.")
+
+
+def _show_retained_evidence(target: str, current: dict | None) -> None:
+    evidence = store.policy_evidence_review(target, label, current)
+    if not evidence:
+        return
+    st.markdown(f"**Retained policy evidence** ({len(evidence)})")
+    st.caption(
+        "Excerpts reviewers consulted, with the corpus revision they came from. Reasons to "
+        "inspect a decision are shown only; nothing is changed automatically."
+    )
+    for row in evidence:
+        state = "current decision" if row["active"] else "earlier decision (revoked or replaced)"
+        st.markdown(
+            f"`{_plain(row['source'] or '?')}` § `{_plain(row['section'] or '(no heading)')}` · "
+            f"{row['decision']} by `{_plain(row['decision_reviewer'] or 'unknown')}` · {state}"
+        )
+        st.caption(
+            f"attached {row['attached_at']} by {_plain(row['reviewer'])} · "
+            f"corpus_sha256={row['corpus_sha256'] or 'unavailable'} · "
+            f"ingested_at={row['ingested_at'] or 'unknown'} · "
+            f"chunk={row['chunk_id'] or 'unknown'} · "
+            f"policy={row['policy_status'] or 'not reported'}"
+        )
+        for reason in row["inspect"]:
+            st.warning(reason, icon=":material/rule:")
+        if row["excerpt_text"] is not None:
+            with st.expander("Excerpt as retained"):
+                st.text(row["excerpt_text"])
+
+
 if not df.empty:
     st.subheader("Policy context")
     rag = policy_docs.load_config()
@@ -544,6 +624,15 @@ if not df.empty:
             "Optional: set `OBS_AGENT_RAG_URL` to a local rag-observability retrieval API to show "
             "cited tagging-policy excerpts beside a label. Review works the same without it."
         )
+        # Evidence retained earlier stays readable without the retrieval service.
+        retained = sorted(
+            {r["resource_id"] for r in store.policy_evidence() if r["label"] == label}
+        )
+        if retained:
+            _show_retained_evidence(
+                st.selectbox("Resource with retained evidence", retained, key="evidence_resource"),
+                None,
+            )
     else:
         snapshot = (
             f"imported review {st.session_state['review_id']}"
@@ -583,6 +672,9 @@ if not df.empty:
                     "evidence": row["evidence"],
                 },
             )
+            _attach_evidence(shown, policy_target)
+        current = shown["result"] if shown and shown["key"] == policy_key else None
+        _show_retained_evidence(policy_target, current)
 
 # ── Export ─────────────────────────────────────────────────────────────
 
